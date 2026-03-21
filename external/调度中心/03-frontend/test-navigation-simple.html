@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>天地图导航测试 - 外卖配送</title>
+    <script type="text/javascript" src="https://api.tianditu.gov.cn/api?v=4.0&tk=c7e10854160bfd1cee679eef056bb9ce"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; width: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        #mapContainer { width: 100%; height: 100%; }
+        
+        .control-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+            z-index: 999;
+            width: 320px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+        
+        .control-panel h2 {
+            color: #1890ff;
+            margin-bottom: 15px;
+            font-size: 18px;
+            border-bottom: 2px solid #1890ff;
+            padding-bottom: 8px;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #333;
+            font-size: 13px;
+            font-weight: 500;
+        }
+        
+        .form-group input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #d9d9d9;
+            border-radius: 6px;
+            font-size: 13px;
+            transition: all 0.3s;
+        }
+        
+        .form-group input:focus {
+            border-color: #1890ff;
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(24,144,255,0.2);
+        }
+        
+        .btn {
+            width: 100%;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: 10px;
+        }
+        
+        .btn-primary {
+            background: #1890ff;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #40a9ff;
+        }
+        
+        .btn-success {
+            background: #52c41a;
+            color: white;
+        }
+        
+        .btn-success:hover {
+            background: #73d13d;
+        }
+        
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #666;
+        }
+        
+        .btn-secondary:hover {
+            background: #d9d9d9;
+        }
+        
+        .result-box {
+            margin-top: 15px;
+            padding: 12px;
+            background: #f6ffed;
+            border: 1px solid #b7eb8f;
+            border-radius: 6px;
+            font-size: 12px;
+            display: none;
+        }
+        
+        .result-box.show {
+            display: block;
+        }
+        
+        .result-box.error {
+            background: #fff2f0;
+            border-color: #ffccc7;
+        }
+        
+        .result-item {
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+        }
+        
+        .result-label {
+            color: #666;
+        }
+        
+        .result-value {
+            color: #333;
+            font-weight: 500;
+        }
+        
+        .route-info {
+            margin-top: 10px;
+            padding: 10px;
+            background: #e6f7ff;
+            border: 1px solid #91d5ff;
+            border-radius: 6px;
+        }
+        
+        .route-point {
+            padding: 5px 0;
+            border-bottom: 1px dashed #91d5ff;
+            font-size: 12px;
+        }
+        
+        .route-point:last-child {
+            border-bottom: none;
+        }
+        
+        .loading {
+            text-align: center;
+            color: #1890ff;
+            padding: 10px;
+        }
+        
+        .loading::before {
+            content: '';
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid #1890ff;
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div id="mapContainer"></div>
+    
+    <div class="control-panel">
+        <h2>🗺️ 天地图导航测试</h2>
+        
+        <div class="form-group">
+            <label>起点（经度，纬度）</label>
+            <input type="text" id="startPoint" value="115.654,32.168" placeholder="例如：115.654,32.168">
+        </div>
+        
+        <div class="form-group">
+            <label>终点（经度，纬度）</label>
+            <input type="text" id="endPoint" value="115.664,32.178" placeholder="例如：115.664,32.178">
+        </div>
+        
+        <button class="btn btn-primary" onclick="planRoute()">📍 规划路线</button>
+        <button class="btn btn-success" onclick="getLocation()">📍 获取当前位置</button>
+        <button class="btn btn-secondary" onclick="clearRoute()">🗑️ 清除路线</button>
+        
+        <div id="resultBox" class="result-box">
+            <div class="result-item">
+                <span class="result-label">距离：</span>
+                <span class="result-value" id="distance">-</span>
+            </div>
+            <div class="result-item">
+                <span class="result-label">预计时间：</span>
+                <span class="result-value" id="duration">-</span>
+            </div>
+            <div class="route-info" id="routeInfo"></div>
+        </div>
+    </div>
+
+    <script>
+        let map = null;
+        let markerStart = null;
+        let markerEnd = null;
+        let polyline = null;
+        
+        // 初始化地图
+        function initMap() {
+            map = new T.Map('mapContainer');
+            const center = new T.LngLat(115.654, 32.168);
+            map.centerAndZoom(center, 13);
+            map.enableScrollWheelZoom();
+        }
+        
+        // 获取当前位置
+        function getLocation() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        const lon = position.coords.longitude;
+                        const lat = position.coords.latitude;
+                        document.getElementById('startPoint').value = `${lon.toFixed(6)},${lat.toFixed(6)}`;
+                        showResult('✅ 获取位置成功', `经度：${lon.toFixed(4)}, 纬度：${lat.toFixed(4)}`, false);
+                    },
+                    (error) => {
+                        showResult('❌ 获取位置失败', error.message, true);
+                    }
+                );
+            } else {
+                showResult('❌ 不支持', '浏览器不支持地理位置定位', true);
+            }
+        }
+        
+        // 规划路线
+        async function planRoute() {
+            const start = document.getElementById('startPoint').value.trim();
+            const end = document.getElementById('endPoint').value.trim();
+            
+            if (!start || !end) {
+                showResult('❌ 错误', '请输入起点和终点', true);
+                return;
+            }
+            
+            showLoading();
+            
+            try {
+                const response = await fetch('/api/tianditu/drive', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        orig: start,
+                        dest: end,
+                        style: '0' // 0-速度优先，1-费用优先，2-距离优先，3-混合策略
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    displayRoute(result.data, start, end);
+                } else {
+                    showResult('❌ 规划失败', result.message || '天地图 API 调用失败', true);
+                }
+            } catch (error) {
+                showResult('❌ 请求失败', error.message, true);
+            }
+        }
+        
+        // 显示路线
+        function displayRoute(data, start, end) {
+            // 清除旧路线
+            clearRoute();
+            
+            // 解析起点终点坐标
+            const startCoords = start.split(',').map(Number);
+            const endCoords = end.split(',').map(Number);
+            
+            // 添加起点标记
+            const startPoint = new T.LngLat(startCoords[0], startCoords[1]);
+            markerStart = new T.Marker(startPoint);
+            map.addOverLay(markerStart);
+            
+            // 添加终点标记
+            const endPoint = new T.LngLat(endCoords[0], endCoords[1]);
+            markerEnd = new T.Marker(endPoint);
+            map.addOverLay(markerEnd);
+            
+            // 绘制路线
+            if (data.routePoints && data.routePoints.length > 0) {
+                const lnglats = data.routePoints.map(p => new T.LngLat(p.lon, p.lat));
+                polyline = new T.Polyline(lnglats, {
+                    color: '#1890ff',
+                    weight: 5,
+                    opacity: 0.8
+                });
+                map.addOverLay(polyline);
+                
+                // 调整地图视野
+                const bounds = new T.Bounds();
+                lnglats.forEach(point => bounds.extend(point));
+                map.panTo(bounds.getCenter());
+            }
+            
+            // 显示结果
+            const distanceKm = (data.distance / 1000).toFixed(2);
+            const durationMin = (data.duration / 60).toFixed(1);
+            
+            document.getElementById('distance').textContent = `${distanceKm} 公里`;
+            document.getElementById('duration').textContent = `${durationMin} 分钟`;
+            
+            // 显示路线详情
+            const routeInfoHtml = `
+                <div style="font-weight: 500; margin-bottom: 8px; color: #1890ff;">📍 路线详情</div>
+                <div class="route-point">🟢 起点：${start}</div>
+                <div class="route-point">🔴 终点：${end}</div>
+                <div class="route-point">📏 总距离：${distanceKm} km</div>
+                <div class="route-point">⏱️ 预计时间：${durationMin} 分钟</div>
+            `;
+            
+            document.getElementById('routeInfo').innerHTML = routeInfoHtml;
+            document.getElementById('resultBox').classList.add('show');
+            document.getElementById('resultBox').classList.remove('error');
+        }
+        
+        // 清除路线
+        function clearRoute() {
+            if (markerStart) {
+                map.removeOverLay(markerStart);
+                markerStart = null;
+            }
+            if (markerEnd) {
+                map.removeOverLay(markerEnd);
+                markerEnd = null;
+            }
+            if (polyline) {
+                map.removeOverLay(polyline);
+                polyline = null;
+            }
+            document.getElementById('resultBox').classList.remove('show');
+        }
+        
+        // 显示结果
+        function showResult(title, content, isError = false) {
+            const resultBox = document.getElementById('resultBox');
+            resultBox.innerHTML = `
+                <div style="font-weight: 500; margin-bottom: 8px;">${title}</div>
+                <div style="font-size: 12px; color: ${isError ? '#f5222d' : '#52c41a'};">${content}</div>
+            `;
+            resultBox.classList.add('show');
+            if (isError) {
+                resultBox.classList.add('error');
+            } else {
+                resultBox.classList.remove('error');
+            }
+        }
+        
+        // 显示加载状态
+        function showLoading() {
+            const resultBox = document.getElementById('resultBox');
+            resultBox.innerHTML = '<div class="loading">正在规划路线...</div>';
+            resultBox.classList.add('show');
+            resultBox.classList.remove('error');
+        }
+        
+        // 页面加载完成后初始化地图
+        window.onload = initMap;
+    </script>
+</body>
+</html>

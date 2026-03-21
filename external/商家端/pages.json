@@ -1,0 +1,279 @@
+{
+	"pages": [
+		{
+			"path": "pages/index/index",
+			"style": {
+				"navigationBarTitleText": "首页",
+				"navigationBarBackgroundColor": "#FF6B35"
+			}
+		},
+		{
+			"path": "pages/home/index",
+			"style": {
+				"navigationBarTitleText": "固始县外卖",
+				"enablePullDownRefresh": true,
+				"backgroundTextStyle": "dark"
+			}
+		},
+		{
+			"path": "pages/cart/index",
+			"style": {
+				"navigationBarTitleText": "购物车",
+				"enablePullDownRefresh": true,
+				"backgroundTextStyle": "dark"
+			}
+		},
+		{
+			"path": "pages/order/index",
+			"style": {
+				"navigationBarTitleText": "我的订单",
+				"enablePullDownRefresh": true,
+				"backgroundTextStyle": "dark"
+			}
+		},
+		{
+			"path": "pages/order/list",
+			"style": {
+				"navigationBarTitleText": "订单管理",
+				"enablePullDownRefresh": true,
+				"backgroundTextStyle": "dark"
+			}
+		},
+		{
+			"path": "pages/order/detail",
+			"style": {
+				"navigationBarTitleText": "订单详情"
+			}
+		},
+		{
+			"path": "pages/mine/index",
+			"style": {
+				"navigationBarTitleText": "我的"
+			}
+		},
+		{
+			"path": "pages/login/index",
+			"style": {
+				"navigationBarTitleText": "登录注册",
+				"navigationBarBackgroundColor": "#FF6B35"
+			}
+		},
+		{
+			"path": "pages/cart/checkout",
+			"style": {
+				"navigationBarTitleText": "确认订单"
+			}
+		},
+		{
+			"path": "pages/address/index",
+			"style": {
+				"navigationBarTitleText": "收货地址"
+			}
+		},
+		{
+			"path": "pages/address/edit",
+			"style": {
+				"navigationBarTitleText": "编辑地址"
+			}
+		},
+		{
+			"path": "pages/search/index",
+			"style": {
+				"navigationBarTitleText": "搜索"
+			}
+		},
+		{
+			"path": "pages/pay/index",
+			"style": {
+				"navigationBarTitleText": "订单支付"
+			}
+		},
+		{
+			"path": "pages/profile/index",
+			"style": {
+				"navigationBarTitleText": "个人资料"
+			}
+		},
+		{
+			"path": "pages/errand/index",
+			"style": {
+				"navigationBarTitleText": "跑腿服务"
+			}
+		},
+		{
+			"path": "pages/county-takeaway/index",
+			"style": {
+				"navigationBarTitleText": "县城外卖",
+				"enablePullDownRefresh": true
+			}
+		},
+		{
+			"path": "pages/town-takeaway/index",
+			"style": {
+				"navigationBarTitleText": "镇上外卖",
+				"enablePullDownRefresh": true
+			}
+		},
+		{
+			"path": "pages/mobile-digital/index",
+			"style": {
+				"navigationBarTitleText": "二手机买卖",
+				"navigationStyle": "custom",
+				"enablePullDownRefresh": true
+			}
+		},
+		{
+			"path": "pages/sell-phone/index",
+			"style": {
+				"navigationBarTitleText": "我要卖手机",
+				"navigationStyle": "custom"
+			}
+		},
+		{
+			"path": "pages/buy-phone/index",
+			"style": {
+				"navigationBarTitleText": "我要买二手机",
+				"navigationStyle": "custom",
+				"enablePullDownRefresh": true
+			}
+		},
+		{
+			"path": "pages/digital-parts/index",
+			"style": {
+				"navigationBarTitleText": "数码配件",
+				"navigationStyle": "custom"
+			}
+		},
+		{
+			"path": "pages/digital-parts/goods",
+			"style": {
+				"navigationBarTitleText": "数码配件",
+				"navigationStyle": "custom",
+				"enablePullDownRefresh": true
+			}
+		},
+		{
+			"path": "pages/hardware/index",
+			"style": {
+				"navigationBarTitleText": "五金工具",
+				"navigationStyle": "custom"
+			}
+		},
+		{
+			"path": "pages/hardware/goods",
+			"style": {
+				"navigationBarTitleText": "五金商品",
+				"navigationStyle": "custom",
+				"enablePullDownRefresh": true
+			}
+		},
+		{
+			"path": "pages/appliance-repair/index",
+			"style": {
+				"navigationBarTitleText": "家电维修",
+				"navigationStyle": "custom"
+			}
+		},
+		{
+			"path": "pages/appliance-repair/report",
+			"style": {
+				"navigationBarTitleText": "我要报修",
+				"navigationStyle": "custom"
+			}
+		},
+		{
+			"path": "pages/appliance-repair/progress",
+			"style": {
+				"navigationBarTitleText": "维修进度",
+				"navigationStyle": "custom"
+			}
+		},
+		{
+			"path": "pages/food/detail",
+			"style": {
+				"navigationBarTitleText": "商品详情"
+			}
+		},
+		{
+			"path": "pages/product/list",
+			"style": {
+				"navigationBarTitleText": "商品管理",
+				"enablePullDownRefresh": true
+			}
+		},
+		{
+			"path": "pages/product/edit",
+			"style": {
+				"navigationBarTitleText": "编辑商品"
+			}
+		},
+		{
+			"path": "pages/finance/index",
+			"style": {
+				"navigationBarTitleText": "财务管理"
+			}
+		},
+		{
+			"path": "pages/stats/index",
+			"style": {
+				"navigationBarTitleText": "数据统计"
+			}
+		},
+		{
+			"path": "pages/review/list",
+			"style": {
+				"navigationBarTitleText": "顾客评价"
+			}
+		},
+		{
+			"path": "pages/shop/index",
+			"style": {
+				"navigationBarTitleText": "商家管理"
+			}
+		},
+		{
+			"path": "pages/shop/food-edit",
+			"style": {
+				"navigationBarTitleText": "添加商品"
+			}
+		},
+		{
+			"path": "pages/shop/orders",
+			"style": {
+				"navigationBarTitleText": "订单管理"
+			}
+		}
+	],
+	"globalStyle": {
+		"navigationBarTitleText": "固始县外卖跑腿",
+		"navigationBarTextStyle": "white",
+		"navigationBarBackgroundColor": "#FF6B35",
+		"backgroundColor": "#F5F5F5"
+	},
+	"tabBar": {
+		"color": "#999999",
+		"selectedColor": "#FF6B35",
+		"borderStyle": "black",
+		"backgroundColor": "#ffffff",
+		"list": [
+			{
+				"pagePath": "pages/index/index",
+				"iconPath": "static/tabbar/home.png",
+				"selectedIconPath": "static/tabbar/home-active.png",
+				"text": "首页"
+			},
+			{
+				"pagePath": "pages/order/index",
+				"iconPath": "static/tabbar/order.png",
+				"selectedIconPath": "static/tabbar/order-active.png",
+				"text": "订单"
+			},
+			{
+				"pagePath": "pages/mine/index",
+				"iconPath": "static/tabbar/mine.png",
+				"selectedIconPath": "static/tabbar/mine-active.png",
+				"text": "我的"
+			}
+		]
+	}
+}

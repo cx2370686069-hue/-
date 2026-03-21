@@ -1,0 +1,553 @@
+{
+  "info": {
+    "name": "跑腿后端 API",
+    "description": "县城乡镇外卖跑腿 APP 后端接口",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000/api",
+      "name": "本地开发环境"
+    }
+  ],
+  "requests": [
+    {
+      "name": " 用户注册",
+      "method": "POST",
+      "path": "/auth/register",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "body": {
+        "mode": "raw",
+        "raw": "{\n  \"phone\": \"13800138000\",\n  \"password\": \"123456\",\n  \"nickname\": \"测试用户\",\n  \"role\": \"user\"\n}"
+      },
+      "description": "注册新用户，role 可选：user-用户，merchant-商家，rider-骑手"
+    },
+    {
+      "name": "🔐 用户登录",
+      "method": "POST",
+      "path": "/auth/login",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "body": {
+        "mode": "raw",
+        "raw": "{\n  \"phone\": \"13800138000\",\n  \"password\": \"123456\"\n}"
+      },
+      "description": "登录获取 token，后续请求需要携带此 token"
+    },
+    {
+      "name": "👤 获取当前用户信息",
+      "method": "GET",
+      "path": "/auth/me",
+      "headers": [],
+      "auth": {
+        "type": "bearer",
+        "bearer": "{{token}}"
+      },
+      "description": "需要登录，获取当前登录用户信息"
+    },
+    {
+      "name": "👤 更新用户资料",
+      "method": "PUT",
+      "path": "/auth/profile",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "body": {
+        "mode": "raw",
+        "raw": "{\n  \"nickname\": \"新昵称\",\n  \"avatar\": \"https://example.com/avatar.jpg\"\n}"
+      },
+      "auth": {
+        "type": "bearer",
+        "bearer": "{{token}}"
+      }
+    },
+    {
+      "name": "🏪 获取商家列表",
+      "method": "GET",
+      "path": "/merchant/list",
+      "query": [
+        {
+          "key": "page",
+          "value": "1"
+        },
+        {
+          "key": "limit",
+          "value": "10"
+        }
+      ],
+      "description": "获取所有营业中的商家"
+    },
+    {
+      "name": "🏪 获取商家详情",
+      "method": "GET",
+      "path": "/merchant/detail/:id",
+      "pathVariables": [
+        {
+          "key": "id",
+          "value": "1"
+        }
+      ],
+      "description": "获取指定商家的详细信息"
+    },
+    {
+      "name": "🏪 获取商家商品分类",
+      "method": "GET",
+      "path": "/merchant/categories",
+      "query": [
+        {
+          "key": "merchant_id",
+          "value": "1"
+        }
+      ],
+      "description": "获取商家的商品分类列表"
+    },
+    {
+      "name": "🏪 获取商家商品列表",
+      "method": "GET",
+      "path": "/merchant/products",
+      "query": [
+        {
+          "key": "merchant_id",
+          "value": "1"
+        },
+        {
+          "key": "category_id",
+          "value": ""
+        }
+      ],
+      "description": "获取商品列表，可按分类筛选"
+    },
+    {
+      "name": "🏪 创建店铺（商家端）",
+      "method": "POST",
+      "path": "/merchant/create",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "body": {
+        "mode": "raw",
+        "raw": "{\n  \"name\": \"美味快餐店\",\n  \"description\": \"正宗家常菜\",\n  \"phone\": \"13800138001\",\n  \"address\": \"XX 县 XX 镇 XX 路 1 号\",\n  \"delivery_radius\": 5.0,\n  \"min_price\": 15.00,\n  \"delivery_fee\": 3.00\n}"
+      },
+      "auth": {
+        "type": "bearer",
+        "bearer": "{{token}}"
+      },
+      "description": "需要商家角色（role=merchant）"
+    },
+    {
+      "name": "🏪 获取我的店铺（商家端）",
+      "method": "GET",
+      "path": "/merchant/my",
+      "auth": {
+        "type": "bearer",
+        "bearer": "{{token}}"
+      },
+      "description": "获取当前商家的店铺信息"
+    },
+    {
+      "name": " 创建商品分类（商家端）",
+      "method": "POST",
+      "path": "/merchant/category",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "body": {
+        "mode": "raw",
+        "raw": "{\n  \"name\": \"热菜\",\n  \"sort\": 1\n}"
+      },
+      "auth": {
+        "type": "bearer",
+        "bearer": "{{token}}"
+      }
+    },
+    {
+      "name": "🏪 创建商品（商家端）",
+      "method": "POST",
+      "path": "/merchant/product",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "body": {
+        "mode": "raw",
+        "raw": "{\n  \"name\": \"宫保鸡丁\",\n  \"description\": \"经典川菜\",\n  \"price\": 28.00,\n  \"original_price\": 35.00,\n  \"category_id\": 1,\n  \"images\": [\"https://example.com/img1.jpg\"],\n  \"stock\": 999\n}"
+      },
+      "auth": {
+        "type": "bearer",
+        "bearer": "{{token}}"
+      }
+    },
+    {
+      "name": "🏪 获取店铺订单（商家端）",
+      "method": "GET",
+      "path": "/merchant/orders",
+      "query": [
+        {
+          "key": "status",
+          "value": ""
+        }
+      ],
+      "auth": {
+        "type": "bearer",
+        "bearer": "{{token}}"
+      }
+    },
+    {
+      "name": "📦 创建订单（用户端）",
+      "method": "POST",
+      "path": "/order/create",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "body": {
+        "mode": "raw",
+        "raw": "{\n  \"merchant_id\": 1,\n  \"type\": \"takeout\",\n  \"products_info\": [\n    {\"id\": 1, \"name\": \"宫保鸡丁\", \"price\": 28, \"quantity\": 1}\n  ],\n  \"total_amount\": 28.00,\n  \"delivery_fee\": 3.00,\n  \"package_fee\": 1.00,\n  \"discount_amount\": 0.00,\n  \"pay_amount\": 32.00,\n  \"delivery_type\": 1,\n  \"contact_phone\": \"13800138000\",\n  \"contact_name\": \"张三\",\n  \"delivery_address\": {\n    \"province\": \"XX 省\",\n    \"city\": \"XX 市\",\n    \"district\": \"XX 县\",\n    \"street\": \"XX 街道\",\n    \"detail\": \"XX 小区 1 栋 1 单元\"\n  },\n  \"remark\": \"不要辣椒\"\n}"
+      },
+      "auth": {
+        "type": "bearer",
+        "bearer": "{{token}}"
+      }
+    },
+    {
+      "name": "📦 支付订单（用户端）",
+      "method": "POST",
+      "path": "/order/pay",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "body": {
+        "mode": "raw",
+        "raw": "{\n  \"order_id\": 1\n}"
+      },
+      "auth": {
+        "type": "bearer",
+        "bearer": "{{token}}"
+      }
+    },
+    {
+      "name": "📦 获取我的订单（用户端）",
+      "method": "GET",
+      "path": "/order/my",
+      "query": [
+        {
+          "key": "status",
+          "value": ""
+        },
+        {
+          "key": "type",
+          "value": ""
+        }
+      ],
+      "auth": {
+        "type": "bearer",
+        "bearer": "{{token}}"
+      }
+    },
+    {
+      "name": "📦 获取订单详情",
+      "method": "GET",
+      "path": "/order/detail/:id",
+      "pathVariables": [
+        {
+          "key": "id",
+          "value": "1"
+        }
+      ],
+      "auth": {
+        "type": "bearer",
+        "bearer": "{{token}}"
+      }
+    },
+    {
+      "name": "📦 取消订单（用户端）",
+      "method": "POST",
+      "path": "/order/cancel",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "body": {
+        "mode": "raw",
+        "raw": "{\n  \"order_id\": 1,\n  \"reason\": \"不想要了\"\n}"
+      },
+      "auth": {
+        "type": "bearer",
+        "bearer": "{{token}}"
+      }
+    },
+    {
+      "name": "📦 商家接单",
+      "method": "POST",
+      "path": "/order/accept",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "body": {
+        "mode": "raw",
+        "raw": "{\n  \"order_id\": 1\n}"
+      },
+      "auth": {
+        "type": "bearer",
+        "bearer": "{{token}}"
+      },
+      "description": "商家角色专用"
+    },
+    {
+      "name": "📦 商家拒单",
+      "method": "POST",
+      "path": "/order/reject",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "body": {
+        "mode": "raw",
+        "raw": "{\n  \"order_id\": 1,\n  \"reason\": \"食材不足\"\n}"
+      },
+      "auth": {
+        "type": "bearer",
+        "bearer": "{{token}}"
+      }
+    },
+    {
+      "name": "📦 商家备货完成",
+      "method": "POST",
+      "path": "/order/prepare",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "body": {
+        "mode": "raw",
+        "raw": "{\n  \"order_id\": 1\n}"
+      },
+      "auth": {
+        "type": "bearer",
+        "bearer": "{{token}}"
+      }
+    },
+    {
+      "name": "🚴 获取可抢订单（骑手端）",
+      "method": "GET",
+      "path": "/order/available",
+      "auth": {
+        "type": "bearer",
+        "bearer": "{{token}}"
+      },
+      "description": "骑手角色专用"
+    },
+    {
+      "name": "🚴 骑手抢单",
+      "method": "POST",
+      "path": "/order/rider-accept",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "body": {
+        "mode": "raw",
+        "raw": "{\n  \"order_id\": 1\n}"
+      },
+      "auth": {
+        "type": "bearer",
+        "bearer": "{{token}}"
+      }
+    },
+    {
+      "name": "🚴 骑手确认送达",
+      "method": "POST",
+      "path": "/order/confirm-delivery",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "body": {
+        "mode": "raw",
+        "raw": "{\n  \"order_id\": 1\n}"
+      },
+      "auth": {
+        "type": "bearer",
+        "bearer": "{{token}}"
+      }
+    },
+    {
+      "name": "🚴 获取我的配送订单（骑手端）",
+      "method": "GET",
+      "path": "/order/rider-orders",
+      "query": [
+        {
+          "key": "status",
+          "value": ""
+        }
+      ],
+      "auth": {
+        "type": "bearer",
+        "bearer": "{{token}}"
+      }
+    },
+    {
+      "name": "🚴 更新骑手状态",
+      "method": "POST",
+      "path": "/order/rider-status",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "body": {
+        "mode": "raw",
+        "raw": "{\n  \"status\": 1\n}"
+      },
+      "auth": {
+        "type": "bearer",
+        "bearer": "{{token}}"
+      },
+      "description": "0-休息，1-接单中"
+    },
+    {
+      "name": "📍 获取地址列表",
+      "method": "GET",
+      "path": "/address/list",
+      "auth": {
+        "type": "bearer",
+        "bearer": "{{token}}"
+      }
+    },
+    {
+      "name": "📍 获取默认地址",
+      "method": "GET",
+      "path": "/address/default",
+      "auth": {
+        "type": "bearer",
+        "bearer": "{{token}}"
+      }
+    },
+    {
+      "name": "📍 创建地址",
+      "method": "POST",
+      "path": "/address/create",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "body": {
+        "mode": "raw",
+        "raw": "{\n  \"contact_name\": \"张三\",\n  \"contact_phone\": \"13800138000\",\n  \"province\": \"XX 省\",\n  \"city\": \"XX 市\",\n  \"district\": \"XX 县\",\n  \"street\": \"XX 街道\",\n  \"detail\": \"XX 小区 1 栋 1 单元\",\n  \"latitude\": 30.123456,\n  \"longitude\": 120.123456,\n  \"is_default\": true\n}"
+      },
+      "auth": {
+        "type": "bearer",
+        "bearer": "{{token}}"
+      }
+    },
+    {
+      "name": "📍 更新地址",
+      "method": "PUT",
+      "path": "/address/update",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "body": {
+        "mode": "raw",
+        "raw": "{\n  \"id\": 1,\n  \"contact_name\": \"新联系人\",\n  \"is_default\": false\n}"
+      },
+      "auth": {
+        "type": "bearer",
+        "bearer": "{{token}}"
+      }
+    },
+    {
+      "name": "📍 删除地址",
+      "method": "DELETE",
+      "path": "/address/delete/:id",
+      "pathVariables": [
+        {
+          "key": "id",
+          "value": "1"
+        }
+      ],
+      "auth": {
+        "type": "bearer",
+        "bearer": "{{token}}"
+      }
+    },
+    {
+      "name": "📍 设置默认地址",
+      "method": "POST",
+      "path": "/address/set-default",
+      "headers": [
+        {
+          "name": "Content-Type",
+          "value": "application/json"
+        }
+      ],
+      "body": {
+        "mode": "raw",
+        "raw": "{\n  \"id\": 1\n}"
+      },
+      "auth": {
+        "type": "bearer",
+        "bearer": "{{token}}"
+      }
+    },
+    {
+      "name": "💓 健康检查",
+      "method": "GET",
+      "path": "/health",
+      "description": "检查服务是否正常运行"
+    }
+  ],
+  "environments": [
+    {
+      "name": "本地环境",
+      "variables": {
+        "token": "",
+        "base_url": "http://localhost:3000/api"
+      }
+    }
+  ]
+}

@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>天地图路线规划测试</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .input-group { margin: 10px 0; }
+        label { display: inline-block; width: 100px; }
+        input { width: 200px; padding: 5px; }
+        button { padding: 10px 20px; background: #007AFF; color: white; border: none; cursor: pointer; }
+        #result { margin-top: 20px; padding: 10px; background: #f5f5f5; white-space: pre-wrap; }
+        #map { width: 100%; height: 400px; margin-top: 20px; }
+    </style>
+    <script src="http://api.tianditu.gov.cn/api?v=4.0&tk=aecbee7d822e7bbf876c6aac9db2f09f"></script>
+</head>
+<body>
+    <h2>天地图步行路线规划测试</h2>
+    
+    <div class="input-group">
+        <label>起点经度:</label>
+        <input type="text" id="startLng" value="115.667328" placeholder="如: 115.667328">
+    </div>
+    <div class="input-group">
+        <label>起点纬度:</label>
+        <input type="text" id="startLat" value="32.183074" placeholder="如: 32.183074">
+    </div>
+    <div class="input-group">
+        <label>终点经度:</label>
+        <input type="text" id="endLng" value="115.700000" placeholder="如: 115.700000">
+    </div>
+    <div class="input-group">
+        <label>终点纬度:</label>
+        <input type="text" id="endLat" value="32.200000" placeholder="如: 32.200000">
+    </div>
+    <div class="input-group">
+        <label>天地图Key:</label>
+        <input type="text" id="tk" value="" placeholder="输入您的Key">
+    </div>
+    
+    <button onclick="testRoute()">测试路线规划</button>
+    <button onclick="showOnMap()">在地图上显示</button>
+    
+    <div id="result"></div>
+    <div id="map"></div>
+
+    <script>
+        let map = null;
+        
+        // 测试路线规划API
+        async function testRoute() {
+            const startLng = document.getElementById('startLng').value;
+            const startLat = document.getElementById('startLat').value;
+            const endLng = document.getElementById('endLng').value;
+            const endLat = document.getElementById('endLat').value;
+            const tk = document.getElementById('tk').value;
+            
+            if (!tk) {
+                alert('请输入天地图Key');
+                return;
+            }
+            
+            const url = `https://api.tianditu.gov.cn/drive?postStr={"orig":"${startLng},${startLat}","dest":"${endLng},${endLat}","style":"2"}&type=search&tk=${tk}`;
+            
+            document.getElementById('result').innerHTML = '正在请求...';
+            
+            try {
+                const response = await fetch(url);
+                const data = await response.json();
+                document.getElementById('result').innerHTML = JSON.stringify(data, null, 2);
+            } catch (error) {
+                document.getElementById('result').innerHTML = '请求失败: ' + error.message;
+            }
+        }
+        
+        // 在地图上显示
+        function showOnMap() {
+            const startLng = parseFloat(document.getElementById('startLng').value);
+            const startLat = parseFloat(document.getElementById('startLat').value);
+            const endLng = parseFloat(document.getElementById('endLng').value);
+            const endLat = parseFloat(document.getElementById('endLat').value);
+            const tk = document.getElementById('tk').value;
+            
+            if (!tk) {
+                alert('请输入天地图Key');
+                return;
+            }
+            
+            // 初始化地图
+            map = new T.Map('map');
+            map.centerAndZoom(new T.LngLat((startLng + endLng) / 2, (startLat + endLat) / 2), 13);
+            
+            // 添加起点标记
+            const startMarker = new T.Marker(new T.LngLat(startLng, startLat));
+            map.addOverLay(startMarker);
+            
+            // 添加终点标记
+            const endMarker = new T.Marker(new T.LngLat(endLng, endLat));
+            map.addOverLay(endMarker);
+            
+            // 调用路线规划并显示
+            const url = `https://api.tianditu.gov.cn/drive?postStr={"orig":"${startLng},${startLat}","dest":"${endLng},${endLat}","style":"2"}&type=search&tk=${tk}`;
+            
+            fetch(url)
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === '0' && data.data && data.data.length > 0) {
+                        // 解析路线点
+                        const route = data.data[0];
+                        const points = [];
+                        
+                        // 解析路段
+                        route.steps.forEach(step => {
+                            const coords = step.polyline.split(';');
+                            coords.forEach(coord => {
+                                const [lng, lat] = coord.split(',');
+                                points.push(new T.LngLat(parseFloat(lng), parseFloat(lat)));
+                            });
+                        });
+                        
+                        // 画路线
+                        const polyline = new T.Polyline(points, {
+                            color: 'blue',
+                            weight: 5,
+                            opacity: 0.8
+                        });
+                        map.addOverLay(polyline);
+                        
+                        document.getElementById('result').innerHTML = '路线已显示在地图上\n距离: ' + route.distance + '米\n时间: ' + route.duration + '秒';
+                    } else {
+                        document.getElementById('result').innerHTML = '路线规划失败: ' + JSON.stringify(data);
+                    }
+                })
+                .catch(error => {
+                    document.getElementById('result').innerHTML = '请求失败: ' + error.message;
+                });
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>天地图驾车规划测试</title>
+    <script type="text/javascript" src="https://api.tianditu.gov.cn/api?v=4.0&tk=a44f015e8e6729b1f7f1c57ed2902ef6"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; width: 100%; font-family: Arial, sans-serif; }
+        #mapContainer { width: 100%; height: 70%; }
+        .control-panel {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 30%;
+            background: white;
+            padding: 15px;
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+            overflow-y: auto;
+        }
+        .control-panel h3 { margin-bottom: 10px; color: #1890ff; }
+        .input-group { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+        .input-group input {
+            padding: 8px 12px;
+            border: 1px solid #d9d9d9;
+            border-radius: 4px;
+            width: 150px;
+        }
+        .btn {
+            padding: 8px 16px;
+            background: #1890ff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .btn:hover { background: #40a9ff; }
+        .btn-secondary {
+            background: #52c41a;
+        }
+        .btn-secondary:hover { background: #73d13d; }
+        .result-box {
+            margin-top: 10px;
+            padding: 10px;
+            background: #f6ffed;
+            border: 1px solid #b7eb8f;
+            border-radius: 4px;
+            font-size: 13px;
+            white-space: pre-wrap;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+        .error-box {
+            background: #fff1f0;
+            border-color: #ffa39e;
+        }
+        .info { font-size: 12px; color: #666; margin-top: 5px; }
+    </style>
+</head>
+<body>
+    <div id="mapContainer"></div>
+    
+    <div class="control-panel">
+        <h3>🚗 天地图驾车规划测试</h3>
+        
+        <div class="input-group">
+            <input type="text" id="orig" placeholder="起点: 116.35506,39.92277" value="115.654,32.168">
+            <input type="text" id="dest" placeholder="终点: 116.39751,39.90854" value="115.664,32.178">
+            <select id="style">
+                <option value="0">最快路线</option>
+                <option value="1">最短路线</option>
+                <option value="2">避开高速</option>
+                <option value="3">步行</option>
+            </select>
+            <button class="btn" onclick="planRoute()">规划路线</button>
+            <button class="btn btn-secondary" onclick="testDirectAPI()">直接测试API</button>
+        </div>
+        
+        <div class="info">
+            提示：点击"规划路线"使用JS API方式，点击"直接测试API"使用HTTP请求方式
+        </div>
+        
+        <div id="result" class="result-box" style="display:none;"></div>
+    </div>
+
+    <script>
+        let map;
+        let startMarker, endMarker, routeLine;
+        
+        // 初始化地图
+        function initMap() {
+            if (typeof T === 'undefined') {
+                showResult('❌ 天地图 API 加载失败！请检查网络', true);
+                return;
+            }
+            
+            map = new T.Map('mapContainer');
+            const center = new T.LngLat(115.654, 32.168);
+            map.centerAndZoom(center, 14);
+            map.enableScrollWheelZoom();
+            
+            showResult('✅ 地图初始化成功！请输入起点和终点进行路线规划');
+        }
+        
+        // 显示结果
+        function showResult(text, isError = false) {
+            const resultBox = document.getElementById('result');
+            resultBox.style.display = 'block';
+            resultBox.textContent = text;
+            resultBox.className = isError ? 'result-box error-box' : 'result-box';
+        }
+        
+        // 解析坐标
+        function parseCoord(coordStr) {
+            const parts = coordStr.split(',');
+            if (parts.length !== 2) return null;
+            const lng = parseFloat(parts[0].trim());
+            const lat = parseFloat(parts[1].trim());
+            if (isNaN(lng) || isNaN(lat)) return null;
+            return { lng, lat };
+        }
+        
+        // 规划路线 - 使用天地图驾车规划服务
+        async function planRoute() {
+            const origStr = document.getElementById('orig').value;
+            const destStr = document.getElementById('dest').value;
+            const style = document.getElementById('style').value;
+            
+            const orig = parseCoord(origStr);
+            const dest = parseCoord(destStr);
+            
+            if (!orig || !dest) {
+                showResult('❌ 坐标格式错误！请使用格式: 经度,纬度 (如: 116.35506,39.92277)', true);
+                return;
+            }
+            
+            showResult('🔄 正在请求路线规划...');
+            
+            try {
+                // 构建请求URL
+                const postStr = JSON.stringify({
+                    orig: `${orig.lng},${orig.lat}`,
+                    dest: `${dest.lng},${dest.lat}`,
+                    style: style
+                });
+                
+                const url = `http://api.tianditu.gov.cn/drive?postStr=${encodeURIComponent(postStr)}&type=search&tk=a44f015e8e6729b1f7f1c57ed2902ef6`;
+                
+                console.log('请求URL:', url);
+                
+                // 使用fetch请求
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                console.log('API返回:', data);
+                
+                if (data.status && data.status.infocode !== '0') {
+                    showResult(`❌ API错误: ${data.status.cndesc || JSON.stringify(data.status)}`, true);
+                    return;
+                }
+                
+                // 显示路线
+                displayRoute(data, orig, dest);
+                
+            } catch (error) {
+                showResult(`❌ 请求失败: ${error.message}\n\n可能是跨域问题，请查看浏览器控制台`, true);
+                console.error('路线规划错误:', error);
+            }
+        }
+        
+        // 直接测试API - 使用XMLHttpRequest
+        function testDirectAPI() {
+            const origStr = document.getElementById('orig').value;
+            const destStr = document.getElementById('dest').value;
+            const style = document.getElementById('style').value;
+            
+            const orig = parseCoord(origStr);
+            const dest = parseCoord(destStr);
+            
+            if (!orig || !dest) {
+                showResult('❌ 坐标格式错误！', true);
+                return;
+            }
+            
+            showResult('🔄 正在直接测试API...');
+            
+            const postStr = JSON.stringify({
+                orig: `${orig.lng},${orig.lat}`,
+                dest: `${dest.lng},${dest.lat}`,
+                style: style
+            });
+            
+            const url = `http://api.tianditu.gov.cn/drive?postStr=${encodeURIComponent(postStr)}&type=search&tk=a44f015e8e6729b1f7f1c57ed2902ef6`;
+            
+            console.log('直接测试URL:', url);
+            
+            // 使用XMLHttpRequest
+            const xhr = new XMLHttpRequest();
+            xhr.open('GET', url, true);
+            xhr.onreadystatechange = function() {
+                if (xhr.readyState === 4) {
+                    console.log('状态码:', xhr.status);
+                    console.log('响应:', xhr.responseText);
+                    
+                    if (xhr.status === 200) {
+                        try {
+                            const data = JSON.parse(xhr.responseText);
+                            showResult(`✅ API请求成功！\n\n返回数据:\n${JSON.stringify(data, null, 2)}`);
+                            
+                            if (data.status && data.status.infocode === '0') {
+                                displayRoute(data, orig, dest);
+                            }
+                        } catch (e) {
+                            showResult(`⚠️ 返回非JSON数据:\n${xhr.responseText.substring(0, 500)}`);
+                        }
+                    } else {
+                        showResult(`❌ HTTP错误: ${xhr.status}\n${xhr.responseText}`, true);
+                    }
+                }
+            };
+            xhr.onerror = function() {
+                showResult('❌ 网络请求失败！可能是跨域问题或网络连接问题', true);
+            };
+            xhr.send();
+        }
+        
+        // 在地图上显示路线
+        function displayRoute(data, orig, dest) {
+            // 清除之前的标记和线路
+            if (startMarker) map.removeOverLay(startMarker);
+            if (endMarker) map.removeOverLay(endMarker);
+            if (routeLine) map.removeOverLay(routeLine);
+            
+            // 添加起点和终点标记
+            const startPoint = new T.LngLat(orig.lng, orig.lat);
+            const endPoint = new T.LngLat(dest.lng, dest.lat);
+            
+            startMarker = new T.Marker(startPoint, { title: '起点' });
+            endMarker = new T.Marker(endPoint, { title: '终点' });
+            
+            map.addOverLay(startMarker);
+            map.addOverLay(endMarker);
+            
+            // 解析路线坐标
+            let routeInfo = '';
+            
+            if (data.routelatlon) {
+                const coords = parseRouteCoords(data.routelatlon);
+                if (coords.length > 0) {
+                    routeLine = new T.Polyline(coords, {
+                        color: '#1890ff',
+                        weight: 5,
+                        opacity: 0.8
+                    });
+                    map.addOverLay(routeLine);
+                    
+                    // 调整视野
+                    map.setViewport(coords);
+                }
+                
+                routeInfo = `\n📏 总距离: ${data.distance || '未知'} 公里\n⏱️ 预计时间: ${Math.round((data.duration || 0) / 60)} 分钟`;
+            }
+            
+            showResult(`✅ 路线规划成功！${routeInfo}\n\n完整数据:\n${JSON.stringify(data, null, 2)}`);
+        }
+        
+        // 解析路线坐标字符串
+        function parseRouteCoords(routeStr) {
+            const coords = [];
+            const points = routeStr.split(';');
+            
+            for (const point of points) {
+                const parts = point.split(',');
+                if (parts.length >= 2) {
+                    const lng = parseFloat(parts[0]);
+                    const lat = parseFloat(parts[1]);
+                    if (!isNaN(lng) && !isNaN(lat)) {
+                        coords.push(new T.LngLat(lng, lat));
+                    }
+                }
+            }
+            
+            return coords;
+        }
+        
+        // 页面加载完成后初始化地图
+        window.onload = initMap;
+    </script>
+</body>
+</html>

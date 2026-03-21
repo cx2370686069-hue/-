@@ -1,0 +1,636 @@
+{
+	"info": {
+		"name": "跑腿后端 API",
+		"description": "县城乡镇外卖跑腿 APP 后端接口",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "认证接口",
+			"item": [
+				{
+					"name": " 用户注册",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"phone\": \"13800138000\",\n  \"password\": \"123456\",\n  \"nickname\": \"测试用户\",\n  \"role\": \"user\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/auth/register",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "auth", "register"]
+						}
+					}
+				},
+				{
+					"name": "🔐 用户登录",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"phone\": \"13800138000\",\n  \"password\": \"123456\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/auth/login",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "auth", "login"]
+						}
+					}
+				},
+				{
+					"name": "👤 获取当前用户信息",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:3000/api/auth/me",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "auth", "me"]
+						}
+					}
+				},
+				{
+					"name": "👤 更新用户资料",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"nickname\": \"新昵称\",\n  \"avatar\": \"https://example.com/avatar.jpg\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/auth/profile",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "auth", "profile"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "商家接口",
+			"item": [
+				{
+					"name": "🏪 获取商家列表",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:3000/api/merchant/list?page=1&limit=10",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "merchant", "list"],
+							"query": [
+								{
+									"key": "page",
+									"value": "1"
+								},
+								{
+									"key": "limit",
+									"value": "10"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "🏪 获取商家详情",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:3000/api/merchant/detail/1",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "merchant", "detail", "1"]
+						}
+					}
+				},
+				{
+					"name": "🏪 获取商家商品分类",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:3000/api/merchant/categories?merchant_id=1",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "merchant", "categories"],
+							"query": [
+								{
+									"key": "merchant_id",
+									"value": "1"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "🏪 获取商家商品列表",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:3000/api/merchant/products?merchant_id=1",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "merchant", "products"],
+							"query": [
+								{
+									"key": "merchant_id",
+									"value": "1"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "🏪 创建店铺（商家端）",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"美味快餐店\",\n  \"description\": \"正宗家常菜\",\n  \"phone\": \"13800138001\",\n  \"address\": \"XX 县 XX 镇 XX 路 1 号\",\n  \"delivery_radius\": 5.0,\n  \"min_price\": 15.00,\n  \"delivery_fee\": 3.00\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/merchant/create",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "merchant", "create"]
+						}
+					}
+				},
+				{
+					"name": "🏪 获取我的店铺（商家端）",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:3000/api/merchant/my",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "merchant", "my"]
+						}
+					}
+				},
+				{
+					"name": " 创建商品分类（商家端）",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"热菜\",\n  \"sort\": 1\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/merchant/category",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "merchant", "category"]
+						}
+					}
+				},
+				{
+					"name": "🏪 创建商品（商家端）",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"宫保鸡丁\",\n  \"description\": \"经典川菜\",\n  \"price\": 28.00,\n  \"original_price\": 35.00,\n  \"category_id\": 1,\n  \"images\": [\"https://example.com/img1.jpg\"],\n  \"stock\": 999\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/merchant/product",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "merchant", "product"]
+						}
+					}
+				},
+				{
+					"name": "🏪 获取店铺订单（商家端）",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:3000/api/merchant/orders",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "merchant", "orders"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "订单接口",
+			"item": [
+				{
+					"name": "📦 创建订单（用户端）",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"merchant_id\": 1,\n  \"type\": \"takeout\",\n  \"products_info\": [\n    {\"id\": 1, \"name\": \"宫保鸡丁\", \"price\": 28, \"quantity\": 1}\n  ],\n  \"total_amount\": 28.00,\n  \"delivery_fee\": 3.00,\n  \"package_fee\": 1.00,\n  \"discount_amount\": 0.00,\n  \"pay_amount\": 32.00,\n  \"delivery_type\": 1,\n  \"contact_phone\": \"13800138000\",\n  \"contact_name\": \"张三\",\n  \"delivery_address\": {\n    \"province\": \"XX 省\",\n    \"city\": \"XX 市\",\n    \"district\": \"XX 县\",\n    \"street\": \"XX 街道\",\n    \"detail\": \"XX 小区 1 栋 1 单元\"\n  },\n  \"remark\": \"不要辣椒\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/order/create",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "order", "create"]
+						}
+					}
+				},
+				{
+					"name": "📦 支付订单（用户端）",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"order_id\": 1\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/order/pay",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "order", "pay"]
+						}
+					}
+				},
+				{
+					"name": "📦 获取我的订单（用户端）",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:3000/api/order/my",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "order", "my"]
+						}
+					}
+				},
+				{
+					"name": "📦 获取订单详情",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:3000/api/order/detail/1",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "order", "detail", "1"]
+						}
+					}
+				},
+				{
+					"name": "📦 取消订单（用户端）",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"order_id\": 1,\n  \"reason\": \"不想要了\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/order/cancel",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "order", "cancel"]
+						}
+					}
+				},
+				{
+					"name": "📦 商家接单",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"order_id\": 1\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/order/accept",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "order", "accept"]
+						}
+					}
+				},
+				{
+					"name": "📦 商家拒单",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"order_id\": 1,\n  \"reason\": \"食材不足\"\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/order/reject",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "order", "reject"]
+						}
+					}
+				},
+				{
+					"name": "📦 商家备货完成",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"order_id\": 1\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/order/prepare",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "order", "prepare"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "骑手接口（简化版）",
+			"item": [
+				{
+					"name": "🚴 骑手确认送达",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"order_id\": 1\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/order/confirm-delivery",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "order", "confirm-delivery"]
+						}
+					}
+				},
+				{
+					"name": "🚴 更新骑手状态",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"status\": 1\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/order/rider-status",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "order", "rider-status"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "地址接口",
+			"item": [
+				{
+					"name": "📍 获取地址列表",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:3000/api/address/list",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "address", "list"]
+						}
+					}
+				},
+				{
+					"name": "📍 获取默认地址",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:3000/api/address/default",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "address", "default"]
+						}
+					}
+				},
+				{
+					"name": "📍 创建地址",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"contact_name\": \"张三\",\n  \"contact_phone\": \"13800138000\",\n  \"province\": \"XX 省\",\n  \"city\": \"XX 市\",\n  \"district\": \"XX 县\",\n  \"street\": \"XX 街道\",\n  \"detail\": \"XX 小区 1 栋 1 单元\",\n  \"latitude\": 30.123456,\n  \"longitude\": 120.123456,\n  \"is_default\": true\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/address/create",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "address", "create"]
+						}
+					}
+				},
+				{
+					"name": "📍 更新地址",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"id\": 1,\n  \"contact_name\": \"新联系人\",\n  \"is_default\": false\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/address/update",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "address", "update"]
+						}
+					}
+				},
+				{
+					"name": "📍 删除地址",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "http://localhost:3000/api/address/delete/1",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "address", "delete", "1"]
+						}
+					}
+				},
+				{
+					"name": "📍 设置默认地址",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"id\": 1\n}"
+						},
+						"url": {
+							"raw": "http://localhost:3000/api/address/set-default",
+							"protocol": "http",
+							"host": ["localhost"],
+							"port": "3000",
+							"path": ["api", "address", "set-default"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "💓 健康检查",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "http://localhost:3000/api/health",
+					"protocol": "http",
+					"host": ["localhost"],
+					"port": "3000",
+					"path": ["api", "health"]
+				}
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "token",
+			"value": "",
+			"type": "string"
+		}
+	]
+}

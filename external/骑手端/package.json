@@ -1,0 +1,19 @@
+{
+  "name": "rider-app",
+  "version": "1.0.0",
+  "description": "固始县外卖骑手端",
+  "main": "main.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "外卖",
+    "骑手",
+    "跑腿"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "socket.io-client": "^4.8.3"
+  }
+}

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>天地图测试</title>
+    <script type="text/javascript" src="https://api.tianditu.gov.cn/api?v=4.0&tk=2c13930c89641751455d91654dc9640d"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; width: 100%; }
+        #mapContainer { width: 100%; height: 100%; }
+        .info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            z-index: 999;
+            max-width: 300px;
+        }
+        .info h3 { margin-bottom: 10px; color: #1890ff; }
+        .info p { margin: 5px 0; font-size: 13px; }
+        .success { color: #52c41a; }
+        .error { color: #f5222d; }
+    </style>
+</head>
+<body>
+    <div id="mapContainer"></div>
+    <div class="info" id="infoBox">
+        <h3>天地图测试</h3>
+        <p id="status">正在加载...</p>
+    </div>
+
+    <script>
+        const infoBox = document.getElementById('infoBox');
+        const statusEl = document.getElementById('status');
+        
+        // 检查 T 对象
+        if (typeof T === 'undefined') {
+            statusEl.innerHTML = '<span class="error">❌ 天地图 API 加载失败！</span><br>请检查网络和代理设置';
+        } else {
+            statusEl.innerHTML = '<span class="success">✅ 天地图 API 加载成功！</span><br>正在初始化地图...';
+            
+            try {
+                // 创建地图
+                const map = new T.Map('mapContainer');
+                
+                // 设置中心点和缩放级别
+                const center = new T.LngLat(115.654, 32.168);
+                map.centerAndZoom(center, 12);
+                
+                // 启用缩放
+                map.enableScrollWheelZoom();
+                
+                // 添加标记
+                const marker = new T.Marker(center);
+                map.addOverLay(marker);
+                
+                // 添加信息窗口
+                marker.addEventListener('click', function() {
+                    const info = new T.InfoWindow('<b>测试成功！</b><br>固始县配送中心');
+                    marker.openInfoWindow(info);
+                });
+                
+                statusEl.innerHTML = `
+                    <span class="success">✅ 地图初始化成功！</span><br>
+                    <small>中心：115.654, 32.168</small><br>
+                    <small>缩放级别：12</small><br>
+                    <small>点击蓝色标记查看信息窗口</small>
+                `;
+                
+                console.log('✅ 地图创建成功');
+            } catch (error) {
+                statusEl.innerHTML = `<span class="error">❌ 地图初始化失败</span><br>${error.message}`;
+                console.error('地图初始化失败:', error);
+            }
+        }
+    </script>
+</body>
+</html>

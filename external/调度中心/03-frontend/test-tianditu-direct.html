@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>直接测试天地图API</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .result { margin-top: 20px; padding: 15px; background: #f0f0f0; border-radius: 5px; white-space: pre-wrap; }
+        .error { background: #ffebee; color: #c62828; }
+        .success { background: #e8f5e9; color: #2e7d32; }
+        button { padding: 10px 20px; font-size: 16px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h2>直接测试天地图驾车规划API</h2>
+    <p>这个测试直接用浏览器请求天地图API，不经过后端代理</p>
+    <button onclick="testDrive()">测试驾车规划API</button>
+    <div id="result"></div>
+
+    <script>
+        async function testDrive() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.className = 'result';
+            resultDiv.textContent = '测试中...';
+
+            // 使用服务器端密钥
+            const TIANDITU_KEY = '9907fafafb3727a41825276271b06ee9';
+            
+            const postData = {
+                orig: '115.654,32.168',
+                dest: '115.664,32.178',
+                style: '0'
+            };
+            
+            const postStr = JSON.stringify(postData);
+            const url = `http://api.tianditu.gov.cn/drive?postStr=${encodeURIComponent(postStr)}&type=search&tk=${TIANDITU_KEY}`;
+
+            console.log('请求URL:', url);
+
+            try {
+                const response = await fetch(url, {
+                    method: 'GET',
+                    mode: 'cors'
+                });
+                
+                const text = await response.text();
+                console.log('响应:', text);
+
+                try {
+                    const data = JSON.parse(text);
+                    if (data.status && data.status.infocode !== '0') {
+                        resultDiv.className = 'result error';
+                        resultDiv.textContent = '❌ API错误:\n' + JSON.stringify(data, null, 2);
+                    } else {
+                        resultDiv.className = 'result success';
+                        resultDiv.textContent = '✅ 成功!\n\n' + JSON.stringify(data, null, 2);
+                    }
+                } catch (e) {
+                    resultDiv.className = 'result error';
+                    resultDiv.textContent = '⚠️ 返回非JSON:\n' + text.substring(0, 500);
+                }
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.textContent = '❌ 请求失败:\n' + error.message + '\n\n可能是CORS跨域问题';
+            }
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,61 @@
+graphhopper:
+  datareader.file: /data/henan-latest.osm.pbf
+  graph.location: /data/graph
+  graph.flag_encoders: car,bike,foot
+  
+  # 编码器配置
+  profiles:
+    - name: car
+      vehicle: car
+      weighting: fastest
+    - name: bike
+      vehicle: bike
+      weighting: fastest
+    - name: foot
+      vehicle: foot
+      weighting: fastest
+  
+  # 服务器配置
+  server:
+    min_request_size: 512
+    max_waypoints: 50
+    max_visited_nodes: 1000000
+    max_weight: 1000000000
+  
+  # 路线规划配置
+  routing:
+    non_ch_max_waypoint_distance: 1000000
+    non_ch_max_weight: 1000000000
+  
+  # 编码器配置
+  encoding_manager:
+    templates:
+      - name: car
+        vehicle: car
+        edge_based: true
+        base: car
+        priority: [car_priority]
+        speed: [car_speed]
+        distance_influence: 30
+      - name: bike
+        vehicle: bike
+        edge_based: false
+        base: bike
+        priority: [bike_priority]
+        speed: [bike_speed]
+      - name: foot
+        vehicle: foot
+        edge_based: false
+        base: foot
+        priority: [foot_priority]
+        speed: [foot_speed]
+  
+  # 空间索引配置
+  spatial:
+    location_index: in_memory
+    location_index_tree: in_memory
+  
+  # 地图数据配置
+  datareader:
+    file: /data/china-latest.osm.pbf
+    osm.ignored_highways: service,track,unpaved

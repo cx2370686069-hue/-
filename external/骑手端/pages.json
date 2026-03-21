@@ -1,0 +1,104 @@
+{
+	"pages": [
+		{
+			"path": "pages/index/index",
+			"style": {
+				"navigationBarTitleText": "骑手工作台",
+				"navigationBarBackgroundColor": "#1890FF",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/test/index",
+			"style": {
+				"navigationBarTitleText": "测试页面",
+				"navigationBarBackgroundColor": "#1890FF",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/orders/index",
+			"style": {
+				"navigationBarTitleText": "外卖配送",
+				"navigationBarBackgroundColor": "#1890FF",
+				"navigationBarTextStyle": "white",
+				"enablePullDownRefresh": true
+			}
+		},
+		{
+			"path": "pages/orders/detail",
+			"style": {
+				"navigationBarTitleText": "订单详情",
+				"navigationBarBackgroundColor": "#1890FF",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/errands/index",
+			"style": {
+				"navigationBarTitleText": "跑腿订单",
+				"navigationBarBackgroundColor": "#1890FF",
+				"navigationBarTextStyle": "white",
+				"enablePullDownRefresh": true
+			}
+		},
+		{
+			"path": "pages/errands/detail",
+			"style": {
+				"navigationBarTitleText": "跑腿订单详情",
+				"navigationBarBackgroundColor": "#1890FF",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/earnings/index",
+			"style": {
+				"navigationBarTitleText": "收入明细",
+				"navigationBarBackgroundColor": "#1890FF",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/profile/index",
+			"style": {
+				"navigationBarTitleText": "个人中心",
+				"navigationBarBackgroundColor": "#1890FF",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/login/index",
+			"style": {
+				"navigationBarTitleText": "登录注册",
+				"navigationBarBackgroundColor": "#1890FF",
+				"navigationBarTextStyle": "white"
+			}
+		}
+	],
+	"globalStyle": {
+		"navigationBarTitleText": "固始县外卖骑手端",
+		"navigationBarTextStyle": "white",
+		"navigationBarBackgroundColor": "#1890FF",
+		"backgroundColor": "#F5F5F5"
+	},
+	"tabBar": {
+		"color": "#999999",
+		"selectedColor": "#1890FF",
+		"borderStyle": "black",
+		"backgroundColor": "#ffffff",
+		"list": [
+			{
+				"pagePath": "pages/index/index",
+				"text": "📱 工作台"
+			},
+			{
+				"pagePath": "pages/orders/index",
+				"text": "📋 订单"
+			},
+			{
+				"pagePath": "pages/profile/index",
+				"text": "👤 我的"
+			}
+		]
+	}
+}

@@ -1,0 +1,850 @@
+/**
+ * 固始县外卖调度中心 - 样式表
+ * 参考美团、饿了么调度系统设计的简化版
+ */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: #f0f2f5;
+    color: #333;
+    font-size: 14px;
+    overflow: hidden;
+}
+
+.container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+/* ==================== 顶部导航栏 ==================== */
+.header {
+    background: linear-gradient(135deg, #1890ff 0%, #096dd9 100%);
+    color: white;
+    padding: 12px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    z-index: 100;
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.logo-icon {
+    font-size: 32px;
+}
+
+.logo-text h1 {
+    font-size: 20px;
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.status-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+    background: rgba(255,255,255,0.2);
+}
+
+.status-badge.online {
+    background: #52c41a;
+}
+
+.header-stats {
+    display: flex;
+    gap: 32px;
+}
+
+.header-stat {
+    text-align: center;
+}
+
+.stat-num {
+    display: block;
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.stat-label {
+    font-size: 12px;
+    opacity: 0.9;
+    margin-top: 4px;
+}
+
+/* ==================== 主体内容 ==================== */
+.main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+/* ==================== 左侧边栏 ==================== */
+.sidebar {
+    width: 280px;
+    background: white;
+    border-right: 1px solid #e8e8e8;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.section {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.section:last-of-type {
+    border-bottom: none;
+    flex: 0 0 auto;
+}
+
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: #fafafa;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.section-header h3 {
+    font-size: 14px;
+    font-weight: 600;
+    color: #262626;
+}
+
+.badge {
+    background: #ff4d4f;
+    color: white;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+/* 订单池 */
+.order-pool {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+}
+
+.order-card {
+    background: white;
+    border: 1px solid #e8e8e8;
+    border-radius: 6px;
+    padding: 10px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: all 0.3s;
+    position: relative;
+}
+
+.order-card:hover {
+    border-color: #1890ff;
+    box-shadow: 0 2px 8px rgba(24,144,255,0.15);
+}
+
+.order-card.selected {
+    border-color: #1890ff;
+    background: #e6f7ff;
+    box-shadow: 0 4px 12px rgba(24,144,255,0.3);
+    transform: scale(1.02);
+}
+
+.order-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.order-id {
+    font-weight: 600;
+    color: #1890ff;
+    font-size: 13px;
+}
+
+.order-time {
+    font-size: 11px;
+    color: #999;
+}
+
+.order-route {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    margin-bottom: 6px;
+}
+
+.order-route .from {
+    color: #666;
+}
+
+.order-route .arrow {
+    color: #999;
+}
+
+.order-route .to {
+    color: #333;
+    font-weight: 500;
+}
+
+.order-info {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: #999;
+}
+
+.order-distance {
+    color: #52c41a;
+}
+
+/* 分配按钮 */
+.btn-assign {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: #1890ff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.btn-assign:hover {
+    background: #096dd9;
+    transform: translateY(-50%) scale(1.05);
+}
+
+/* 订单计时器 */
+.order-timer {
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.order-timer.time-normal {
+    color: #52c41a;
+    background: #f6ffed;
+}
+
+.order-timer.time-warning {
+    color: #faad14;
+    background: #fffbe6;
+}
+
+.order-timer.time-overdue {
+    color: #f5222d;
+    background: #fff1f0;
+    animation: pulse 2s infinite;
+}
+
+/* 司机选项列表 */
+.driver-option {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    margin-bottom: 8px;
+    background: #f5f5f5;
+    border: 2px solid #e8e8e8;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.driver-option:hover {
+    background: #e6f7ff;
+    border-color: #1890ff;
+    transform: translateX(5px);
+}
+
+.driver-option-name {
+    font-weight: 600;
+    color: #333;
+    font-size: 14px;
+}
+
+.driver-option-phone {
+    color: #999;
+    font-size: 13px;
+}
+
+/* 骑手列表 */
+.rider-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+}
+
+.rider-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px;
+    border-radius: 8px;
+    margin-bottom: 6px;
+    background: #fafafa;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.rider-card:hover {
+    background: #f0f0f0;
+}
+
+.rider-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 16px;
+}
+
+.rider-info {
+    flex: 1;
+}
+
+.rider-name {
+    font-weight: 500;
+    font-size: 13px;
+    margin-bottom: 2px;
+}
+
+.rider-status {
+    font-size: 11px;
+    color: #999;
+}
+
+.rider-status.free {
+    color: #52c41a;
+}
+
+.rider-status.busy {
+    color: #faad14;
+}
+
+.rider-orders {
+    text-align: right;
+}
+
+.rider-order-count {
+    font-size: 16px;
+    font-weight: 600;
+    color: #1890ff;
+}
+
+.rider-order-label {
+    font-size: 10px;
+    color: #999;
+}
+
+/* 操作区域 */
+.action-area {
+    padding: 16px;
+    background: #fafafa;
+    border-top: 1px solid #e8e8e8;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, #52c41a 0%, #389e0d 100%);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 12px 24px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+}
+
+.btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(82,196,26,0.4);
+}
+
+.btn-large {
+    padding: 16px 24px;
+    font-size: 16px;
+}
+
+.btn-icon {
+    font-size: 20px;
+}
+
+.btn-small {
+    background: white;
+    border: 1px solid #d9d9d9;
+    border-radius: 4px;
+    padding: 4px 12px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.btn-small:hover {
+    border-color: #1890ff;
+    color: #1890ff;
+}
+
+.hint {
+    text-align: center;
+    font-size: 11px;
+    color: #999;
+    margin-top: 8px;
+}
+
+/* ==================== 地图区域 ==================== */
+.map-area {
+    flex: 1;
+    position: relative;
+    background: #e8e8e8;
+}
+
+.map {
+    width: 100%;
+    height: 100%;
+}
+
+/* 地图工具栏 */
+.map-toolbar {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.tool-btn {
+    width: 40px;
+    height: 40px;
+    background: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 18px;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    transition: all 0.3s;
+}
+
+.tool-btn:hover {
+    transform: scale(1.05);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+
+/* 图例 */
+.legend {
+    position: absolute;
+    bottom: 16px;
+    left: 16px;
+    background: white;
+    padding: 12px 16px;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-size: 12px;
+}
+
+.legend-item:last-child {
+    margin-bottom: 0;
+}
+
+.dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+}
+
+.dot.rider-free {
+    background: #52c41a;
+}
+
+.dot.rider-busy {
+    background: #faad14;
+}
+
+.dot.order-waiting {
+    background: #ff4d4f;
+}
+
+.dot.order-delivering {
+    background: #1890ff;
+}
+
+/* ==================== 底部状态栏 ==================== */
+.footer {
+    background: white;
+    border-top: 1px solid #e8e8e8;
+    padding: 8px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    color: #666;
+}
+
+.footer-left, .footer-right {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.time {
+    font-weight: 600;
+    color: #333;
+}
+
+.divider {
+    color: #d9d9d9;
+}
+
+/* ==================== 弹窗 ==================== */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modal-content {
+    background: white;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 600px;
+    max-height: 80vh;
+    overflow: hidden;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.modal-header h3 {
+    font-size: 16px;
+    font-weight: 600;
+}
+
+.close-btn {
+    background: none;
+    border: none;
+    font-size: 24px;
+    color: #999;
+    cursor: pointer;
+}
+
+.close-btn:hover {
+    color: #333;
+}
+
+.modal-body {
+    padding: 20px;
+    max-height: 50vh;
+    overflow-y: auto;
+}
+
+.modal-footer {
+    padding: 16px 20px;
+    border-top: 1px solid #f0f0f0;
+    text-align: right;
+}
+
+/* 派单结果样式 */
+.dispatch-result-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    background: #f6ffed;
+    border: 1px solid #b7eb8f;
+    border-radius: 8px;
+    margin-bottom: 8px;
+}
+
+.dispatch-rider {
+    font-weight: 600;
+    color: #52c41a;
+}
+
+.dispatch-orders {
+    color: #666;
+    font-size: 13px;
+}
+
+/* ==================== 响应式 ==================== */
+@media (max-width: 768px) {
+    .header {
+        padding: 8px 12px;
+    }
+    
+    .logo-text h1 {
+        font-size: 14px;
+    }
+    
+    .header-stats {
+        gap: 16px;
+    }
+    
+    .stat-num {
+        font-size: 20px;
+    }
+    
+    .main {
+        flex-direction: column;
+    }
+    
+    .sidebar {
+        width: 100%;
+        flex: 0 0 auto;
+        max-height: 40vh;
+    }
+    
+    .map-area {
+        flex: 1;
+        min-height: 50vh;
+    }
+    
+    .section {
+        flex: none;
+        max-height: 150px;
+    }
+    
+    .action-area {
+        padding: 12px;
+    }
+    
+    .btn-large {
+        padding: 12px 16px;
+        font-size: 14px;
+    }
+    
+    .footer {
+        padding: 6px 12px;
+        font-size: 11px;
+    }
+}
+
+/* ==================== 滚动条 ==================== */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
+}
+
+/* ==================== 动画 ==================== */
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+.pulse {
+    animation: pulse 2s infinite;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+.notification {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: #52c41a;
+    color: white;
+    padding: 12px 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    z-index: 10000;
+    font-size: 14px;
+    animation: slideIn 0.3s ease;
+}
+
+/* ==================== 司机卡片 ==================== */
+.driver-card {
+    background: white;
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 10px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+.driver-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.12);
+}
+
+.driver-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.driver-name {
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.driver-status {
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+}
+
+.driver-status.status-free {
+    background: #f6ffed;
+    color: #52c41a;
+    border: 1px solid #b7eb8f;
+}
+
+.driver-status.status-busy {
+    background: #fff1f0;
+    color: #f5222d;
+    border: 1px solid #ffa39e;
+}
+
+.driver-info {
+    display: flex;
+    gap: 12px;
+    font-size: 12px;
+    color: #666;
+}
+
+/* ==================== 批次信息 ==================== */
+.batch-info {
+    background: white;
+    border-radius: 6px;
+    padding: 15px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+}
+
+.batch-timer {
+    font-size: 24px;
+    font-weight: bold;
+    text-align: center;
+    color: #1890ff;
+    margin-bottom: 12px;
+    font-family: 'Courier New', monospace;
+}
+
+.batch-progress {
+    margin-top: 10px;
+}
+
+.progress-bar {
+    background: #f0f0f0;
+    border-radius: 10px;
+    height: 20px;
+    overflow: hidden;
+    margin-bottom: 8px;
+}
+
+.progress-fill {
+    background: linear-gradient(90deg, #1890ff, #096dd9);
+    height: 100%;
+    transition: width 0.3s;
+}
+
+.batch-count {
+    text-align: center;
+    font-size: 13px;
+    color: #666;
+}
+
+/* ==================== 线路卡片 ==================== */
+.route-card {
+    border-left: 4px solid #1890ff;
+    background: #f0f5ff;
+    padding: 10px 15px;
+    margin: 10px 0;
+    border-radius: 4px;
+}
+
+/* ==================== 图例更新 ==================== */
+.legend-item .dot.driver-free {
+    background: #52c41a;
+}
+
+.legend-item .dot.driver-busy {
+    background: #f5222d;
+}
+
+.legend-item .dot.order-county {
+    background: #1890ff;
+}
+
+.legend-item .dot.order-town {
+    background: #52c41a;
+}
