@@ -5,7 +5,7 @@
 你的后端服务现在正在运行：
 - **访问地址**: http://localhost:3000
 - **API 地址**: http://localhost:3000/api
-- **数据库**: paotui_db（已自动创建 7 张表）
+- **数据库**: gushi_waimai（已自动创建 7 张表）
 
 ---
 
@@ -373,7 +373,7 @@ npm start      # 生产模式
 D:\MySQL\mysql-8.0.43-winx64\bin\mysql.exe -u root -p123456
 
 # 使用数据库
-use paotui_db;
+use gushi_waimai;
 
 # 查看所有表
 show tables;
@@ -398,7 +398,7 @@ A: 重新登录获取新 token，token 有效期 7 天
 ### Q4: 如何清空测试数据？
 A: 登录 MySQL 执行：
 ```sql
-use paotui_db;
+use gushi_waimai;
 DELETE FROM addresses;
 DELETE FROM order_logs;
 DELETE FROM orders;

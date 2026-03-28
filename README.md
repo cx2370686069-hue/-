@@ -65,7 +65,7 @@ DB_HOST=localhost
 DB_PORT=3306
 DB_USER=root
 DB_PASSWORD=你的数据库密码
-DB_NAME=paotui_db
+DB_NAME=gushi_waimai
 ```
 
 ### 4. 创建数据库

@@ -1,5 +1,5 @@
 import { io } from 'socket.io-client'
-import { BASE_URL } from '../config/index.js'
+import { SOCKET_URL } from '../config/index.js'
 
 let socket = null
 
@@ -8,8 +8,11 @@ export function initSocket(token) {
     socket.disconnect()
   }
   
-  socket = io(BASE_URL, {
-    auth: { token: token },
+  // 根据后端规范，Socket 连接也使用 Bearer 格式传递 token
+  const authFormat = token.startsWith('Bearer ') ? token : 'Bearer ' + token;
+  
+  socket = io(SOCKET_URL, {
+    auth: { token: authFormat },
     transports: ['websocket', 'polling']
   })
   

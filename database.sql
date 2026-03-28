@@ -1,13 +1,13 @@
 -- 跑腿外卖数据库初始化脚本
--- 数据库名：paotui_db
+-- 数据库名：gushi_waimai
 -- 字符集：utf8mb4
 
 -- 创建数据库
-CREATE DATABASE IF NOT EXISTS `paotui_db` 
+CREATE DATABASE IF NOT EXISTS `gushi_waimai` 
 DEFAULT CHARACTER SET utf8mb4 
 DEFAULT COLLATE utf8mb4_unicode_ci;
 
-USE `paotui_db`;
+USE `gushi_waimai`;
 
 -- 说明：
 -- 数据库表会在项目首次启动时自动创建（通过 Sequelize 的 sync 功能）

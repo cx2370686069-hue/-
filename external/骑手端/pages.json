@@ -1,6 +1,14 @@
 {
 	"pages": [
 		{
+			"path": "pages/test-nav/test-nav",
+			"style": {
+				"navigationBarTitleText": "导航沙盒测试",
+				"navigationBarBackgroundColor": "#1890FF",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
 			"path": "pages/index/index",
 			"style": {
 				"navigationBarTitleText": "骑手工作台",
@@ -29,6 +37,14 @@
 			"path": "pages/orders/detail",
 			"style": {
 				"navigationBarTitleText": "订单详情",
+				"navigationBarBackgroundColor": "#1890FF",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/map/nav",
+			"style": {
+				"navigationBarTitleText": "地图导航",
 				"navigationBarBackgroundColor": "#1890FF",
 				"navigationBarTextStyle": "white"
 			}

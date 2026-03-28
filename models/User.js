@@ -12,12 +12,12 @@ const User = sequelize.define('User', {
   phone: {
     type: DataTypes.STRING(11),
     allowNull: false,
-    unique: true,
     comment: '手机号'
   },
   password: {
     type: DataTypes.STRING(255),
     allowNull: false,
+    field: 'password_hash',
     comment: '密码（加密存储）'
   },
   nickname: {
@@ -38,6 +38,15 @@ const User = sequelize.define('User', {
     type: DataTypes.INTEGER,
     defaultValue: 1,
     comment: '状态：0-禁用，1-正常'
+  },
+  balance: {
+    type: DataTypes.DECIMAL(10, 2),
+    defaultValue: 0.00,
+    comment: '用户/骑手通用余额',
+    get() {
+      const value = this.getDataValue('balance');
+      return value === null ? 0 : parseFloat(value);
+    }
   },
   // 骑手专属字段
   rider_status: {
@@ -73,6 +82,8 @@ const User = sequelize.define('User', {
   }
 }, {
   tableName: 'users',
+  createdAt: 'created_at',
+  updatedAt: false,
   indexes: [
     { fields: ['phone'] },
     { fields: ['role'] }

@@ -3,6 +3,8 @@
  */
 export const BASE_URL = 'http://192.168.1.4:3000'
 
+export const TIANDITU_TK = ''
+
 // 骑手端配置
 export const RIDER = {
   STATUS_OFFLINE: 0,  // 休息
@@ -32,6 +34,7 @@ export const ERRAND_STATUS = {
 
 export default {
   BASE_URL,
+  TIANDITU_TK,
   RIDER,
   ORDER_STATUS,
   ERRAND_STATUS

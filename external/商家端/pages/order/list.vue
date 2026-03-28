@@ -212,8 +212,10 @@
 </template>
 
 <script>
-import { getOrderList, acceptOrder, rejectOrder, startMaking, readyForDelivery } from '../../api/index.js'
+import { getDashboard, getOrderList, acceptOrder, rejectOrder, startMaking, readyForDelivery } from '../../api/index.js'
 import { ORDER_STATUS, formatTime } from '../../utils/index.js'
+import { initSocket, onNewOrder, getSocket } from '../../utils/socket.js'
+import { getToken } from '../../utils/auth.js'
 
 export default {
   data() {
@@ -275,6 +277,17 @@ export default {
   onLoad() {
     this.loadStats()
     this.loadOrderList()
+
+    // 初始化 Socket 并监听新订单
+    const token = getToken()
+    if (token && !getSocket()) {
+      initSocket(token)
+    }
+    onNewOrder((data) => {
+      uni.showToast({ title: '收到新订单！', icon: 'none' })
+      this.loadOrderList()
+      this.loadStats()
+    })
   },
   
   onShow() {
@@ -285,11 +298,20 @@ export default {
   methods: {
     // 加载统计数据
     async loadStats() {
-      // TODO: 调用API获取统计数据
-      this.todayStats = {
-        orderCount: 12,
-        income: '356.80',
-        pendingCount: 3
+      try {
+        const res = await getDashboard()
+        const data = res?.data || res || {}
+        this.todayStats = {
+          orderCount: Number(data.todayOrders || data.orderCount || 0),
+          income: Number(data.todayRevenue || data.income || 0).toFixed(2),
+          pendingCount: Number(data.pendingOrders || data.pendingCount || 0)
+        }
+      } catch (e) {
+        this.todayStats = {
+          orderCount: 0,
+          income: '0.00',
+          pendingCount: 0
+        }
       }
     },
     
@@ -319,15 +341,24 @@ export default {
       this.loadOrderList()
     },
     
-    // 加载订单列表（对接后端 /merchant/orders）
+    // 加载订单列表（对接后端 /order/my）
     async loadOrderList() {
       try {
-        const params = {}
+        const params = {
+          page: this.page,
+          page_size: this.pageSize
+        }
+        if (this.searchKey) {
+          params.keyword = this.searchKey
+        }
+        if (this.currentDate) {
+          params.date_range = this.currentDate
+        }
         if (this.currentStatus !== '') {
           params.status = this.currentStatus
         }
         const res = await getOrderList(params)
-        const list = res?.data || []
+        const list = res?.data?.订单列表 || res?.data?.data || res?.订单列表 || res?.data || []
 
         // 映射后端订单结构到前端展示结构
         const mapped = list.map((o) => {
@@ -375,11 +406,10 @@ export default {
           }
         })
 
-        this.orderList = mapped
+        this.orderList = this.page > 1 ? [...this.orderList, ...mapped] : mapped
         this.updateStatsAndCounts()
-        this.noMore = true
+        this.noMore = mapped.length < this.pageSize
       } catch (e) {
-        // 接口失败时不再抛错，保留原有列表
         console.error('加载订单列表失败', e)
       }
     },
@@ -450,7 +480,10 @@ export default {
     // 接单（状态：1 待接单）
     async acceptOrder(order) {
       try {
-        await acceptOrder(order.id)
+        await acceptOrder(order.id, {
+          merchant_lng: 115.681123,
+          merchant_lat: 32.181234
+        })
         uni.showToast({ title: '接单成功', icon: 'success' })
         this.loadOrderList()
         this.loadStats()

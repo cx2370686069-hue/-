@@ -80,7 +80,10 @@ export default {
             uni.removeStorageSync('token')
             uni.removeStorageSync('userInfo')
             this.userInfo = null
-            uni.showToast({ title: '已退出' })
+            uni.showToast({ title: '已退出', icon: 'none' })
+            setTimeout(() => {
+              uni.reLaunch({ url: '/pages/login/index' })
+            }, 500)
           }
         }
       });

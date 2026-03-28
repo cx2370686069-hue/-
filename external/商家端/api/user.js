@@ -1,4 +1,4 @@
-import { post, get, put } from '../utils/request.js'
+import request from '../utils/request.js'
 
 /**
  * 用户认证接口（商家端）
@@ -8,11 +8,15 @@ import { post, get, put } from '../utils/request.js'
  * 商家注册
  */
 export function register(data) {
-  return post('/auth/register', {
-    phone: data.phone,
-    password: data.password,
-    nickname: data.nickname,
-    role: 'merchant'
+  return request({
+    url: '/auth/register',
+    method: 'POST',
+    data: {
+      phone: data.phone,
+      password: data.password,
+      nickname: data.nickname,
+      role: 'merchant'
+    }
   })
 }
 
@@ -20,9 +24,13 @@ export function register(data) {
  * 商家登录
  */
 export function login(data) {
-  return post('/auth/login', {
-    phone: data.phone,
-    password: data.password
+  return request({
+    url: '/auth/login',
+    method: 'POST',
+    data: {
+      phone: data.phone,
+      password: data.password
+    }
   })
 }
 
@@ -30,15 +38,19 @@ export function login(data) {
  * 获取当前用户信息
  */
 export function getUserInfo() {
-  return get('/auth/me')
+  return request({ url: '/auth/me', method: 'GET' })
 }
 
 /**
  * 更新用户信息
  */
 export function updateUserInfo(data) {
-  return put('/auth/profile', {
-    nickname: data.nickname,
-    avatar: data.avatar
+  return request({
+    url: '/auth/profile',
+    method: 'PUT',
+    data: {
+      nickname: data.nickname,
+      avatar: data.avatar
+    }
   })
 }

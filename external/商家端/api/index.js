@@ -1,6 +1,6 @@
 /**
  * API 接口统一管理
- * 后端接口地址：http://192.168.1.7:3000/api
+ * 后端接口地址：http://localhost:3000/api
  */
 
 import request from '../utils/request.js';
@@ -12,13 +12,13 @@ export function login(data) {
 
 // ========== 工作台统计 ==========
 export function getDashboard() {
-  return request({ url: '/merchant/dashboard', method: 'GET' });
+  return request({ url: '/shop/dashboard', method: 'GET' });
 }
 
 // ========== 订单 ==========
 // 获取商家订单列表
 export function getOrderList(params) {
-  return request({ url: '/merchant/orders', method: 'GET', data: params });
+  return request({ url: '/order/my', method: 'GET', data: params });
 }
 
 // 获取订单详情（使用用户端 order 接口）
@@ -27,8 +27,8 @@ export function getOrderDetail(id) {
 }
 
 // 商家接单
-export function acceptOrder(id) {
-  return request({ url: '/order/accept', method: 'POST', data: { order_id: id } });
+export function acceptOrder(id, data = {}) {
+  return request({ url: '/order/accept', method: 'POST', data: { order_id: id, ...data } });
 }
 
 // 商家拒单

@@ -67,6 +67,8 @@
 <script>
 import { getOrderList, acceptOrder } from '@/api/order.js'
 import { ORDER_STATUS_CLASS } from '@/config/index.js'
+import { initSocket, onNewOrder, getSocket } from '@/utils/socket.js'
+import { getToken } from '@/utils/auth.js'
 
 export default {
   data() {
@@ -89,6 +91,16 @@ export default {
       return this.allOrders.filter(o => o.状态 === status)
     }
   },
+  onLoad() {
+    const token = getToken()
+    if (token && !getSocket()) {
+      initSocket(token)
+    }
+    onNewOrder((data) => {
+      uni.showToast({ title: '收到新订单！', icon: 'none' })
+      this.loadOrders()
+    })
+  },
   onShow() {
     this.loadOrders()
   },
@@ -96,7 +108,7 @@ export default {
     async loadOrders() {
       try {
         const res = await getOrderList()
-        this.allOrders = res.订单列表 || []
+        this.allOrders = res?.data?.订单列表 || res?.data?.data || res?.订单列表 || res?.data || []
         this.tabs[0].count = this.allOrders.filter(o => o.状态 === '待接单').length
         this.tabs[1].count = this.allOrders.filter(o => o.状态 === '备餐中').length
         this.tabs[2].count = this.allOrders.filter(o => o.状态 === '配送中').length
@@ -117,7 +129,11 @@ export default {
         success: async (res) => {
           if (res.confirm) {
             try {
-              await acceptOrder(orderId)
+              await acceptOrder(orderId, {
+                merchant_lng: 115.681123,
+                merchant_lat: 32.181234,
+                shop_id: 1 // 临时写死 shop_id
+              })
               uni.showToast({ title: '已接单', icon: 'success' })
               this.loadOrders()
             } catch (e) {}

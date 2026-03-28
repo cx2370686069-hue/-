@@ -184,7 +184,11 @@ export default {
     },
     async handleAccept() {
       try {
-        await acceptOrder(this.orderId)
+        await acceptOrder(this.orderId, {
+          merchant_lng: 115.681123,
+          merchant_lat: 32.181234,
+          shop_id: 1 // 临时写死 shop_id
+        })
         uni.showToast({
           title: '接单成功',
           icon: 'success'

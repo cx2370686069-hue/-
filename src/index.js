@@ -10,15 +10,51 @@ const errorHandler = require('../middleware/errorHandler');
 const socketService = require('../services/socketService');
 
 const app = express();
+// 支持从环境变量读取 PORT，为生产环境预留灵活性
 const PORT = process.env.PORT || 3000;
 
 const server = http.createServer(app);
 
-app.use(cors());
+// 为阿里云公网部署准备：支持多个来源或完全开放，支持前端通过任何域名/IP访问
+const corsOptions = {
+  origin: process.env.CORS_ORIGIN === '*' ? '*' : (process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : '*'),
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'token']
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
+// 统一响应拦截器中间件 (必须放在路由之前)
+app.use((req, res, next) => {
+  // 保存原始的 res.json 和 res.send
+  const originalJson = res.json;
+  
+  res.json = function(data) {
+    // 避免重复包装
+    if (data && typeof data === 'object' && ('code' in data) && ('message' in data || 'msg' in data)) {
+      // 统一 msg 到 message，保证前端拿到的都是 message
+      if (data.msg && !data.message) {
+        data.message = data.msg;
+        delete data.msg;
+      }
+      return originalJson.call(this, data);
+    }
+    
+    // 如果返回的不是标准格式，强制包装为标准格式
+    return originalJson.call(this, {
+      code: 0,
+      message: 'success',
+      data: data
+    });
+  };
+  next();
+});
 
 app.use('/api', routes);
 
@@ -49,12 +85,12 @@ app.use(errorHandler);
 
 const startServer = async () => {
   try {
-    await sequelize.sync({ alter: true });
-    console.log('✅ 数据库表同步完成');
+    await sequelize.authenticate();
+    console.log('✅ 数据库连接验证完成');
 
     socketService.init(server);
 
-    server.listen(PORT, '0.0.0.0', () => {
+    server.listen(PORT, () => {
       console.log(`
 ╔═══════════════════════════════════════════════╗
 ║                                               ║

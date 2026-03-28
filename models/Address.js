@@ -46,11 +46,28 @@ const Address = sequelize.define('Address', {
   },
   latitude: {
     type: DataTypes.DECIMAL(10, 8),
-    comment: '纬度'
+    comment: '纬度',
+    get() {
+      const value = this.getDataValue('latitude');
+      return value === null ? null : parseFloat(value);
+    }
   },
   longitude: {
     type: DataTypes.DECIMAL(11, 8),
-    comment: '经度'
+    comment: '经度',
+    get() {
+      const value = this.getDataValue('longitude');
+      return value === null ? null : parseFloat(value);
+    }
+  },
+  // 兼容前端不同的命名习惯（虚拟字段，不存入数据库）
+  lat: {
+    type: DataTypes.VIRTUAL,
+    get() { return this.latitude; }
+  },
+  lng: {
+    type: DataTypes.VIRTUAL,
+    get() { return this.longitude; }
   },
   is_default: {
     type: DataTypes.BOOLEAN,

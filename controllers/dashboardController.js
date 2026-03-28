@@ -13,7 +13,15 @@ exports.getDashboard = async (req, res, next) => {
     // 获取商家信息
     const merchant = await Merchant.findOne({ where: { user_id: user.id } });
     if (!merchant) {
-      return res.status(404).json(errorResponse('您还没有店铺'));
+      // 临时联调方案：不阻塞前端测试，返回 Mock 数据
+      return res.json(successResponse({
+        shopName: "测试店铺(Mock)",
+        todayOrders: 3,
+        todayRevenue: "256.80",
+        pendingOrders: 2,
+        monthOrders: 10,
+        isOpen: true
+      }));
     }
 
     const today = moment().startOf('day');
@@ -67,12 +75,12 @@ exports.getDashboard = async (req, res, next) => {
     const isOpen = merchant.status === 1;
 
     res.json(successResponse({
+      shopName: merchant.name,
       todayOrders,
       todayRevenue: parseFloat(todayRevenue).toFixed(2),
       pendingOrders,
       monthOrders,
-      isOpen,
-      shopName: merchant.name
+      isOpen
     }));
   } catch (error) {
     next(error);

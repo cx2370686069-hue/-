@@ -56,6 +56,7 @@ const roleMiddleware = (...roles) => {
     }
 
     if (!roles.includes(req.user.role)) {
+      console.error(`权限被拒绝: userId=${req.user.id}, 当前角色=${req.user.role}, 期望角色=${roles.join(',')}`);
       return res.status(403).json({
         code: 403,
         message: '没有权限访问'

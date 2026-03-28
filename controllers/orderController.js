@@ -30,6 +30,8 @@ exports.createOrder = async (req, res, next) => {
       delivery_address,
       delivery_latitude,
       delivery_longitude,
+      customer_lng,
+      customer_lat,
       errand_type,
       errand_description,
       remark
@@ -68,6 +70,10 @@ exports.createOrder = async (req, res, next) => {
 
     // 生成订单号
     const order_no = generateOrderNo();
+    const items_json = typeof products_info === 'object' ? JSON.stringify(products_info) : (products_info || '[]');
+    const deliveryAddressStr =
+      typeof delivery_address === 'object' ? JSON.stringify(delivery_address) : (delivery_address || '');
+    const address = (deliveryAddressStr || '未填写地址').slice(0, 200);
 
     let resolvedOrderType = order_type === 'town' ? 'town' : 'county';
     let resolvedCustomerTown = customer_town;
@@ -84,28 +90,70 @@ exports.createOrder = async (req, res, next) => {
     // 创建订单
     const order = await Order.create({
       order_no,
+      order_id: order_no,
       user_id: user.id,
       merchant_id,
       type,
       order_type: resolvedOrderType,
       customer_town: resolvedCustomerTown,
-      products_info: typeof products_info === 'object' ? JSON.stringify(products_info) : products_info,
+      products_info: items_json,
+      items_json,
       total_amount,
       delivery_fee: computedDeliveryFee,
       package_fee,
       discount_amount,
       pay_amount,
+      total_price: Number(pay_amount),
       delivery_type,
       contact_phone: contact_phone || user.phone,
       contact_name: contact_name || user.nickname,
-      delivery_address: typeof delivery_address === 'object' ? JSON.stringify(delivery_address) : delivery_address,
-      delivery_latitude,
-      delivery_longitude,
+      delivery_address: deliveryAddressStr,
+      address,
+      // 抹平前端乱七八糟的命名：统一存储到 longitude / latitude 相关字段
+      delivery_latitude: delivery_latitude || customer_lat,
+      delivery_longitude: delivery_longitude || customer_lng,
+      customer_lng: customer_lng || delivery_longitude,
+      customer_lat: customer_lat || delivery_latitude,
+      merchant_lng: merchant.longitude, // 直接从商家表拿，不再信前端传的
+      merchant_lat: merchant.latitude,
       errand_type,
       errand_description,
       remark,
       status: 0 // 待支付
     });
+    console.log(`[order.create] user_id=${user.id} order_id=${order.id} merchant_id=${order.merchant_id} status=${order.status}`);
+
+    if (merchant && merchant.user_id) {
+      socketService.notifyMerchantNewOrder(merchant.user_id, order);
+    }
+    const io = socketService.getIO();
+    if (io) {
+      io.emit('new_order', { order_id: order.id });
+    }
+
+    // ==================== 地图雷达推流 ==================== 
+    try {
+      const radarData = {
+        type: 'orders_update',
+        orders: [
+          {
+            id: order.order_no,
+            lng: order.delivery_longitude,
+            lat: order.delivery_latitude,
+            type: order.order_type === 'county' ? 'county' : 'town',
+            color: order.order_type === 'county' ? 'blue' : 'red'
+          }
+        ]
+      };
+
+      const io = socketService.getIO();
+      if (io) {
+        io.to('dispatcher_room').emit('orders_update', radarData);
+      }
+    } catch (radarError) {
+      console.error('地图雷达推流失败:', radarError);
+    }
+    // =======================================================
 
     res.status(201).json(successResponse(order, '订单创建成功'));
   } catch (error) {
@@ -183,10 +231,42 @@ exports.getUserOrders = async (req, res, next) => {
   try {
     const user = req.user;
     const { status, type } = req.query;
-
-    const where = { user_id: user.id };
-    if (status) where.status = status;
-    if (type) where.type = type;
+    const isMerchantRole = user.role === 'merchant' || user.role === 'shop';
+    let where;
+    if (isMerchantRole) {
+      const merchantIds = [];
+      const bindMerchant = await Merchant.findOne({ where: { user_id: user.id } });
+      if (bindMerchant) {
+        merchantIds.push(bindMerchant.id);
+      }
+      if (req.query.merchant_id) {
+        const mid = Number(req.query.merchant_id);
+        if (!Number.isNaN(mid) && !merchantIds.includes(mid)) {
+          merchantIds.push(mid);
+        }
+      }
+      const latestBuyerOrder = await Order.findOne({
+        where: { user_id: user.id },
+        attributes: ['merchant_id'],
+        order: [['id', 'DESC']]
+      });
+      if (latestBuyerOrder?.merchant_id && !merchantIds.includes(latestBuyerOrder.merchant_id)) {
+        merchantIds.push(latestBuyerOrder.merchant_id);
+      }
+      if (merchantIds.length === 0) {
+        console.log(`[order.my] merchant_user_id=${user.id} role=${user.role} merchant_not_found`);
+        return res.json(successResponse({ 订单列表: [], data: [] }));
+      }
+      where = merchantIds.length === 1 ? { merchant_id: merchantIds[0] } : { merchant_id: { [Op.in]: merchantIds } };
+      if (status) where.status = status;
+      if (type) where.type = type;
+      console.log(`[order.my] merchant_user_id=${user.id} merchant_ids=${JSON.stringify(merchantIds)} where=${JSON.stringify(where)}`);
+    } else {
+      where = { user_id: user.id };
+      if (status) where.status = status;
+      if (type) where.type = type;
+      console.log(`[order.my] buyer_user_id=${user.id} where=${JSON.stringify(where)}`);
+    }
 
     const orders = await Order.findAll({
       where,
@@ -201,8 +281,7 @@ exports.getUserOrders = async (req, res, next) => {
       }],
       order: [['id', 'DESC']]
     });
-
-    res.json(successResponse(orders));
+    res.json(successResponse({ 订单列表: orders, data: orders }));
   } catch (error) {
     next(error);
   }
@@ -236,13 +315,39 @@ exports.getOrderDetail = async (req, res, next) => {
     if (!order) {
       return res.status(404).json(errorResponse('订单不存在'));
     }
-
-    // 验证权限
-    if (order.user_id !== user.id && order.merchant_id !== user.id && order.rider_id !== user.id) {
+    const isMerchantRole = user.role === 'merchant' || user.role === 'shop';
+    let mappedMerchantId = null;
+    if (isMerchantRole) {
+      const merchant = await Merchant.findOne({ where: { user_id: user.id } });
+      mappedMerchantId = merchant?.id || null;
+      if (!mappedMerchantId || order.merchant_id !== mappedMerchantId) {
+        console.error(
+          `[order.detail.403] token_user_id=${user.id} mapped_merchant_id=${mappedMerchantId} request_order_id=${id} order_merchant_id=${order.merchant_id}`
+        );
+        return res.status(403).json(errorResponse('没有权限查看'));
+      }
+    } else if (order.user_id !== user.id && order.rider_id !== user.id) {
+      console.error(
+        `[order.detail.403] token_user_id=${user.id} mapped_merchant_id=${mappedMerchantId} request_order_id=${id} order_merchant_id=${order.merchant_id}`
+      );
       return res.status(403).json(errorResponse('没有权限查看'));
     }
 
-    res.json(successResponse(order));
+    const detail = {
+      id: order.id,
+      order_no: order.order_no,
+      status: order.status,
+      created_at: order.created_at,
+      delivery_time: order.delivered_at || order.paid_at || null,
+      contact_name: order.contact_name,
+      contact_phone: order.contact_phone,
+      delivery_address: order.delivery_address,
+      products_info: order.products_info,
+      pay_amount: order.pay_amount,
+      total_amount: order.total_amount,
+      merchant_id: order.merchant_id
+    };
+    res.json(successResponse(detail));
   } catch (error) {
     next(error);
   }
@@ -297,30 +402,42 @@ exports.cancelOrder = async (req, res, next) => {
 exports.acceptOrder = async (req, res, next) => {
   try {
     const user = req.user;
-    const { order_id } = req.body;
+    const { order_id, merchant_lng, merchant_lat } = req.body;
+    console.log('[acceptOrder] 请求体:', JSON.stringify(req.body));
+    console.log('[acceptOrder] order_id:', order_id, '类型:', typeof order_id);
 
     const merchant = await Merchant.findOne({ where: { user_id: user.id } });
     if (!merchant) {
+      console.log('[acceptOrder] 商家不存在, user.id:', user.id);
       return res.status(404).json(errorResponse('您还没有店铺'));
     }
+    console.log('[acceptOrder] 商家ID:', merchant.id);
 
     const order = await Order.findOne({
       where: { id: order_id, merchant_id: merchant.id }
     });
 
     if (!order) {
+      console.log('[acceptOrder] 订单不存在, order_id:', order_id, 'merchant_id:', merchant.id);
       return res.status(404).json(errorResponse('订单不存在'));
     }
+    console.log('[acceptOrder] 订单状态:', order.status, '类型:', typeof order.status);
 
-    if (order.status !== 1) {
+    const statusNum = Number(order.status);
+    if (![0, 1].includes(statusNum)) {
+      console.log('[acceptOrder] 状态校验失败, statusNum:', statusNum);
       return res.status(400).json(errorResponse('订单状态不正确'));
     }
 
     const fromStatus = order.status;
-    await order.update({
+    const updateData = {
       status: 2,
       accepted_at: new Date()
-    });
+    };
+    if (merchant_lng) updateData.merchant_lng = merchant_lng;
+    if (merchant_lat) updateData.merchant_lat = merchant_lat;
+    
+    await order.update(updateData);
 
     await OrderLog.create({
       order_id: order.id,
@@ -333,6 +450,23 @@ exports.acceptOrder = async (req, res, next) => {
     });
 
     socketService.notifyUserOrderUpdate(order.user_id, order, '商家已接单，正在备餐中');
+
+    // 广播事件给骑手端：订单已准备好可供抢单
+    const io = socketService.getIO();
+    if (io) {
+      io.emit('order_ready_for_rider', {
+        order_id: order.id,
+        order_no: order.order_no,
+        merchant_lng: order.merchant_lng || merchant.longitude,
+        merchant_lat: order.merchant_lat || merchant.latitude,
+        customer_lng: order.customer_lng || order.delivery_longitude,
+        customer_lat: order.customer_lat || order.delivery_latitude,
+        pay_amount: order.pay_amount,
+        delivery_fee: order.delivery_fee,
+        merchant_name: merchant.name,
+        delivery_address: order.delivery_address
+      });
+    }
 
     res.json(successResponse(order, '已接单'));
   } catch (error) {
@@ -389,7 +523,7 @@ exports.rejectOrder = async (req, res, next) => {
 };
 
 /**
- * 商家备货完成
+ * 商家备货完成/发货 (状态推进: 2 -> 3)
  */
 exports.prepareOrder = async (req, res, next) => {
   try {
@@ -409,26 +543,116 @@ exports.prepareOrder = async (req, res, next) => {
       return res.status(404).json(errorResponse('订单不存在'));
     }
 
-    if (![2, 3].includes(order.status)) {
-      return res.status(400).json(errorResponse('订单状态不正确'));
+    if (order.status !== 2) {
+      return res.status(400).json(errorResponse('订单当前不是备餐中状态，无法出餐'));
     }
 
     const fromStatus = order.status;
-    const nextStatus = order.status === 2 ? 3 : 4;
-    await order.update({ status: nextStatus });
+    await order.update({ status: 3 });
 
     // 记录日志
     await OrderLog.create({
       order_id: order.id,
       operator_id: user.id,
       operator_type: 'merchant',
-      action: nextStatus === 3 ? '开始备货' : '备货完成',
+      action: '备货完成',
       from_status: fromStatus,
-      to_status: nextStatus,
-      remark: nextStatus === 3 ? '商家开始备货' : '商家已备货完成'
+      to_status: 3,
+      remark: '商家已出餐，等待骑手取餐'
+    });
+    
+    socketService.notifyUserOrderUpdate(order.user_id, order, '商家已出餐，正在呼叫骑手');
+
+    // 尝试推给调度中心或站长
+    try {
+      if (order.order_type === 'town') {
+        await dispatchCenterService.assignToTownStation(order);
+      } else {
+        await dispatchCenterService.pushOrderToDispatchCenter(order);
+      }
+    } catch (e) {
+      console.error('推单给调度中心失败:', e);
+    }
+
+    res.json(successResponse(order, '备货完成，已通知骑手'));
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * 骑手接单 (状态推进: 3 -> 4)
+ */
+exports.riderAccept = async (req, res, next) => {
+  try {
+    const user = req.user;
+    const { order_id } = req.body;
+
+    if (user.role !== 'rider') {
+      return res.status(403).json(errorResponse('只有骑手可以接单'));
+    }
+
+    const order = await Order.findByPk(order_id);
+    if (!order) return res.status(404).json(errorResponse('订单不存在'));
+    
+    // 允许状态为 3(待配送) 的被抢单
+    if (order.status !== 3) {
+      return res.status(400).json(errorResponse('该订单已被抢走或状态不对'));
+    }
+
+    const fromStatus = order.status;
+    await order.update({ 
+      status: 4,
+      rider_id: user.id 
     });
 
-    res.json(successResponse(order, nextStatus === 3 ? '开始备货' : '备货完成'));
+    await OrderLog.create({
+      order_id: order.id,
+      operator_id: user.id,
+      operator_type: 'rider',
+      action: '骑手接单',
+      from_status: fromStatus,
+      to_status: 4,
+      remark: '骑手已接单，正在赶往商家'
+    });
+
+    socketService.notifyUserOrderUpdate(order.user_id, order, '骑手已接单，正在赶往商家');
+    res.json(successResponse(order, '接单成功'));
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * 骑手取餐完成 (状态推进: 4 -> 5)
+ */
+exports.riderPickup = async (req, res, next) => {
+  try {
+    const user = req.user;
+    const { order_id } = req.body;
+
+    const order = await Order.findOne({ where: { id: order_id, rider_id: user.id } });
+    if (!order) return res.status(404).json(errorResponse('订单不存在'));
+
+    if (order.status !== 4) {
+      return res.status(400).json(errorResponse('订单当前不是骑手已接单状态'));
+    }
+
+    const fromStatus = order.status;
+    await order.update({ status: 5 });
+
+    await OrderLog.create({
+      order_id: order.id,
+      operator_id: user.id,
+      operator_type: 'rider',
+      action: '骑手取餐',
+      from_status: fromStatus,
+      to_status: 5,
+      remark: '骑手已取餐，正在为您配送'
+    });
+
+    socketService.notifyUserOrderUpdate(order.user_id, order, '骑手已取餐，正在配送中');
+    res.json(successResponse(order, '取餐成功'));
   } catch (error) {
     next(error);
   }
@@ -559,7 +783,45 @@ exports.getRiderOrders = async (req, res, next) => {
       order: [['id', 'DESC']]
     });
 
-    res.json(successResponse(orders));
+    const normalized = orders.map((o) => {
+      const plain = o.get({ plain: true });
+
+      let address = plain.delivery_address;
+      if (typeof address === 'string') {
+        try {
+          const addrObj = JSON.parse(address);
+          address =
+            addrObj?.detail ||
+            addrObj?.address ||
+            addrObj?.street ||
+            addrObj?.town ||
+            addrObj?.district ||
+            addrObj?.city ||
+            addrObj?.province ||
+            address;
+        } catch (e) {}
+      } else if (address && typeof address === 'object') {
+        address = address.detail || address.address || JSON.stringify(address);
+      }
+
+      const latitude =
+        plain.delivery_latitude === null || plain.delivery_latitude === undefined
+          ? null
+          : Number(plain.delivery_latitude);
+      const longitude =
+        plain.delivery_longitude === null || plain.delivery_longitude === undefined
+          ? null
+          : Number(plain.delivery_longitude);
+
+      return {
+        ...plain,
+        address,
+        latitude,
+        longitude
+      };
+    });
+
+    res.json(successResponse(normalized));
   } catch (error) {
     next(error);
   }

@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no" />
+    <title>导航</title>
+    <style>
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      }
+      #mapDiv {
+        width: 100%;
+        height: 100%;
+      }
+      #tip {
+        position: fixed;
+        left: 12px;
+        top: 12px;
+        z-index: 9999;
+        background: rgba(0, 0, 0, 0.55);
+        color: #fff;
+        padding: 8px 10px;
+        border-radius: 10px;
+        font-size: 12px;
+        max-width: calc(100% - 24px);
+        box-sizing: border-box;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="mapDiv"></div>
+    <div id="tip" style="display:none;"></div>
+    <script>
+      ;(function () {
+        function qs() {
+          var res = {}
+          var s = window.location.search || ''
+          if (!s || s.length < 2) return res
+          var parts = s.substring(1).split('&')
+          for (var i = 0; i < parts.length; i++) {
+            var kv = parts[i].split('=')
+            var k = decodeURIComponent(kv[0] || '')
+            var v = decodeURIComponent(kv[1] || '')
+            if (k) res[k] = v
+          }
+          return res
+        }
+
+        function showTip(text) {
+          var el = document.getElementById('tip')
+          if (!el) return
+          el.style.display = 'block'
+          el.textContent = text
+        }
+
+        function loadScript(src) {
+          return new Promise(function (resolve, reject) {
+            var sc = document.createElement('script')
+            sc.type = 'text/javascript'
+            sc.src = src
+            sc.onload = resolve
+            sc.onerror = reject
+            document.head.appendChild(sc)
+          })
+        }
+
+        function toNum(v) {
+          var n = Number(v)
+          return Number.isFinite(n) ? n : null
+        }
+
+        var map = null
+        var start = null
+        var dest = null
+        var routeCoords = []
+        var riderMarker = null
+        var endMarker = null
+        var polyline = null
+        var simTimer = null
+        var simIdx = 0
+
+        function asPlainCoords(list) {
+          if (!list || !list.length) return []
+          var out = []
+          for (var i = 0; i < list.length; i++) {
+            var pt = list[i]
+            if (!pt) continue
+            var lng = typeof pt.getLng === 'function' ? pt.getLng() : pt.lng
+            var lat = typeof pt.getLat === 'function' ? pt.getLat() : pt.lat
+            if (typeof lng === 'number' && typeof lat === 'number') {
+              out.push({ lng: lng, lat: lat })
+            } else if (lng !== undefined && lat !== undefined) {
+              out.push({ lng: Number(lng), lat: Number(lat) })
+            }
+          }
+          return out.filter(function (p) {
+            return Number.isFinite(p.lng) && Number.isFinite(p.lat)
+          })
+        }
+
+        function clearRouteOverlays() {
+          if (!map) return
+          if (polyline) {
+            try {
+              map.removeOverLay(polyline)
+            } catch (e) {}
+          }
+          polyline = null
+        }
+
+        function drawRemaining(fromIndex) {
+          if (!map) return
+          clearRouteOverlays()
+          if (!routeCoords || !routeCoords.length) return
+          var idx = Math.max(0, Math.min(fromIndex || 0, routeCoords.length - 1))
+          var list = []
+          for (var i = idx; i < routeCoords.length; i++) {
+            list.push(new T.LngLat(routeCoords[i].lng, routeCoords[i].lat))
+          }
+          if (list.length < 2) {
+            return
+          }
+          polyline = new T.Polyline(list, {
+            weight: 6,
+            opacity: 0.85,
+            color: '#0091FF',
+            lineStyle: 'solid'
+          })
+          map.addOverLay(polyline)
+        }
+
+        function setRiderPosition(lng, lat) {
+          if (!map) return
+          var ll = new T.LngLat(lng, lat)
+          if (!riderMarker) {
+            riderMarker = new T.Marker(ll)
+            map.addOverLay(riderMarker)
+          } else if (typeof riderMarker.setLngLat === 'function') {
+            riderMarker.setLngLat(ll)
+          } else {
+            try {
+              map.removeOverLay(riderMarker)
+            } catch (e) {}
+            riderMarker = new T.Marker(ll)
+            map.addOverLay(riderMarker)
+          }
+        }
+
+        function sendSimLocation(lng, lat) {
+          var payload = { type: 'sim_location', lng: lng, lat: lat, speed: 8, heading: 90, ts: Date.now() }
+          try {
+            if (window.parent && window.parent !== window) {
+              window.parent.postMessage(payload, '*')
+            }
+          } catch (e) {}
+          try {
+            if (window.uni && typeof window.uni.postMessage === 'function') {
+              window.uni.postMessage({ data: payload })
+            }
+          } catch (e) {}
+        }
+
+        function stopSim() {
+          if (simTimer) {
+            clearInterval(simTimer)
+          }
+          simTimer = null
+        }
+
+        function startSim(intervalMs) {
+          stopSim()
+          if (!routeCoords || routeCoords.length < 2) {
+            showTip('暂无可用于模拟的路线')
+            return
+          }
+          simIdx = 0
+          setRiderPosition(routeCoords[0].lng, routeCoords[0].lat)
+          drawRemaining(0)
+          sendSimLocation(routeCoords[0].lng, routeCoords[0].lat)
+          simTimer = setInterval(function () {
+            simIdx += 1
+            if (simIdx >= routeCoords.length) {
+              stopSim()
+              return
+            }
+            var p = routeCoords[simIdx]
+            setRiderPosition(p.lng, p.lat)
+            drawRemaining(simIdx)
+            sendSimLocation(p.lng, p.lat)
+          }, Number(intervalMs) || 1500)
+        }
+
+        function initMap(p) {
+          var startLng = toNum(p.startLng)
+          var startLat = toNum(p.startLat)
+          var destLng = toNum(p.destLng)
+          var destLat = toNum(p.destLat)
+          var stage = p.stage === 'delivery' ? 'delivery' : 'pickup'
+
+          if (startLng === null || startLat === null || destLng === null || destLat === null) {
+            showTip('坐标参数缺失')
+            return
+          }
+
+          map = new T.Map('mapDiv', { projection: 'EPSG:4326' })
+          start = new T.LngLat(startLng, startLat)
+          dest = new T.LngLat(destLng, destLat)
+          map.centerAndZoom(start, 15)
+
+          var route = new T.DrivingRoute(map)
+          route.setSearchCompleteCallback(function (res) {
+            try {
+              map.clearOverLays()
+            } catch (e) {}
+
+            try {
+              endMarker = new T.Marker(dest)
+              map.addOverLay(endMarker)
+            } catch (e) {}
+
+            try {
+              var list = res && res.getPlan && res.getPlan(0) && res.getPlan(0).getPath ? res.getPlan(0).getPath() : null
+              if (list && list.length) {
+                routeCoords = asPlainCoords(list)
+                setRiderPosition(startLng, startLat)
+                drawRemaining(0)
+                if (map.setViewport) {
+                  map.setViewport(list)
+                }
+              } else {
+                showTip('未获取到路线')
+              }
+            } catch (e) {
+              showTip('路线渲染失败')
+            }
+          })
+
+          showTip(stage === 'delivery' ? '去送餐路线' : '去取餐路线')
+          route.search(start, dest)
+        }
+
+        function boot() {
+          var p = qs()
+          var tk = p.tk || ''
+          if (!tk) {
+            showTip('缺少天地图TK')
+            return
+          }
+          var src = 'https://api.tianditu.gov.cn/api?v=4.0&tk=' + encodeURIComponent(tk)
+          loadScript(src)
+            .then(function () {
+              if (!window.T || !window.T.Map) {
+                showTip('天地图加载失败')
+                return
+              }
+              initMap(p)
+            })
+            .catch(function () {
+              showTip('天地图脚本加载失败')
+            })
+        }
+
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', boot)
+        } else {
+          boot()
+        }
+
+        window.addEventListener('message', function (e) {
+          var d = e && e.data ? e.data : null
+          if (!d || !d.type) return
+          if (d.type === 'start_sim') {
+            startSim(d.intervalMs)
+          } else if (d.type === 'stop_sim') {
+            stopSim()
+          }
+        })
+
+        window.addEventListener('beforeunload', function () {
+          if (simTimer) {
+            clearInterval(simTimer)
+            simTimer = null
+          }
+        })
+      })()
+    </script>
+  </body>
+</html>
+

@@ -39,8 +39,12 @@
       </view>
 
       <button class="submit-btn" @click="handleSubmit" :loading="loading">
-        {{ isRegister ? '注 册' : '登 录' }}
+        {{ isRegister ? '注 册' : '真实账号登录' }}
       </button>
+
+      <view v-if="!isRegister" class="test-login-area">
+        <button class="test-btn" @click="handleTestLogin">一键测试登录</button>
+      </view>
     </view>
   </view>
 </template>
@@ -89,18 +93,49 @@ export default {
             phone: this.phone,
             password: this.password
           })
+          console.log('登录接口返回:', res)
+          
           const userStore = useUserStore()
-          userStore.login(res.token, res.用户信息)
+          
+          // 严格按照后端规范，优先从 res.data.token 或 res.token 获取
+          const token = res.data?.token || res.token || res.access_token || ''
+          const userInfo = res.data?.userInfo || res.用户信息 || res.userInfo || res.user || res.data?.user || { name: '商家用户', phone: this.phone, role: 'merchant' }
+          
+          if (!token) {
+            uni.showToast({ title: '登录返回数据异常，未获取到Token', icon: 'none' })
+            return
+          }
+          
+          userStore.login(token, userInfo)
+          console.log('保存的token:', uni.getStorageSync('token'))
+          console.log('保存的userInfo:', uni.getStorageSync('userInfo'))
 
           uni.showToast({ title: '登录成功', icon: 'success' })
           setTimeout(() => {
-            uni.switchTab({ url: '/pages/home/index' })
+            uni.reLaunch({ url: '/pages/index/index' })
           }, 1000)
         }
       } catch (e) {
       } finally {
         this.loading = false
       }
+    },
+    handleTestLogin() {
+      // 一键测试登录，不需要请求后端
+      const mockToken = 'test_merchant_token_123'
+      const mockUserInfo = {
+        name: '测试商家',
+        phone: '13800138000',
+        role: 'merchant'
+      }
+      
+      const userStore = useUserStore()
+      userStore.login(mockToken, mockUserInfo)
+      
+      uni.showToast({ title: '测试登录成功', icon: 'success' })
+      setTimeout(() => {
+        uni.reLaunch({ url: '/pages/index/index' })
+      }, 1000)
     }
   }
 }
@@ -210,5 +245,16 @@ export default {
   height: 88rpx;
   line-height: 88rpx;
   border: none;
+}
+
+.test-login-area {
+  margin-top: 30rpx;
+}
+.test-btn {
+  background: #f0f0f0;
+  color: #666;
+  border-radius: 40rpx;
+  font-size: 30rpx;
+  padding: 10rpx 0;
 }
 </style>

@@ -58,6 +58,8 @@
 import { getOrderList, acceptOrder, deliverOrder, confirmOrder, cancelOrder } from '@/api/order.js'
 import { useUserStore } from '@/store/user.js'
 import { ORDER_STATUS_CLASS } from '@/config/index.js'
+import { initSocket, onNewOrder, getSocket } from '../../utils/socket.js'
+import { getToken } from '../../utils/auth.js'
 
 export default {
   data() {
@@ -72,6 +74,19 @@ export default {
     userRole() {
       return useUserStore().role
     }
+  },
+  onLoad() {
+    // 初始化 Socket 并监听新订单
+    const token = getToken()
+    if (token && !getSocket()) {
+      initSocket(token)
+    }
+    onNewOrder((data) => {
+      uni.showToast({ title: '收到新订单！', icon: 'none' })
+      if (this.isLogin) {
+        this.loadOrders()
+      }
+    })
   },
   onShow() {
     if (this.isLogin) {
@@ -88,7 +103,7 @@ export default {
     async loadOrders() {
       try {
         const res = await getOrderList()
-        this.orderList = res.订单列表 || []
+        this.orderList = res?.data?.订单列表 || res?.data?.data || res?.订单列表 || res?.data || []
       } catch (e) {}
     },
     statusClass(status) {
@@ -123,7 +138,10 @@ export default {
     },
     async handleAccept(orderId) {
       try {
-        await acceptOrder(orderId)
+        await acceptOrder(orderId, {
+          merchant_lng: 115.681123,
+          merchant_lat: 32.181234
+        })
         uni.showToast({ title: '已接单', icon: 'success' })
         this.loadOrders()
       } catch (e) {}

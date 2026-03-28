@@ -47,6 +47,12 @@
     </view>
 
     <view class="action-bar">
+      <button class="btn btn-primary" @click="goPickup">
+        去取餐
+      </button>
+      <button class="btn btn-primary" @click="goDelivery">
+        去送餐
+      </button>
       <button v-if="canDeliver" class="btn btn-success" @click="handleConfirmDelivery">
         确认送达
       </button>
@@ -56,7 +62,7 @@
 
 <script>
 import { getOrderDetail, confirmDelivery } from '@/api/order.js'
-import { ORDER_STATUS } from '@/config/index.js'
+import { ORDER_STATUS, TIANDITU_TK } from '@/config/index.js'
 import { formatTime } from '@/utils/index.js'
 
 export default {
@@ -109,6 +115,92 @@ export default {
       } catch (e) {
         console.error('确认送达失败', e)
       }
+    },
+    getRiderId() {
+      const userInfoStr = uni.getStorageSync('userInfo')
+      if (!userInfoStr) {
+        return ''
+      }
+      try {
+        const userInfo = JSON.parse(userInfoStr)
+        return userInfo.id || ''
+      } catch (e) {
+        console.error('解析用户信息失败', e)
+        return ''
+      }
+    },
+    parseAddress() {
+      try {
+        return typeof this.order.delivery_address === 'string'
+          ? JSON.parse(this.order.delivery_address)
+          : (this.order.delivery_address || {})
+      } catch (e) {
+        return {}
+      }
+    },
+    getCoordinateByKeys(source, keys) {
+      for (let i = 0; i < keys.length; i++) {
+        const value = source[keys[i]]
+        if (value !== undefined && value !== null && value !== '') {
+          return value
+        }
+      }
+      return ''
+    },
+    getMerchantCoords() {
+      const address = this.parseAddress()
+      const merchant = this.order.merchant || {}
+      const lng = this.getCoordinateByKeys(merchant, ['lng', 'lat_lng', 'longitude', 'lon', 'map_lng', 'merchant_lng', 'merchantLng'])
+        || this.getCoordinateByKeys(this.order || {}, ['merchant_lng', 'merchantLng', 'shop_lng', 'shopLng', 'store_lng', 'storeLng', 'pickup_lng', 'pickupLng', 'from_lng', 'fromLng'])
+        || this.getCoordinateByKeys(address, ['merchant_lng', 'shop_lng', 'store_lng', 'pickup_lng', 'from_lng'])
+      const lat = this.getCoordinateByKeys(merchant, ['lat', 'latitude', 'map_lat', 'merchant_lat', 'merchantLat'])
+        || this.getCoordinateByKeys(this.order || {}, ['merchant_lat', 'merchantLat', 'shop_lat', 'shopLat', 'store_lat', 'storeLat', 'pickup_lat', 'pickupLat', 'from_lat', 'fromLat'])
+        || this.getCoordinateByKeys(address, ['merchant_lat', 'shop_lat', 'store_lat', 'pickup_lat', 'from_lat'])
+      return { lng, lat }
+    },
+    getCustomerCoords() {
+      const address = this.parseAddress()
+      const fallback = this.order || {}
+      const lng = this.getCoordinateByKeys(address, ['lng', 'longitude', 'lon', 'map_lng', 'delivery_lng', 'deliveryLng', 'user_lng', 'receiver_lng', 'to_lng', 'dest_lng', 'customer_lng', 'customerLng'])
+        || this.getCoordinateByKeys(fallback, ['delivery_lng', 'deliveryLng', 'delivery_longitude', 'user_lng', 'userLng', 'contact_lng', 'receiver_lng', 'to_lng', 'dest_lng', 'customer_lng', 'customerLng'])
+      const lat = this.getCoordinateByKeys(address, ['lat', 'latitude', 'map_lat', 'delivery_lat', 'deliveryLat', 'user_lat', 'receiver_lat', 'to_lat', 'dest_lat', 'customer_lat', 'customerLat'])
+        || this.getCoordinateByKeys(fallback, ['delivery_lat', 'deliveryLat', 'delivery_latitude', 'user_lat', 'userLat', 'contact_lat', 'receiver_lat', 'to_lat', 'dest_lat', 'customer_lat', 'customerLat'])
+      return { lng, lat }
+    },
+    navigateToMap(payload) {
+      const riderId = this.getRiderId() || this.getCoordinateByKeys(this.order || {}, ['rider_id', 'riderId', 'user_id', 'userId']) || 'test-rider'
+      const token = uni.getStorageSync('token') || ''
+      const stage = payload && payload.stage === 'delivery' ? 'delivery' : 'pickup'
+      const safeTk = TIANDITU_TK || ''
+      const safeMerchantLng = payload && payload.merchantLng !== undefined && payload.merchantLng !== null && payload.merchantLng !== '' ? String(payload.merchantLng) : ''
+      const safeMerchantLat = payload && payload.merchantLat !== undefined && payload.merchantLat !== null && payload.merchantLat !== '' ? String(payload.merchantLat) : ''
+      const safeCustomerLng = payload && payload.customerLng !== undefined && payload.customerLng !== null && payload.customerLng !== '' ? String(payload.customerLng) : ''
+      const safeCustomerLat = payload && payload.customerLat !== undefined && payload.customerLat !== null && payload.customerLat !== '' ? String(payload.customerLat) : ''
+      uni.navigateTo({
+        url: `/pages/map/nav?riderId=${encodeURIComponent(riderId)}&token=${encodeURIComponent(token)}&stage=${encodeURIComponent(stage)}&tk=${encodeURIComponent(safeTk)}&merchantLng=${encodeURIComponent(safeMerchantLng)}&merchantLat=${encodeURIComponent(safeMerchantLat)}&customerLng=${encodeURIComponent(safeCustomerLng)}&customerLat=${encodeURIComponent(safeCustomerLat)}`
+      })
+    },
+    goPickup() {
+      const merchant = this.getMerchantCoords()
+      const customer = this.getCustomerCoords()
+      this.navigateToMap({
+        stage: 'pickup',
+        merchantLng: merchant.lng,
+        merchantLat: merchant.lat,
+        customerLng: customer.lng,
+        customerLat: customer.lat
+      })
+    },
+    goDelivery() {
+      const merchant = this.getMerchantCoords()
+      const customer = this.getCustomerCoords()
+      this.navigateToMap({
+        stage: 'delivery',
+        merchantLng: merchant.lng,
+        merchantLat: merchant.lat,
+        customerLng: customer.lng,
+        customerLat: customer.lat
+      })
     },
     callUser(phone) {
       if (phone) {

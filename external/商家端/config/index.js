@@ -1,5 +1,6 @@
-// 手机访问时改成电脑局域网 IP，如 'http://192.168.1.100:8000'
-export const BASE_URL = 'http://192.168.1.4:3000'
+// 手机访问时改成电脑局域网 IP，如 'http://192.168.1.100:3000'
+export const BASE_URL = 'http://localhost:3000'
+export const SOCKET_URL = 'ws://localhost:3000'
 
 export const CATEGORY_LIST = [
   { id: 1, name: '跑腿代购', emoji: '🏃', bgColor: '#FFF1F0' },

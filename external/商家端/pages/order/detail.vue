@@ -67,29 +67,60 @@ export default {
     this.loadDetail();
   },
   methods: {
+    formatDetail(raw) {
+      let goodsList = []
+      try {
+        if (raw?.products_info) {
+          const parsed = typeof raw.products_info === 'string' ? JSON.parse(raw.products_info) : raw.products_info
+          goodsList = (parsed || []).map((g) => ({
+            name: g.name || g.商品名称 || '',
+            num: g.num || g.数量 || 1,
+            price: g.price || g.价格 || 0
+          }))
+        } else if (Array.isArray(raw?.goodsList)) {
+          goodsList = raw.goodsList
+        }
+      } catch (e) {
+        goodsList = []
+      }
+
+      const status = Number(raw?.status ?? -1)
+      return {
+        id: raw?.id || raw?.order_id || this.orderId,
+        status,
+        statusText: ORDER_STATUS[status]?.text || '未知',
+        orderNo: raw?.order_no || raw?.orderNo || '',
+        createTime: raw?.created_at || raw?.createTime || '',
+        deliveryTime: raw?.delivery_time || raw?.deliveryTime || '',
+        receiver: raw?.contact_name || raw?.receiver || '',
+        phone: raw?.contact_phone || raw?.phone || '',
+        address: raw?.delivery_address || raw?.address || '',
+        goodsList,
+        totalAmount: raw?.pay_amount || raw?.total_amount || raw?.totalAmount || 0
+      }
+    },
     async loadDetail() {
       try {
         const res = await getOrderDetail(this.orderId);
-        this.detail = res?.data || {};
-        this.detail.statusText = ORDER_STATUS[this.detail.status]?.text || '未知';
+        const raw = res?.data || res || {};
+        this.detail = this.formatDetail(raw);
+        this.orderId = this.detail.id || this.orderId;
       } catch (e) {
-        this.detail = {
-          orderNo: '202403090001',
-          status: 0,
-          statusText: '待接单',
-          createTime: '2024-03-09 12:30',
-          deliveryTime: '12:50',
-          receiver: '张三',
-          phone: '138****8888',
-          address: '固始县XX路XX号',
-          goodsList: [{ name: '黄焖鸡米饭', num: 2, price: '35.80' }],
-          totalAmount: '35.80'
-        };
+        this.detail = null;
+        uni.showToast({ title: '加载订单详情失败', icon: 'none' });
       }
     },
     async acceptOrder() {
       try {
-        await apiAccept(this.orderId);
+        const realOrderId = Number(this.detail?.id || this.detail?.order_id || this.orderId)
+        if (!realOrderId || isNaN(realOrderId)) {
+          uni.showToast({ title: '订单ID无效', icon: 'none' })
+          return
+        }
+        await apiAccept(realOrderId, {
+          merchant_lng: 115.681123,
+          merchant_lat: 32.181234
+        });
         uni.showToast({ title: '接单成功' });
         this.loadDetail();
       } catch (e) {}

@@ -6,27 +6,27 @@ import request from '../utils/request.js'
 
 // 获取当前商家店铺信息
 export function getShopInfo() {
-  return request({ url: '/merchant/my', method: 'GET' })
+  return request({ url: '/shop/my', method: 'GET' })
 }
 
 // 更新店铺信息
 export function updateShopInfo(data) {
-  return request({ url: '/merchant/update', method: 'PUT', data: data })
+  return request({ url: '/shop/update', method: 'PUT', data: data })
 }
 
 // 切换营业状态
 export function toggleShopStatus(status) {
-  return request({ url: '/merchant/update', method: 'PUT', data: { status: status } })
+  return request({ url: '/shop/update', method: 'PUT', data: { status: status } })
 }
 
 // 获取店铺统计数据
 export function getShopStats() {
-  return request({ url: '/merchant/stats', method: 'GET' })
+  return request({ url: '/shop/stats', method: 'GET' })
 }
 
 // 获取工作台数据
 export function getDashboard() {
-  return request({ url: '/merchant/dashboard', method: 'GET' })
+  return request({ url: '/shop/dashboard', method: 'GET' })
 }
 
 // 获取商品列表
