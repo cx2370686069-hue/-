@@ -131,10 +131,21 @@ exports.getMyMerchant = async (req, res, next) => {
   try {
     const user = req.user;
     
-    const merchant = await Merchant.findOne({ where: { user_id: user.id } });
+    let merchant = await Merchant.findOne({ where: { user_id: user.id } });
 
     if (!merchant) {
-      return res.status(404).json(errorResponse('您还没有店铺'));
+      // 容错处理：如果前端没有做“创建店铺”的页面逻辑，当请求获取我的店铺时，
+      // 后端自动为该商家账号创建一个默认店铺，方便后续的更新和添加商品操作。
+      merchant = await Merchant.create({
+        user_id: user.id,
+        name: user.nickname || '未命名店铺',
+        phone: user.phone || '',
+        address: '待完善',
+        latitude: 32.18, // 默认固始县经纬度
+        longitude: 115.68,
+        status: 1, // 默认营业
+        audit_status: 1 // 默认审核通过
+      });
     }
 
     res.json(successResponse(merchant));
