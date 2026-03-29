@@ -80,12 +80,17 @@ export function updateProductStatus(id, status) {
 // ========== 店铺 ==========
 // 获取我的店铺
 export function getShopInfo() {
-  return request({ url: '/merchant/info', method: 'GET' });
+  return request({ url: '/merchant/my', method: 'GET' });
 }
 
 // 更新店铺信息
 export function updateShopInfo(data) {
-  return request({ url: '/merchant/info', method: 'PUT', data });
+  return request({ url: '/merchant/update', method: 'PUT', data });
+}
+
+// 创建店铺信息
+export function createShop(data) {
+  return request({ url: '/merchant/create', method: 'POST', data });
 }
 
 // 更新店铺营业状态

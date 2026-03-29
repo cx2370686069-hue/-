@@ -2,21 +2,21 @@
   <view class="container">
     <view class="card form">
       <view class="form-item">
-        <text class="label">商品名称</text>
+        <text class="label">商品名称 <text class="required">*</text></text>
         <input v-model="form.name" placeholder="请输入商品名称" />
       </view>
       <view class="form-item">
-        <text class="label">售价(元)</text>
+        <text class="label">售价(元) <text class="required">*</text></text>
         <input v-model="form.price" type="digit" placeholder="0.00" />
       </view>
       <view class="form-item">
-        <text class="label">库存</text>
-        <input v-model="form.stock" type="number" placeholder="请输入库存" />
+        <text class="label">库存 <text class="required">*</text></text>
+        <input v-model="form.stock" type="number" placeholder="请输入库存数量" />
       </view>
       <view class="form-item">
         <text class="label">商品图片</text>
         <view class="img-upload" @click="chooseImage">
-          <image v-if="form.image" :src="form.image" class="preview" mode="aspectFill" />
+          <image v-if="form.image_url" :src="form.image_url" class="preview" mode="aspectFill" />
           <text v-else class="placeholder">+ 添加图片</text>
         </view>
       </view>
@@ -31,7 +31,7 @@
 </template>
 
 <script>
-import { getProductDetail, createProduct, updateProduct } from '../../api/index.js';
+import { createProduct, updateProduct } from '@/api/shop.js'
 
 export default {
   data() {
@@ -41,82 +41,90 @@ export default {
         name: '',
         price: '',
         stock: '',
-        image: '',
+        image_url: '',
         status: 1
       }
-    };
+    }
   },
   onLoad(opt) {
-    this.id = opt?.id || '';
-    if (this.id) this.loadDetail();
+    this.id = opt?.id || ''
+    if (this.id) {
+      this.loadDetail()
+    }
   },
   methods: {
     async loadDetail() {
       try {
-        const res = await getProductDetail(this.id);
-        const data = res?.data || res || {};
+        const res = await getProductDetail(this.id)
+        const data = res?.data || res || {}
         this.form = {
-          ...this.form,
           name: data.name || '',
           price: data.price ?? '',
           stock: data.stock ?? '',
-          image: data.image || '',
+          image_url: data.image_url || '',
           status: Number(data.status ?? 1)
-        };
+        }
       } catch (e) {
-        uni.showToast({ title: '加载商品详情失败', icon: 'none' });
+        uni.showToast({ title: '加载商品详情失败', icon: 'none' })
       }
     },
     onStatusChange(e) {
-      this.form.status = e.detail.value ? 1 : 0;
+      this.form.status = e.detail.value ? 1 : 0
     },
     chooseImage() {
       uni.chooseImage({
         count: 1,
         success: (res) => {
-          this.form.image = res.tempFilePaths[0];
+          this.form.image_url = res.tempFilePaths[0]
         }
-      });
+      })
     },
     async submit() {
       if (!this.form.name.trim()) {
-        uni.showToast({ title: '请输入商品名称', icon: 'none' });
-        return;
+        uni.showToast({ title: '请输入商品名称', icon: 'none' })
+        return
       }
-      if (!this.form.price) {
-        uni.showToast({ title: '请输入售价', icon: 'none' });
-        return;
+      if (!this.form.price || Number(this.form.price) <= 0) {
+        uni.showToast({ title: '请输入正确的售价', icon: 'none' })
+        return
       }
       if (this.form.stock === '' || Number(this.form.stock) < 0) {
-        uni.showToast({ title: '请输入正确库存', icon: 'none' });
-        return;
+        uni.showToast({ title: '请输入正确的库存', icon: 'none' })
+        return
       }
+
       const payload = {
         name: this.form.name.trim(),
         price: Number(this.form.price),
         stock: Number(this.form.stock),
-        image: this.form.image || '',
-        status: Number(this.form.status)
+        status: Number(this.form.status),
+        image_url: this.form.image_url || '',
+        description: '暂无描述',
+        category_id: 1
       }
+
       try {
         if (this.id) {
-          await updateProduct(this.id, payload);
-          uni.showToast({ title: '修改成功' });
+          await updateProduct(this.id, payload)
+          uni.showToast({ title: '修改成功', icon: 'success' })
         } else {
-          await createProduct(payload);
-          uni.showToast({ title: '添加成功' });
+          await createProduct(payload)
+          uni.showToast({ title: '添加成功', icon: 'success' })
         }
-        setTimeout(() => uni.navigateBack(), 1500);
-      } catch (e) {}
+        setTimeout(() => uni.navigateBack(), 1500)
+      } catch (e) {
+        uni.showToast({ title: '操作失败', icon: 'none' })
+      }
     }
   }
-};
+}
 </script>
 
 <style scoped>
 .form-item { margin-bottom: 32rpx; }
 .label { display: block; font-size: 28rpx; margin-bottom: 12rpx; color: #666; }
-input, textarea {
+.required { color: #f44336; }
+input {
   width: 100%;
   padding: 24rpx;
   border: 1rpx solid #eee;
@@ -124,7 +132,6 @@ input, textarea {
   font-size: 28rpx;
   box-sizing: border-box;
 }
-textarea { min-height: 120rpx; }
 .img-upload {
   width: 200rpx;
   height: 200rpx;

@@ -373,18 +373,21 @@ exports.getMyProducts = async (req, res, next) => {
     if (status !== undefined) where.status = status;
     if (category_id) where.category_id = category_id;
 
+    // 为了兼容，我们这里使用 left outer join，不强制要求商品必须有分类
     const products = await Product.findAll({
       where,
       include: [{
         model: ProductCategory,
         as: 'category',
-        attributes: ['id', 'name']
+        attributes: ['id', 'name'],
+        required: false // 允许商品没有分类
       }],
       order: [['id', 'DESC']]
     });
 
     res.json(successResponse(products));
   } catch (error) {
+    console.error('获取商家商品列表失败:', error);
     next(error);
   }
 };
