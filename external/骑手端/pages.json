@@ -1,9 +1,9 @@
 {
 	"pages": [
 		{
-			"path": "pages/test-nav/test-nav",
+			"path": "pages/login/index",
 			"style": {
-				"navigationBarTitleText": "导航沙盒测试",
+				"navigationBarTitleText": "登录注册",
 				"navigationBarBackgroundColor": "#1890FF",
 				"navigationBarTextStyle": "white"
 			}
@@ -12,14 +12,6 @@
 			"path": "pages/index/index",
 			"style": {
 				"navigationBarTitleText": "骑手工作台",
-				"navigationBarBackgroundColor": "#1890FF",
-				"navigationBarTextStyle": "white"
-			}
-		},
-		{
-			"path": "pages/test/index",
-			"style": {
-				"navigationBarTitleText": "测试页面",
 				"navigationBarBackgroundColor": "#1890FF",
 				"navigationBarTextStyle": "white"
 			}
@@ -83,9 +75,17 @@
 			}
 		},
 		{
-			"path": "pages/login/index",
+			"path": "pages/test/index",
 			"style": {
-				"navigationBarTitleText": "登录注册",
+				"navigationBarTitleText": "测试页面",
+				"navigationBarBackgroundColor": "#1890FF",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
+			"path": "pages/test-nav/test-nav",
+			"style": {
+				"navigationBarTitleText": "导航沙盒测试",
 				"navigationBarBackgroundColor": "#1890FF",
 				"navigationBarTextStyle": "white"
 			}

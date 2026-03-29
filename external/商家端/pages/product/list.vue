@@ -46,12 +46,10 @@ export default {
     async loadList() {
       try {
         const res = await getProductList({ keyword: this.keyword });
-        this.list = res?.data?.list || [];
+        this.list = res?.data?.list || res?.data?.data || res?.list || [];
       } catch (e) {
-        this.list = [
-          { id: 1, name: '黄焖鸡米饭', desc: '经典黄焖鸡', price: '18.00', image: '', status: 1 },
-          { id: 2, name: '酸辣土豆丝', desc: '家常小炒', price: '12.00', image: '', status: 1 }
-        ];
+        this.list = [];
+        uni.showToast({ title: '加载商品失败', icon: 'none' });
       }
     },
     goEdit(item) {

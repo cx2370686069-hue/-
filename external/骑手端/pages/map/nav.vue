@@ -136,7 +136,7 @@ export default {
       this.emitLocationForce(pos)
     },
     initSocket() {
-      const SOCKET_URL = 'http://192.168.1.4:3000'
+      const SOCKET_URL = 'http://121.43.190.218:3000'
       console.log('开始初始化 Socket.io，目标地址:', SOCKET_URL)
       
       try {

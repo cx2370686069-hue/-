@@ -27,7 +27,7 @@ export default {
       return
     }
     
-    this.webViewSrc = `http://192.168.1.4:5500/driver_map.html?token=${token}&riderId=${riderId}`
+    this.webViewSrc = `http://121.43.190.218:3000/driver_map.html?token=${token}&riderId=${riderId}`
   }
 }
 </script>

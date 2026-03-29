@@ -1,7 +1,7 @@
 /**
  * 全局配置
  */
-export const BASE_URL = 'http://192.168.1.4:3000'
+export const BASE_URL = 'http://121.43.190.218:3000'
 
 export const TIANDITU_TK = ''
 

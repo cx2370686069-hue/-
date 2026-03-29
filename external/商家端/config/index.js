@@ -1,6 +1,6 @@
-// 手机访问时改成电脑局域网 IP，如 'http://192.168.1.100:3000'
-export const BASE_URL = 'http://localhost:3000'
-export const SOCKET_URL = 'ws://localhost:3000'
+// 生产环境地址（阿里云服务器）
+export const BASE_URL = 'http://121.43.190.218:3000'
+export const SOCKET_URL = 'ws://121.43.190.218:3000'
 
 export const CATEGORY_LIST = [
   { id: 1, name: '跑腿代购', emoji: '🏃', bgColor: '#FFF1F0' },

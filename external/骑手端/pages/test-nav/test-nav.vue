@@ -112,7 +112,7 @@ export default {
       try {
         const res = await new Promise((resolve, reject) => {
           uni.request({
-            url: 'http://192.168.1.4:3000/api/orders/test-create',
+            url: 'http://121.43.190.218:3000/api/orders/test-create',
             method: 'POST',
             data: {},
             timeout: 10000,
@@ -182,7 +182,7 @@ export default {
       this.simRunning = true
     },
     initSocket() {
-      const SOCKET_URL = 'http://192.168.1.4:3000'
+      const SOCKET_URL = 'http://121.43.190.218:3000'
       try {
         this.socket = io(SOCKET_URL, {
           transports: ['websocket', 'polling'],

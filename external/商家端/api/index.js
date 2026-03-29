@@ -1,6 +1,6 @@
 /**
  * API 接口统一管理
- * 后端接口地址：http://localhost:3000/api
+ * 后端接口地址：http://121.43.190.218:3000/api
  */
 
 import request from '../utils/request.js';
@@ -59,7 +59,7 @@ export function getProductDetail(id) {
 
 // 创建商品
 export function createProduct(data) {
-  return request({ url: '/merchant/product', method: 'POST', data });
+  return request({ url: '/product', method: 'POST', data });
 }
 
 // 更新商品
@@ -80,12 +80,12 @@ export function updateProductStatus(id, status) {
 // ========== 店铺 ==========
 // 获取我的店铺
 export function getShopInfo() {
-  return request({ url: '/merchant/my', method: 'GET' });
+  return request({ url: '/merchant/info', method: 'GET' });
 }
 
 // 更新店铺信息
 export function updateShopInfo(data) {
-  return request({ url: '/merchant/update', method: 'PUT', data });
+  return request({ url: '/merchant/info', method: 'PUT', data });
 }
 
 // 更新店铺营业状态

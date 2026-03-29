@@ -14,12 +14,12 @@
         <input v-model="form.address" placeholder="请输入店铺地址" />
       </view>
       <view class="form-item">
-        <text class="label">营业时间</text>
-        <input v-model="form.businessHours" placeholder="如：9:00-21:00" />
+        <text class="label">纬度</text>
+        <input v-model="form.latitude" type="digit" placeholder="如：32.18" />
       </view>
       <view class="form-item">
-        <text class="label">店铺简介</text>
-        <textarea v-model="form.intro" placeholder="请输入店铺简介" />
+        <text class="label">经度</text>
+        <input v-model="form.longitude" type="digit" placeholder="如：115.68" />
       </view>
       <view class="form-item">
         <text class="label">营业状态</text>
@@ -41,8 +41,8 @@ export default {
         name: '',
         phone: '',
         address: '',
-        businessHours: '',
-        intro: '',
+        latitude: '',
+        longitude: '',
         status: 1
       }
     };
@@ -54,16 +54,18 @@ export default {
     async loadInfo() {
       try {
         const res = await getShopInfo();
-        this.form = { ...this.form, ...res?.data };
-      } catch (e) {
+        const data = res?.data || res || {};
         this.form = {
-          name: '固始县外卖商家',
-          phone: '13800138000',
-          address: '固始县XX路XX号',
-          businessHours: '9:00-21:00',
-          intro: '欢迎光临',
-          status: 1
+          ...this.form,
+          name: data.name || '',
+          phone: data.phone || '',
+          address: data.address || '',
+          latitude: data.latitude ?? '',
+          longitude: data.longitude ?? '',
+          status: Number(data.status ?? 1)
         };
+      } catch (e) {
+        uni.showToast({ title: '加载店铺信息失败', icon: 'none' });
       }
     },
     onStatusChange(e) {
@@ -74,8 +76,23 @@ export default {
         uni.showToast({ title: '请输入店铺名称', icon: 'none' });
         return;
       }
+      if (!this.form.phone.trim()) {
+        uni.showToast({ title: '请输入联系电话', icon: 'none' });
+        return;
+      }
+      if (!this.form.address.trim()) {
+        uni.showToast({ title: '请输入详细地址', icon: 'none' });
+        return;
+      }
       try {
-        await updateShopInfo(this.form);
+        await updateShopInfo({
+          name: this.form.name.trim(),
+          phone: this.form.phone.trim(),
+          address: this.form.address.trim(),
+          latitude: Number(this.form.latitude || 0),
+          longitude: Number(this.form.longitude || 0),
+          status: Number(this.form.status)
+        });
         uni.showToast({ title: '保存成功' });
       } catch (e) {}
     }

@@ -23,6 +23,8 @@ router.use('/merchant', merchantDashboardRouter); // 商家端工作台、财务
 router.use('/pay', payRouter);
 router.use('/rider', riderRouter);
 router.use('/test', testRouter);
+// 兼容前端请求
+router.use('/product', merchantRouter);
 
 // 健康检查
 router.get('/health', (req, res) => {

@@ -23,25 +23,45 @@
         <input 
           v-model="form.password" 
           type="password" 
-          placeholder="请输入密码"
+          placeholder="请输入密码（至少6位）"
           class="form-input"
         />
       </view>
 
-      <button class="login-btn" @click="handleLogin" :loading="loading">
-        登录
+      <view class="form-item" v-if="isRegisterMode">
+        <text class="form-label">确认密码</text>
+        <input 
+          v-model="form.confirmPassword" 
+          type="password" 
+          placeholder="请再次输入密码"
+          class="form-input"
+        />
+      </view>
+
+      <view class="form-item" v-if="isRegisterMode">
+        <text class="form-label">昵称（选填）</text>
+        <input 
+          v-model="form.nickname" 
+          type="text" 
+          placeholder="请输入昵称"
+          class="form-input"
+        />
+      </view>
+
+      <button class="login-btn" @click="handleSubmit" :loading="loading">
+        {{ isRegisterMode ? '注册' : '登录' }}
       </button>
 
       <view class="tips">
-        <text class="tip-text">还没有账号？</text>
-        <text class="tip-link" @click="goRegister">立即注册</text>
+        <text class="tip-text">{{ isRegisterMode ? '已有账号？' : '还没有账号？' }}</text>
+        <text class="tip-link" @click="toggleMode">{{ isRegisterMode ? '立即登录' : '立即注册' }}</text>
       </view>
     </view>
   </view>
 </template>
 
 <script>
-import { login } from '@/api/auth.js'
+import { login, register } from '@/api/auth.js'
 import { setToken, setUserInfo } from '@/utils/storage.js'
 
 export default {
@@ -49,65 +69,113 @@ export default {
     return {
       form: {
         phone: '',
-        password: ''
+        password: '',
+        confirmPassword: '',
+        nickname: ''
       },
+      isRegisterMode: false,
       loading: false
     }
   },
   methods: {
-    async handleLogin() {
-      const { phone, password } = this.form
+    toggleMode() {
+      this.isRegisterMode = !this.isRegisterMode
+      this.form.confirmPassword = ''
+      this.form.nickname = ''
+    },
+    
+    validateForm() {
+      const { phone, password, confirmPassword, nickname } = this.form
       
-      // 验证
       if (!phone || phone.length !== 11) {
         uni.showToast({ title: '请输入正确的手机号', icon: 'none' })
-        return
+        return false
       }
       
       if (!password || password.length < 6) {
         uni.showToast({ title: '密码至少 6 位', icon: 'none' })
-        return
+        return false
       }
+      
+      if (this.isRegisterMode) {
+        if (password !== confirmPassword) {
+          uni.showToast({ title: '两次密码不一致', icon: 'none' })
+          return false
+        }
+      }
+      
+      return true
+    },
+    
+    async handleSubmit() {
+      if (!this.validateForm()) return
       
       this.loading = true
       
       try {
-        const res = await login({ phone, password })
-        
-        // 保存 token 和用户信息
-        if (res.data) {
-          setToken(res.data.token)
-          setUserInfo(res.data.user)
-          
-          // 检查是否是骑手角色
-          if (res.data.user.role !== 'rider') {
-            uni.showToast({ 
-              title: '该账号不是骑手账号', 
-              icon: 'none',
-              duration: 2000
-            })
-            setTimeout(() => {
-              uni.clearStorageSync()
-            }, 2000)
-            return
-          }
-          
-          uni.showToast({ title: '登录成功', icon: 'success' })
-          
-          // 跳转到工作台
-          setTimeout(() => {
-            uni.reLaunch({ url: '/pages/index/index' })
-          }, 1500)
+        if (this.isRegisterMode) {
+          await this.handleRegister()
+        } else {
+          await this.handleLogin()
         }
       } catch (e) {
-        console.error('登录失败:', e)
+        console.error('操作失败:', e)
       } finally {
         this.loading = false
       }
     },
     
-    goRegister() {
-      uni.showToast({ title: '请联系管理员注册', icon: 'none' })
+    async handleLogin() {
+      const { phone, password } = this.form
+      
+      const res = await login({ phone, password })
+      
+      if (res.data) {
+        setToken(res.data.token)
+        setUserInfo(res.data.user)
+        
+        if (res.data.user.role !== 'rider') {
+          uni.showToast({ 
+            title: '该账号不是骑手账号', 
+            icon: 'none',
+            duration: 2000
+          })
+          setTimeout(() => {
+            uni.clearStorageSync()
+          }, 2000)
+          return
+        }
+        
+        uni.showToast({ title: '登录成功', icon: 'success' })
+        
+        setTimeout(() => {
+          uni.reLaunch({ url: '/pages/index/index' })
+        }, 1500)
+      }
+    },
+    
+    async handleRegister() {
+      const { phone, password, nickname } = this.form
+      
+      const registerData = {
+        phone,
+        password,
+        nickname: nickname || `骑手${phone.slice(-4)}`,
+        role: 'rider',
+        rider_kind: 'county'
+      }
+      
+      const res = await register(registerData)
+      
+      uni.showToast({ 
+        title: '注册成功，请登录', 
+        icon: 'success',
+        duration: 2000
+      })
+      
+      this.isRegisterMode = false
+      this.form.password = ''
+      this.form.confirmPassword = ''
     }
   }
 }
