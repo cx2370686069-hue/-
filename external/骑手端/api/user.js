@@ -27,3 +27,10 @@ export function getRiderBalance() {
 export function bindStationTown(town) {
   return post('/rider/station/bind', { town })
 }
+
+/**
+ * 上报骑手位置
+ */
+export function reportLocation(latitude, longitude) {
+  return post('/rider/location/report', { latitude, longitude })
+}

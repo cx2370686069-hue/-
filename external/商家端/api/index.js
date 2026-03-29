@@ -36,12 +36,12 @@ export function rejectOrder(id, data) {
   return request({ url: '/order/reject', method: 'POST', data: { order_id: id, reason: data?.reason || '商品已售罄' } });
 }
 
-// 开始制作（备货中）
+// 开始制作（备货中）- 已废弃，接单后自动进入备餐中
 export function startMaking(id) {
   return request({ url: '/order/prepare', method: 'POST', data: { order_id: id } });
 }
 
-// 出餐完成（备货完成）
+// 出餐完成（呼叫骑手）
 export function readyForDelivery(id) {
   return request({ url: '/order/prepare', method: 'POST', data: { order_id: id } });
 }

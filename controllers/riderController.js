@@ -57,6 +57,27 @@ exports.reportLocation = async (req, res, next) => {
       rider_location_updated_at: new Date()
     });
 
+    // ==================== 调度大屏同步推送 ====================
+    try {
+      const socketService = require('../services/socketService');
+      const io = socketService.getIO();
+      if (io) {
+        const cleanData = {
+          type: 'location_update',
+          vehicleId: String(user.id), // 强制转为字符串，防止前端 substring 报错
+          position: [longitude, latitude], // 大屏需要的格式 [lng, lat]
+          speed: 0,
+          direction: 0,
+          status: user.rider_status === 1 ? 'delivering' : 'idle',
+          timestamp: Date.now()
+        };
+        io.to('dispatcher_room').emit('location_update', cleanData);
+      }
+    } catch (err) {
+      console.error('推送骑手位置到大屏失败:', err);
+    }
+    // ==========================================================
+
     res.json(
       successResponse(
         {

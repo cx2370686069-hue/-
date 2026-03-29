@@ -41,7 +41,7 @@ export function getProductList(params = {}) {
 
 // 创建商品
 export function createProduct(data) {
-  return request({ url: '/merchant/product', method: 'POST', data: data })
+  return request({ url: '/merchant/product/create', method: 'POST', data: data })
 }
 
 // 更新商品

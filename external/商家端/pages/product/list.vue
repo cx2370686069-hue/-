@@ -7,7 +7,7 @@
 
     <view v-if="list.length" class="product-list">
       <view v-for="item in list" :key="item.id" class="card product-item">
-        <image class="product-img" :src="item.image_url || 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='" mode="aspectFill" />
+        <image class="product-img" :src="item.image || 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='" mode="aspectFill" />
         <view class="product-info">
           <text class="name">{{ item.name }}</text>
           <text class="desc text-gray">{{ item.description || '暂无描述' }}</text>

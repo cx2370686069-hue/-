@@ -74,7 +74,7 @@ function init(server) {
       if (cleanPosition && !isNaN(cleanPosition[0]) && !isNaN(cleanPosition[1])) {
         const cleanData = {
           type: 'location_update',
-          vehicleId: data.vehicleId || socket.userId,
+          vehicleId: String(data.vehicleId || socket.userId), // 强制转为字符串
           position: cleanPosition,
           speed: data.speed || 0,
           direction: data.direction || 0,

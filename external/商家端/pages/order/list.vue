@@ -140,6 +140,7 @@
 
           <!-- 操作按钮 -->
           <view class="order-actions">
+            <!-- 状态 1：待接单 - 只显示接单和拒单 -->
             <button 
               v-if="order.status === 1" 
               class="btn btn-primary"
@@ -154,27 +155,19 @@
             >
               拒单
             </button>
+            <!-- 状态 2：备餐中 - 只显示制作完成 -->
             <button 
               v-if="order.status === 2" 
-              class="btn btn-primary"
-              @click.stop="startMake(order)"
-            >
-              开始制作
-            </button>
-            <button 
-              v-if="order.status === 3" 
               class="btn btn-primary"
               @click.stop="finishMake(order)"
             >
               制作完成
             </button>
-            <button 
-              v-if="order.status === 4" 
-              class="btn btn-primary"
-              @click.stop="callRider(order)"
-            >
-              呼叫骑手
-            </button>
+            <!-- 状态 3：待配送/已呼叫骑手 -->
+            <text v-if="order.status === 3" class="status-hint">已呼叫骑手</text>
+            <!-- 状态 4：配送中 -->
+            <text v-if="order.status === 4" class="status-hint">配送中</text>
+            <!-- 通用按钮 -->
             <button 
               class="btn btn-default"
               @click.stop="printOrder(order)"
@@ -212,7 +205,7 @@
 </template>
 
 <script>
-import { getDashboard, getOrderList, acceptOrder, rejectOrder, startMaking, readyForDelivery } from '../../api/index.js'
+import { getDashboard, getOrderList, acceptOrder, rejectOrder, readyForDelivery } from '../../api/index.js'
 import { ORDER_STATUS, formatTime } from '../../utils/index.js'
 import { initSocket, onNewOrder, getSocket } from '../../utils/socket.js'
 import { getToken } from '../../utils/auth.js'
@@ -244,12 +237,11 @@ export default {
       statusTabs: [
         { key: '', label: '全部', count: 0 },
         { key: '1', label: '待接单', count: 0 },
-        { key: '2', label: '已接单', count: 0 },
-        { key: '3', label: '备货中', count: 0 },
-        { key: '4', label: '备货完成', count: 0 },
-        { key: '5', label: '配送中', count: 0 },
-        { key: '6', label: '已完成', count: 0 },
-        { key: '7', label: '已取消', count: 0 }
+        { key: '2', label: '备餐中', count: 0 },
+        { key: '3', label: '待配送', count: 0 },
+        { key: '4', label: '配送中', count: 0 },
+        { key: '5', label: '已完成', count: 0 },
+        { key: '6', label: '已取消', count: 0 }
       ],
       
       // 订单列表（已适配后端字段）
@@ -429,13 +421,14 @@ export default {
         // 统计今日
         if (order.createTime) {
           todayOrders += 1
-          if ([5, 6].includes(order.status)) {
+          // 已完成的订单计入收入
+          if (order.status === 5) {
             todayIncome += Number(order.totalAmount || 0)
           }
         }
 
-        // 待处理：待接单、已接单、备货中、备货完成、配送中
-        if ([1, 2, 3, 4, 5].includes(order.status)) {
+        // 待处理：待接单、备餐中、待配送、配送中
+        if ([1, 2, 3, 4].includes(order.status)) {
           pendingCount += 1
         }
 
@@ -517,37 +510,21 @@ export default {
       }
     },
     
-    // 开始制作 / 备货中（状态：2 已接单）
-    async startMake(order) {
-      try {
-        await startMaking(order.id)
-        uni.showToast({ title: '开始制作', icon: 'success' })
-        this.loadOrderList()
-      } catch (e) {
-        uni.showToast({ title: '操作失败', icon: 'none' })
-      }
-    },
-    
-    // 制作完成 / 备货完成（状态：3 备货中）
+    // 制作完成 / 出餐（状态：2 备餐中 -> 3 待配送）
     async finishMake(order) {
       try {
         await readyForDelivery(order.id)
-        uni.showToast({ title: '制作完成', icon: 'success' })
-        this.loadOrderList()
+        uni.showToast({ title: '出餐成功，已呼叫骑手', icon: 'success' })
+        // 更新本地订单状态
+        const idx = this.orderList.findIndex(o => o.id === order.id)
+        if (idx !== -1) {
+          this.orderList[idx].status = 3
+          this.orderList[idx].statusText = '待配送'
+        }
+        this.updateStatsAndCounts()
       } catch (e) {
         uni.showToast({ title: '操作失败', icon: 'none' })
       }
-    },
-    
-    // 呼叫骑手
-    callRider(order) {
-      uni.showActionSheet({
-        title: '选择配送方式',
-        itemList: ['平台呼叫骑手', '自行配送', '顾客自提'],
-        success: (res) => {
-          console.log('选择:', res.tapIndex)
-        }
-      })
     },
     
     // 打印订单
@@ -753,10 +730,9 @@ export default {
   border-radius: 8rpx;
   font-weight: 500;
 }
-.status-0 { background: #FFF1F0; color: #FF6B35; }
-.status-1 { background: #E6F7FF; color: #1890FF; }
-.status-2 { background: #FFF7E6; color: #FAAD14; }
-.status-3 { background: #F6FFED; color: #52C41A; }
+.status-1 { background: #FFF1F0; color: #FF6B35; }
+.status-2 { background: #E6F7FF; color: #1890FF; }
+.status-3 { background: #FFF7E6; color: #FAAD14; }
 .status-4 { background: #F0F5FF; color: #2F54EB; }
 .status-5 { background: #F6FFED; color: #52C41A; }
 .status-6 { background: #F5F5F5; color: #999; }
@@ -925,6 +901,12 @@ export default {
 .btn-default {
   background: #f5f5f5;
   color: #666;
+}
+
+.status-hint {
+  font-size: 26rpx;
+  color: #52C41A;
+  padding: 16rpx 32rpx;
 }
 
 /* 加载更多 */

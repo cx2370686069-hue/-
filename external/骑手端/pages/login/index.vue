@@ -22,13 +22,32 @@
         <text class="form-label">密码</text>
         <input 
           v-model="form.password" 
-          type="password" 
+
+
+      <view class="for【指令】请帮我在骑手端增加“实时上报地理位置”的功能。当前后端大屏调度台需要收到骑手坐标才能派单。
+
+具体要求：
+1. 打开 `api/user.js`，在文件末尾新增以下接口：
+```javascript
+/**
+ * 上报骑手位置
+ */
+export function reportLocation(latitude, longitude) {
+  return post('/rider/location/report', { latitude, longitude })
+}
+```
+2. 打开 `App.vue`，在全局增加一个定时器，每 10 秒上报一次位置：
+- 在 `data` 或外部定义一个 `locationTimer`。
+- 在 `onShow` 生命周期中，判断如果本地有 token（即已登录状态），则启动 `setInterval`。
+- 定时器内使用 `uni.getLocation({ type: 'gcj02' })` 获取经纬度，获取成功后调用 `reportLocation(res.latitude, res.longitude)` 上报给后端。
+- 在 `onHide` 生命周期中清除定时器 `clearInterval`，防止后台耗电。
+- 注意：如果获取定位失败，`catch` 捕获异常打印个日志即可，千万不要让程序崩溃或弹窗报错打扰用户。
+
+请直接帮我修改代码！修改完后我会刷新 HBuilderX 测试。          type="password" 
           placeholder="请输入密码（至少6位）"
           class="form-input"
         />
-      </view>
-
-      <view class="form-item" v-if="isRegisterMode">
+      </view>m-item" v-if="isRegisterMode">
         <text class="form-label">确认密码</text>
         <input 
           v-model="form.confirmPassword" 

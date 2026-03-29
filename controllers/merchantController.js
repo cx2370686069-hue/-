@@ -85,7 +85,17 @@ exports.getProducts = async (req, res, next) => {
   try {
     const { merchant_id, category_id, status = 1 } = req.query;
     
-    const where = { merchant_id, status };
+    // 修复：如果前端没有传 merchant_id，且当前是商家登录，则默认使用当前商家的 id
+    let targetMerchantId = merchant_id;
+    if (!targetMerchantId && req.user) {
+      const merchant = await Merchant.findOne({ where: { user_id: req.user.id } });
+      if (merchant) {
+        targetMerchantId = merchant.id;
+      }
+    }
+
+    const where = { status };
+    if (targetMerchantId) where.merchant_id = targetMerchantId;
     if (category_id) where.category_id = category_id;
 
     const products = await Product.findAll({

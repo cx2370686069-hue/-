@@ -28,11 +28,10 @@ export function formatTime(timestamp, format = 'YYYY-MM-DD HH:mm') {
     .replace('ss', second);
 }
 
-// 订单状态映射
+// 订单状态映射（与后端状态机一致）
 export const ORDER_STATUS = {
-  0: { text: '待接单', color: '#FF6B35' },
-  1: { text: '已接单', color: '#1890ff' },
-  2: { text: '制作中', color: '#1890ff' },
+  1: { text: '待接单', color: '#FF6B35' },
+  2: { text: '备餐中', color: '#1890ff' },
   3: { text: '待配送', color: '#faad14' },
   4: { text: '配送中', color: '#1890ff' },
   5: { text: '已完成', color: '#52c41a' },

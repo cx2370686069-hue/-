@@ -138,8 +138,8 @@ exports.createOrder = async (req, res, next) => {
         orders: [
           {
             id: order.order_no,
-            lng: order.delivery_longitude,
-            lat: order.delivery_latitude,
+            lng: order.customer_lng ?? order.delivery_longitude,
+            lat: order.customer_lat ?? order.delivery_latitude,
             type: order.order_type === 'county' ? 'county' : 'town',
             color: order.order_type === 'county' ? 'blue' : 'red'
           }
@@ -466,6 +466,28 @@ exports.acceptOrder = async (req, res, next) => {
         merchant_name: merchant.name,
         delivery_address: order.delivery_address
       });
+      
+      // ==================== 调度大屏地图雷达推流 ==================== 
+      try {
+        const radarData = {
+          type: 'orders_update',
+          orders: [
+            {
+              id: order.order_no,
+              lng: order.customer_lng ?? order.delivery_longitude,
+              lat: order.customer_lat ?? order.delivery_latitude,
+              type: order.order_type === 'county' ? 'county' : 'town',
+              color: order.order_type === 'county' ? 'blue' : 'red',
+              products_info: order.products_info, // 增加商品信息，供大屏显示
+              merchant_name: merchant.name
+            }
+          ]
+        };
+        io.to('dispatcher_room').emit('orders_update', radarData);
+      } catch (radarError) {
+        console.error('接单时大屏地图雷达推流失败:', radarError);
+      }
+      // ==============================================================
     }
 
     res.json(successResponse(order, '已接单'));
@@ -562,6 +584,32 @@ exports.prepareOrder = async (req, res, next) => {
     });
     
     socketService.notifyUserOrderUpdate(order.user_id, order, '商家已出餐，正在呼叫骑手');
+
+    // ==================== 调度大屏地图雷达推流 ==================== 
+    try {
+      const radarData = {
+        type: 'orders_update',
+        orders: [
+          {
+            id: order.order_no,
+            lng: order.customer_lng ?? order.delivery_longitude,
+            lat: order.customer_lat ?? order.delivery_latitude,
+            type: order.order_type === 'county' ? 'county' : 'town',
+            color: order.order_type === 'county' ? 'blue' : 'red',
+            products_info: order.products_info, // 增加商品信息，供大屏显示
+            merchant_name: merchant.name
+          }
+        ]
+      };
+
+      const io = socketService.getIO();
+      if (io) {
+        io.to('dispatcher_room').emit('orders_update', radarData);
+      }
+    } catch (radarError) {
+      console.error('出餐时大屏地图雷达推流失败:', radarError);
+    }
+    // ==============================================================
 
     // 尝试推给调度中心或站长
     try {

@@ -7,9 +7,11 @@ const buildDispatchOrderPayload = ({ order, merchant }) => {
     restaurant_lat: merchant?.latitude ?? null,
     restaurant_lon: merchant?.longitude ?? null,
     customer_town: order.customer_town || '',
-    customer_lat: order.delivery_latitude ?? null,
-    customer_lon: order.delivery_longitude ?? null,
-    order_type: order.order_type || 'county'
+    // 兼容前端可能传入的 customer_lat 和 delivery_latitude
+    customer_lat: order.customer_lat ?? order.delivery_latitude ?? null,
+    customer_lon: order.customer_lng ?? order.delivery_longitude ?? null,
+    order_type: order.order_type || 'county',
+    products_info: order.products_info || '[]' // 确保商品信息推给调度中心
   };
 };
 

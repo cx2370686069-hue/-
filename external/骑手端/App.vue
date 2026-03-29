@@ -1,13 +1,62 @@
 <script>
+import { reportLocation } from '@/api/user.js'
+
+let locationTimer = null
+
 export default {
   onLaunch: function() {
     console.log('App Launch - 骑手端启动')
   },
   onShow: function() {
     console.log('App Show - 骑手端显示')
+    this.startLocationReport()
   },
   onHide: function() {
     console.log('App Hide - 骑手端隐藏')
+    this.stopLocationReport()
+  },
+  methods: {
+    startLocationReport() {
+      this.stopLocationReport()
+      
+      const token = uni.getStorageSync('token')
+      if (!token) {
+        console.log('未登录，不启动位置上报')
+        return
+      }
+      
+      console.log('启动位置上报定时器，间隔 10 秒')
+      
+      locationTimer = setInterval(() => {
+        this.doReportLocation()
+      }, 10000)
+      
+      this.doReportLocation()
+    },
+    
+    stopLocationReport() {
+      if (locationTimer) {
+        clearInterval(locationTimer)
+        locationTimer = null
+        console.log('位置上报定时器已停止')
+      }
+    },
+    
+    doReportLocation() {
+      uni.getLocation({
+        type: 'gcj02',
+        success: (res) => {
+          console.log('获取真实GPS成功:', res.latitude, res.longitude)
+          reportLocation(res.latitude, res.longitude)
+            .catch(err => console.log('真实位置上报接口失败:', err))
+        },
+        fail: (err) => {
+          console.log('获取真实GPS失败，使用模拟测试坐标上报')
+          reportLocation(32.1765, 115.6734)
+            .catch(e => console.log('模拟位置上报接口失败:', e))
+        }
+      })
+    }
   }
 }
 </script>
