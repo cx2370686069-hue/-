@@ -587,13 +587,15 @@ exports.prepareOrder = async (req, res, next) => {
 
     // ==================== 调度大屏地图雷达推流 ==================== 
     try {
+      // 修改：推给大屏的雷达坐标应该是商家的坐标，而不是买家的坐标
+      // 因为大屏派单是指派骑手去商家取餐
       const radarData = {
         type: 'orders_update',
         orders: [
           {
             id: order.order_no,
-            lng: order.customer_lng ?? order.delivery_longitude,
-            lat: order.customer_lat ?? order.delivery_latitude,
+            lng: order.merchant_lng || merchant.longitude,
+            lat: order.merchant_lat || merchant.latitude,
             type: order.order_type === 'county' ? 'county' : 'town',
             color: order.order_type === 'county' ? 'blue' : 'red',
             products_info: order.products_info, // 增加商品信息，供大屏显示
