@@ -157,7 +157,7 @@ function init(server) {
         const fromStatus = order.status;
         await order.update({
           rider_id: rider.id,
-          status: 5 // 变更为配送中
+          status: 4 // 变更为骑手已接单 (原来是5)，这样骑手端才能点“去取餐”
         });
 
         await OrderLog.create({
@@ -166,7 +166,7 @@ function init(server) {
           operator_type: 'dispatcher',
           action: '大屏派单',
           from_status: fromStatus,
-          to_status: 5,
+          to_status: 4,
           remark: `调度员派单给骑手：${rider.nickname || rider.phone || rider.id}`
         });
 
