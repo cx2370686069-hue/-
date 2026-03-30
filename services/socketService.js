@@ -20,20 +20,45 @@ function init(server) {
     }
   });
 
-  io.use((socket, next) => {
-    const authRole = socket.handshake.auth?.role;
-    const queryRole = socket.handshake.query?.role;
-    const headerRole = socket.handshake.headers?.role;
-    const role = (authRole || queryRole || headerRole || 'user').toString().toLowerCase();
+  io.use(async (socket, next) => {
+    try {
+      let userId = null;
+      let userRole = null;
+      const token = socket.handshake.auth?.token || socket.handshake.query?.token;
+      
+      if (token) {
+        try {
+          const jwt = require('jsonwebtoken');
+          // 尝试验证真正的 JWT
+          const decoded = jwt.verify(token, process.env.JWT_SECRET);
+          userId = decoded.userId || decoded.id;
+          
+          if (userId) {
+            const user = await User.findByPk(userId);
+            if (user) {
+              userRole = user.role;
+            }
+          }
+        } catch (err) {
+          // token 无效（比如大屏的 mock_jwt_token_for_admin_123），忽略并继续降级解析
+        }
+      }
 
-    socket.userRole = role;
-    socket.userId =
-      socket.handshake.auth?.userId ||
-      socket.handshake.query?.userId ||
-      socket.handshake.headers?.['x-user-id'] ||
-      `${role}_${socket.id}`;
+      const authRole = socket.handshake.auth?.role;
+      const queryRole = socket.handshake.query?.role;
+      const headerRole = socket.handshake.headers?.role;
+      
+      socket.userRole = userRole || (authRole || queryRole || headerRole || 'user').toString().toLowerCase();
+      socket.userId = userId ||
+        socket.handshake.auth?.userId ||
+        socket.handshake.query?.userId ||
+        socket.handshake.headers?.['x-user-id'] ||
+        `${socket.userRole}_${socket.id}`;
 
-    next();
+      next();
+    } catch (e) {
+      next();
+    }
   });
 
   io.on('connection', (socket) => {
@@ -72,13 +97,16 @@ function init(server) {
       }
 
       if (cleanPosition && !isNaN(cleanPosition[0]) && !isNaN(cleanPosition[1])) {
+        // 默认状态设为 idle
+        let currentStatus = data.status || 'idle';
+
         const cleanData = {
           type: 'location_update',
           vehicleId: String(data.vehicleId || socket.userId), // 强制转为字符串
           position: cleanPosition,
           speed: data.speed || 0,
           direction: data.direction || 0,
-          status: data.status || 'delivering',
+          status: currentStatus,
           timestamp: Date.now()
         };
         
@@ -101,6 +129,84 @@ function init(server) {
 
         // 只广播给调度大屏房间，避免全网广播造成网络风暴
         io.to('dispatcher_room').emit('location_update', cleanData);
+      }
+    });
+
+    // 处理大屏端的派单指令核心逻辑
+    const handleDispatchOrder = async (data) => {
+      console.log(`[大屏派单指令] 收到派单请求:`, data);
+      try {
+        const { orderId, riderId } = data;
+        const { Order, User, Merchant, OrderLog } = require('../models');
+        
+        // 大屏传过来的 orderId 可能是 order_no
+        let order = await Order.findOne({ where: { order_no: orderId } });
+        if (!order) {
+          order = await Order.findByPk(orderId);
+        }
+
+        if (!order) {
+          return socket.emit('error_msg', { message: '订单不存在' });
+        }
+
+        const rider = await User.findByPk(riderId);
+        if (!rider || rider.role !== 'rider') {
+          return socket.emit('error_msg', { message: '骑手不存在或角色错误' });
+        }
+
+        const fromStatus = order.status;
+        await order.update({
+          rider_id: rider.id,
+          status: 5 // 变更为配送中
+        });
+
+        await OrderLog.create({
+          order_id: order.id,
+          operator_id: socket.userId || 1, // 调度员ID
+          operator_type: 'dispatcher',
+          action: '大屏派单',
+          from_status: fromStatus,
+          to_status: 5,
+          remark: `调度员派单给骑手：${rider.nickname || rider.phone || rider.id}`
+        });
+
+        const refreshed = await Order.findByPk(order.id, {
+          include: [
+            { model: Merchant, as: 'merchant', attributes: ['name', 'address', 'phone'] },
+            { model: User, as: 'user', attributes: ['nickname', 'phone'] },
+            { model: User, as: 'rider', attributes: ['nickname', 'phone'] }
+          ]
+        });
+
+        // 核心：推送给指定骑手！
+        console.log(`[大屏派单成功] 正在通知骑手 ${rider.id}`);
+        notifyRiderNewOrder(rider.id, refreshed);
+        
+        // 通知用户
+        notifyUserOrderUpdate(order.user_id, refreshed, '骑手已接单，正在配送中');
+
+        // 回复大屏派单成功
+        socket.emit('dispatch_success', { orderId: order.id, order_no: order.order_no, riderId: rider.id });
+
+      } catch (err) {
+        console.error('大屏派单处理失败:', err);
+        socket.emit('error_msg', { message: '派单处理失败' });
+      }
+    };
+
+    socket.on('dispatch_order', handleDispatchOrder);
+
+    // 处理原生 WebSocket 的 message (因为大屏用的 ws.send)
+    socket.on('message', async (rawMsg) => {
+      try {
+        const msgStr = rawMsg.toString();
+        const data = JSON.parse(msgStr);
+        if (data.type === 'dispatch_order') {
+          // 转交给 dispatch_order 处理器
+          await handleDispatchOrder(data);
+        }
+      } catch (err) {
+        // 解析失败忽略
       }
     });
 

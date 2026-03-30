@@ -68,7 +68,7 @@ exports.reportLocation = async (req, res, next) => {
           position: [longitude, latitude], // 大屏需要的格式 [lng, lat]
           speed: 0,
           direction: 0,
-          status: user.rider_status === 1 ? 'delivering' : 'idle',
+          status: user.rider_status === 1 ? 'idle' : 'offline', // 简单映射状态
           timestamp: Date.now()
         };
         io.to('dispatcher_room').emit('location_update', cleanData);
