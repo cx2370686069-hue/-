@@ -141,12 +141,27 @@ exports.getMyAssignedOrders = async (req, res, next) => {
     const orders = await Order.findAll({
       where,
       include: [
-        { model: Merchant, as: 'merchant', attributes: ['name', 'address', 'phone'] }
+        { model: Merchant, as: 'merchant', attributes: ['name', 'address', 'phone', 'longitude', 'latitude'] }
       ],
       order: [['id', 'DESC']]
     });
 
-    res.json(successResponse(orders));
+    const normalized = orders.map((o) => {
+      const plain = o.get({ plain: true });
+      return {
+        ...plain,
+        merchantLng: Number(plain.merchant_lng || plain.merchant?.longitude || 0) || null,
+        merchantLat: Number(plain.merchant_lat || plain.merchant?.latitude || 0) || null,
+        merchant_lng: Number(plain.merchant_lng || plain.merchant?.longitude || 0) || null,
+        merchant_lat: Number(plain.merchant_lat || plain.merchant?.latitude || 0) || null,
+        customer_lng: Number(plain.customer_lng || plain.delivery_longitude || 0) || null,
+        customer_lat: Number(plain.customer_lat || plain.delivery_latitude || 0) || null,
+        longitude: Number(plain.customer_lng || plain.delivery_longitude || 0) || null,
+        latitude: Number(plain.customer_lat || plain.delivery_latitude || 0) || null,
+      };
+    });
+
+    res.json(successResponse(normalized));
   } catch (error) {
     next(error);
   }

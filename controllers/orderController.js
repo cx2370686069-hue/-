@@ -8,6 +8,79 @@ const dispatchCenterService = require('../services/dispatchCenterService');
 const socketService = require('../services/socketService');
 const { Op } = require('sequelize');
 
+const toFiniteNumber = (value) => {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+};
+
+const parseAddressPayload = (deliveryAddress) => {
+  if (!deliveryAddress) {
+    return null;
+  }
+  if (typeof deliveryAddress === 'object') {
+    return deliveryAddress;
+  }
+  if (typeof deliveryAddress !== 'string') {
+    return null;
+  }
+  try {
+    return JSON.parse(deliveryAddress);
+  } catch (error) {
+    return null;
+  }
+};
+
+const resolveCustomerCoordinates = (payload = {}) => {
+  const addressPayload = parseAddressPayload(payload.delivery_address);
+  const lng = toFiniteNumber(
+    payload.customer_lng ??
+      payload.delivery_longitude ??
+      payload.customerLng ??
+      payload.deliveryLongitude ??
+      addressPayload?.lng ??
+      addressPayload?.longitude
+  );
+  const lat = toFiniteNumber(
+    payload.customer_lat ??
+      payload.delivery_latitude ??
+      payload.customerLat ??
+      payload.deliveryLatitude ??
+      addressPayload?.lat ??
+      addressPayload?.latitude
+  );
+  return { lng, lat, addressPayload };
+};
+
+const buildRadarOrder = (order, merchantName = '') => {
+  const customerLng = toFiniteNumber(order?.customer_lng ?? order?.delivery_longitude);
+  const customerLat = toFiniteNumber(order?.customer_lat ?? order?.delivery_latitude);
+  const merchantLng = toFiniteNumber(order?.merchant_lng);
+  const merchantLat = toFiniteNumber(order?.merchant_lat);
+
+  return {
+    id: order.order_no,
+    order_id: order.id,
+    lng: customerLng,
+    lat: customerLat,
+    position: customerLng !== null && customerLat !== null ? [customerLng, customerLat] : null,
+    customer_lng: customerLng,
+    customer_lat: customerLat,
+    customer_position: customerLng !== null && customerLat !== null ? [customerLng, customerLat] : null,
+    merchant_lng: merchantLng,
+    merchant_lat: merchantLat,
+    merchant_position: merchantLng !== null && merchantLat !== null ? [merchantLng, merchantLat] : null,
+    type: order.order_type === 'county' ? 'county' : 'town',
+    color: order.order_type === 'county' ? 'blue' : 'red',
+    products_info: order.products_info,
+    merchant_name: merchantName,
+    delivery_address: order.delivery_address,
+    address: order.address || order.delivery_address
+  };
+};
+
 /**
  * 创建订单（用户端）
  */
@@ -49,12 +122,16 @@ exports.createOrder = async (req, res, next) => {
     }
 
     let computedDeliveryFee = round2(delivery_fee);
+    const { lng: finalCustomerLng, lat: finalCustomerLat } = resolveCustomerCoordinates(req.body);
     if (Number(delivery_type) === 1 && computedDeliveryFee <= 0) {
+      if (finalCustomerLng === null || finalCustomerLat === null) {
+        return res.status(400).json(errorResponse('下单失败：缺少客户坐标，请重新选点'));
+      }
       const distanceKm = calculateDistance(
         Number(merchant.latitude),
         Number(merchant.longitude),
-        Number(delivery_latitude),
-        Number(delivery_longitude)
+        finalCustomerLat,
+        finalCustomerLng
       );
       if (distanceKm !== null) {
         const pricing = PAYMENT_CONFIG?.businessRules?.deliveryPricing;
@@ -109,11 +186,10 @@ exports.createOrder = async (req, res, next) => {
       contact_name: contact_name || user.nickname,
       delivery_address: deliveryAddressStr,
       address,
-      // 抹平前端乱七八糟的命名：统一存储到 longitude / latitude 相关字段
-      delivery_latitude: delivery_latitude || customer_lat,
-      delivery_longitude: delivery_longitude || customer_lng,
-      customer_lng: customer_lng || delivery_longitude,
-      customer_lat: customer_lat || delivery_latitude,
+      delivery_latitude: finalCustomerLat,
+      delivery_longitude: finalCustomerLng,
+      customer_lng: finalCustomerLng,
+      customer_lat: finalCustomerLat,
       merchant_lng: merchant.longitude, // 直接从商家表拿，不再信前端传的
       merchant_lat: merchant.latitude,
       errand_type,
@@ -135,15 +211,7 @@ exports.createOrder = async (req, res, next) => {
     try {
       const radarData = {
         type: 'orders_update',
-        orders: [
-          {
-            id: order.order_no,
-            lng: order.customer_lng ?? order.delivery_longitude,
-            lat: order.customer_lat ?? order.delivery_latitude,
-            type: order.order_type === 'county' ? 'county' : 'town',
-            color: order.order_type === 'county' ? 'blue' : 'red'
-          }
-        ]
+        orders: [buildRadarOrder(order, merchant.name)]
       };
 
       const io = socketService.getIO();
@@ -273,7 +341,7 @@ exports.getUserOrders = async (req, res, next) => {
       include: [{
         model: Merchant,
         as: 'merchant',
-        attributes: ['name', 'logo', 'phone', 'address']
+        attributes: ['name', 'logo', 'phone', 'address', 'longitude', 'latitude']
       }, {
         model: User,
         as: 'rider',
@@ -300,7 +368,7 @@ exports.getOrderDetail = async (req, res, next) => {
       include: [{
         model: Merchant,
         as: 'merchant',
-        attributes: ['name', 'logo', 'phone', 'address']
+        attributes: ['name', 'logo', 'phone', 'address', 'longitude', 'latitude']
       }, {
         model: User,
         as: 'rider',
@@ -345,7 +413,19 @@ exports.getOrderDetail = async (req, res, next) => {
       products_info: order.products_info,
       pay_amount: order.pay_amount,
       total_amount: order.total_amount,
-      merchant_id: order.merchant_id
+      merchant_id: order.merchant_id,
+      // 补充所有可能的坐标字段，防止骑手端导航缺失参数
+      merchant_lng: Number(order.merchant_lng || order.merchant?.longitude || 0) || null,
+      merchant_lat: Number(order.merchant_lat || order.merchant?.latitude || 0) || null,
+      customer_lng: Number(order.customer_lng || order.delivery_longitude || 0) || null,
+      customer_lat: Number(order.customer_lat || order.delivery_latitude || 0) || null,
+      delivery_longitude: Number(order.delivery_longitude || order.customer_lng || 0) || null,
+      delivery_latitude: Number(order.delivery_latitude || order.customer_lat || 0) || null,
+      // 额外兼容驼峰命名和通用命名
+      merchantLng: Number(order.merchant_lng || order.merchant?.longitude || 0) || null,
+      merchantLat: Number(order.merchant_lat || order.merchant?.latitude || 0) || null,
+      latitude: Number(order.customer_lat || order.delivery_latitude || 0) || null,
+      longitude: Number(order.customer_lng || order.delivery_longitude || 0) || null,
     };
     res.json(successResponse(detail));
   } catch (error) {
@@ -471,17 +551,7 @@ exports.acceptOrder = async (req, res, next) => {
       try {
         const radarData = {
           type: 'orders_update',
-          orders: [
-            {
-              id: order.order_no,
-              lng: order.customer_lng ?? order.delivery_longitude,
-              lat: order.customer_lat ?? order.delivery_latitude,
-              type: order.order_type === 'county' ? 'county' : 'town',
-              color: order.order_type === 'county' ? 'blue' : 'red',
-              products_info: order.products_info, // 增加商品信息，供大屏显示
-              merchant_name: merchant.name
-            }
-          ]
+          orders: [buildRadarOrder(order, merchant.name)]
         };
         io.to('dispatcher_room').emit('orders_update', radarData);
       } catch (radarError) {
@@ -587,21 +657,9 @@ exports.prepareOrder = async (req, res, next) => {
 
     // ==================== 调度大屏地图雷达推流 ==================== 
     try {
-      // 修改：推给大屏的雷达坐标应该是商家的坐标，而不是买家的坐标
-      // 因为大屏派单是指派骑手去商家取餐
       const radarData = {
         type: 'orders_update',
-        orders: [
-          {
-            id: order.order_no,
-            lng: order.merchant_lng || merchant.longitude,
-            lat: order.merchant_lat || merchant.latitude,
-            type: order.order_type === 'county' ? 'county' : 'town',
-            color: order.order_type === 'county' ? 'blue' : 'red',
-            products_info: order.products_info, // 增加商品信息，供大屏显示
-            merchant_name: merchant.name
-          }
-        ]
+        orders: [buildRadarOrder(order, merchant.name)]
       };
 
       const io = socketService.getIO();
@@ -824,7 +882,7 @@ exports.getRiderOrders = async (req, res, next) => {
       include: [{
         model: Merchant,
         as: 'merchant',
-        attributes: ['name', 'address', 'phone']
+        attributes: ['name', 'address', 'phone', 'longitude', 'latitude'] // 补充经纬度
       }, {
         model: User,
         as: 'user',
@@ -856,18 +914,25 @@ exports.getRiderOrders = async (req, res, next) => {
 
       const latitude =
         plain.delivery_latitude === null || plain.delivery_latitude === undefined
-          ? null
+          ? (plain.customer_lat ? Number(plain.customer_lat) : null)
           : Number(plain.delivery_latitude);
       const longitude =
         plain.delivery_longitude === null || plain.delivery_longitude === undefined
-          ? null
+          ? (plain.customer_lng ? Number(plain.customer_lng) : null)
           : Number(plain.delivery_longitude);
 
       return {
         ...plain,
         address,
         latitude,
-        longitude
+        longitude,
+        // 兼容骑手端所需的各种导航字段（全部转为Number类型防报错）
+        merchantLng: Number(plain.merchant_lng || plain.merchant?.longitude || 0) || null,
+        merchantLat: Number(plain.merchant_lat || plain.merchant?.latitude || 0) || null,
+        merchant_lng: Number(plain.merchant_lng || plain.merchant?.longitude || 0) || null,
+        merchant_lat: Number(plain.merchant_lat || plain.merchant?.latitude || 0) || null,
+        customer_lng: longitude,
+        customer_lat: latitude,
       };
     });
 
