@@ -7,6 +7,7 @@ const { successResponse, errorResponse, generateOrderNo } = require('../utils/he
 router.get('/products', async (req, res, next) => {
   try {
     const products = await Product.findAll({
+      where: { status: 1 }, // 真实互通：只返回上架商品
       order: [['id', 'DESC']]
     });
     res.json(successResponse(products));
