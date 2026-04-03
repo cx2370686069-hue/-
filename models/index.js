@@ -7,6 +7,10 @@ const Order = require('./Order');
 const OrderLog = require('./OrderLog');
 const Address = require('./Address');
 const PaymentTransaction = require('./PaymentTransaction');
+const WalletLog = require('./WalletLog');
+const ProductSpec = require('./ProductSpec');
+const Refund = require('./Refund');
+const Review = require('./Review');
 
 // 定义模型关系
 
@@ -50,6 +54,36 @@ OrderLog.belongsTo(Order, { foreignKey: 'order_id', as: 'order' });
 Order.hasMany(PaymentTransaction, { foreignKey: 'order_id', as: 'paymentTransactions' });
 PaymentTransaction.belongsTo(Order, { foreignKey: 'order_id', as: 'order' });
 
+// 资金流水 - 用户（多对一）
+User.hasMany(WalletLog, { foreignKey: 'user_id', as: 'walletLogs' });
+WalletLog.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
+
+// 商品 - 商品规格（一对多）
+Product.hasMany(ProductSpec, { foreignKey: 'product_id', as: 'specs' });
+ProductSpec.belongsTo(Product, { foreignKey: 'product_id', as: 'product' });
+
+// 订单 - 退款工单（一对一/一对多视业务而定，通常一单支持多次部分退款所以一对多）
+Order.hasMany(Refund, { foreignKey: 'order_id', as: 'refunds' });
+Refund.belongsTo(Order, { foreignKey: 'order_id', as: 'order' });
+
+// 用户/商家 - 退款（多对一）
+User.hasMany(Refund, { foreignKey: 'user_id', as: 'refunds' });
+Refund.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
+Merchant.hasMany(Refund, { foreignKey: 'merchant_id', as: 'refunds' });
+Refund.belongsTo(Merchant, { foreignKey: 'merchant_id', as: 'merchant' });
+
+// 订单 - 评价（一对一）
+Order.hasOne(Review, { foreignKey: 'order_id', as: 'review' });
+Review.belongsTo(Order, { foreignKey: 'order_id', as: 'order' });
+
+// 商家/骑手/用户 - 评价（一对多）
+Merchant.hasMany(Review, { foreignKey: 'merchant_id', as: 'reviews' });
+Review.belongsTo(Merchant, { foreignKey: 'merchant_id', as: 'merchant' });
+User.hasMany(Review, { foreignKey: 'rider_id', as: 'riderReviews' });
+Review.belongsTo(User, { foreignKey: 'rider_id', as: 'rider' });
+User.hasMany(Review, { foreignKey: 'user_id', as: 'userReviews' });
+Review.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
+
 module.exports = {
   sequelize: require('../config/database'),
   User,
@@ -59,5 +93,9 @@ module.exports = {
   Order,
   OrderLog,
   Address,
-  PaymentTransaction
+  PaymentTransaction,
+  WalletLog,
+  ProductSpec,
+  Refund,
+  Review
 };
