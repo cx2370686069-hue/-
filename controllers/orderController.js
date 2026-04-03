@@ -482,7 +482,9 @@ exports.cancelOrder = async (req, res, next) => {
 exports.acceptOrder = async (req, res, next) => {
   try {
     const user = req.user;
-    const { order_id, merchant_lng, merchant_lat } = req.body;
+    const { merchant_lng, merchant_lat } = req.body;
+    // 兼容驼峰和蛇形命名
+    const order_id = req.body.order_id || req.body.orderId;
     console.log('[acceptOrder] 请求体:', JSON.stringify(req.body));
     console.log('[acceptOrder] order_id:', order_id, '类型:', typeof order_id);
 
@@ -512,10 +514,11 @@ exports.acceptOrder = async (req, res, next) => {
     const fromStatus = order.status;
     const updateData = {
       status: 2,
-      accepted_at: new Date()
+      accepted_at: new Date(),
+      // 强制使用商家真实坐标兜底，废弃前端传的假坐标
+      merchant_lng: Number(merchant.longitude) || merchant_lng || null,
+      merchant_lat: Number(merchant.latitude) || merchant_lat || null
     };
-    if (merchant_lng) updateData.merchant_lng = merchant_lng;
-    if (merchant_lat) updateData.merchant_lat = merchant_lat;
     
     await order.update(updateData);
 
@@ -572,7 +575,9 @@ exports.acceptOrder = async (req, res, next) => {
 exports.rejectOrder = async (req, res, next) => {
   try {
     const user = req.user;
-    const { order_id, reason } = req.body;
+    const { reason } = req.body;
+    // 兼容驼峰和蛇形命名
+    const order_id = req.body.order_id || req.body.orderId;
 
     const merchant = await Merchant.findOne({ where: { user_id: user.id } });
     if (!merchant) {
@@ -620,7 +625,8 @@ exports.rejectOrder = async (req, res, next) => {
 exports.prepareOrder = async (req, res, next) => {
   try {
     const user = req.user;
-    const { order_id } = req.body;
+    // 兼容驼峰和蛇形命名
+    const order_id = req.body.order_id || req.body.orderId;
 
     const merchant = await Merchant.findOne({ where: { user_id: user.id } });
     if (!merchant) {
@@ -972,7 +978,8 @@ exports.updateRiderStatus = async (req, res, next) => {
 exports.deliverOrder = async (req, res, next) => {
   try {
     const user = req.user;
-    const { order_id } = req.body;
+    // 兼容驼峰和蛇形命名
+    const order_id = req.body.order_id || req.body.orderId;
 
     const merchant = await Merchant.findOne({ where: { user_id: user.id } });
     if (!merchant) {
