@@ -1,69 +1,66 @@
 <template>
   <view class="container">
     <view class="header">
-      <view class="search-bar" @click="goSearch">
-        <text class="search-icon">🔍</text>
-        <text class="search-placeholder">搜索商品</text>
+      <view class="header-row">
+        <button class="btn-cat" type="default" @click="goCategoryAdd">添加分类</button>
+        <button class="btn-cat" type="default" @click="goCategoryManage">分类管理</button>
+        <view class="search-bar" @click="noopSearch">
+          <text class="search-icon">🔍</text>
+          <text class="search-placeholder">搜索商品（敬请期待）</text>
+        </view>
       </view>
-      <view class="add-btn" @click="goAddFood">
-        <text class="add-icon">➕</text>
+      <view class="add-wrap">
+        <button class="add-btn" type="default" @click="goPublish">添加商品</button>
       </view>
     </view>
 
     <view class="category-scroll">
-      <scroll-view scroll-x class="category-list">
-        <view 
-          class="category-item" 
-          :class="{ 'category-active': currentCategory === 'all' }"
+      <scroll-view scroll-x class="category-list" :show-scrollbar="false">
+        <view
+          class="category-item"
+          :class="{ 'category-active': currentCategoryId === 'all' }"
           @click="switchCategory('all')"
         >
           <text class="category-text">全部</text>
         </view>
-        <view 
-          class="category-item" 
-          :class="{ 'category-active': currentCategory === item }"
-          v-for="item in categories" 
-          :key="item"
-          @click="switchCategory(item)"
+        <view
+          v-for="c in categoryList"
+          :key="c.id"
+          class="category-item"
+          :class="{ 'category-active': currentCategoryId === c.id }"
+          @click="switchCategory(c.id)"
         >
-          <text class="category-text">{{ item }}</text>
+          <text class="category-text">{{ c.name }}</text>
         </view>
       </scroll-view>
     </view>
 
-    <view class="food-list" v-if="foodList.length > 0">
-      <view class="food-card" v-for="item in foodList" :key="item.商品 ID">
-        <view class="food-image">
-          <text class="food-emoji">🍔</text>
+    <view class="food-list" v-if="displayList.length > 0">
+      <view class="food-card" v-for="item in displayList" :key="item.id">
+        <view class="food-image" @click="previewImg(item)">
+          <image v-if="item.image" class="img" :src="formatImageUrl(item.image)" mode="aspectFill" />
+          <text v-else class="food-emoji">🍱</text>
         </view>
         <view class="food-info">
           <view class="food-header">
-            <text class="food-name">{{ item.商品名称 }}</text>
-            <view class="food-status" :class="{ 'food-off': item.状态 === 0 }">
-              <text class="status-text">{{ item.状态 === 0 ? '已售罄' : '在售' }}</text>
+            <text class="food-name">{{ item.name }}</text>
+            <view class="food-status" :class="{ off: item.status !== 1 }">
+              <text class="status-text">{{ item.status === 1 ? '上架' : '下架' }}</text>
             </view>
           </view>
-          <text class="food-desc">{{ item.描述 || '暂无描述' }}</text>
           <view class="food-footer">
             <view class="food-price-wrap">
               <text class="price-symbol">¥</text>
-              <text class="food-price">{{ item.价格 }}</text>
+              <text class="food-price">{{ formatPrice(item.price) }}</text>
             </view>
-            <view class="food-sales">
-              <text class="sales-text">月售{{ item.月销 || 0 }}</text>
-            </view>
+            <text class="stock-text">库存 {{ item.stock }}</text>
           </view>
-          <view class="food-meta">
-            <text class="meta-text">库存：{{ item.库存 }}</text>
-            <text class="meta-text">分类：{{ item.分类 }}</text>
-          </view>
-        </view>
-        <view class="food-actions">
-          <view class="action-btn edit-btn" @click="goEditFood(item)">
-            <text class="action-btn-text">编辑</text>
-          </view>
-          <view class="action-btn delete-btn" @click="handleDelete(item)">
-            <text class="action-btn-text">删除</text>
+          <view class="food-actions">
+            <button class="mini" size="mini" type="default" @click="toggleShelf(item)">
+              {{ item.status === 1 ? '下架' : '上架' }}
+            </button>
+            <button class="mini primary" size="mini" type="default" @click="goEdit(item)">编辑</button>
+            <button class="mini danger" size="mini" type="default" @click="handleDelete(item)">删除</button>
           </view>
         </view>
       </view>
@@ -72,93 +69,157 @@
     <view class="empty" v-else>
       <text class="empty-icon">📦</text>
       <text class="empty-text">暂无商品</text>
-      <view class="empty-btn" @click="goAddFood">
-        <text class="empty-btn-text">添加第一个商品</text>
-      </view>
-    </view>
-
-    <view class="add-food-btn" @click="goAddFood">
-      <text class="add-food-icon">➕</text>
-      <text class="add-food-text">添加商品</text>
+      <button class="empty-btn" type="default" @click="goPublish">添加商品</button>
     </view>
   </view>
 </template>
 
 <script>
-import { getMyFoods, deleteFood } from '@/api/food.js'
+import { BASE_URL } from '@/config/index.js'
+import request from '@/utils/request.js'
+import { getMyProducts } from '@/api/shop.js'
 
 export default {
   data() {
     return {
-      foodList: [],
-      currentCategory: 'all',
-      categories: []
+      categoryList: [],
+      productList: [],
+      currentCategoryId: 'all'
+    }
+  },
+  computed: {
+    displayList() {
+      if (this.currentCategoryId === 'all') return this.productList
+      const cid = Number(this.currentCategoryId)
+      return this.productList.filter((p) => Number(p.category_id) === cid)
     }
   },
   onLoad() {
-    this.loadFoods()
+    this.bootstrap()
   },
   onShow() {
-    this.loadFoods()
+    this.bootstrap()
+  },
+  async onPullDownRefresh() {
+    try {
+      await this.bootstrap()
+    } catch (e) {
+      console.error(e)
+    } finally {
+      uni.stopPullDownRefresh()
+    }
   },
   methods: {
-    async loadFoods() {
+    async bootstrap() {
+      await Promise.all([this.loadCategories(), this.loadProducts()])
+    },
+    normalizeCategories(res) {
+      const arr =
+        (res && res.data && Array.isArray(res.data.data) && res.data.data) ||
+        (res && Array.isArray(res.data) && res.data) ||
+        (res && Array.isArray(res) && res) ||
+        []
+      return arr
+        .map((c) => ({
+          id: c.id,
+          name: c.name != null ? String(c.name) : ''
+        }))
+        .filter((c) => c.id != null)
+    },
+    normalizeProducts(res) {
+      const raw = res && typeof res === 'object' && res.data !== undefined ? res.data : res
+      const arr = Array.isArray(raw) ? raw : raw && Array.isArray(raw.list) ? raw.list : []
+      return arr.map((p) => ({
+        id: p.id,
+        name: p.name != null ? String(p.name) : '',
+        price: p.price,
+        stock: p.stock != null ? p.stock : p.inventory != null ? p.inventory : 0,
+        status: p.status === 0 || p.status === 1 ? p.status : 0,
+        category_id: p.category_id != null ? p.category_id : null,
+        image: p.image || p.cover || p.cover_url || p.logo || ''
+      }))
+    },
+    formatImageUrl(url) {
+      if (!url) return ''
+      if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:image') || url.startsWith('blob:')) {
+        return url
+      }
+      return url.startsWith('/') ? BASE_URL + url : BASE_URL + '/' + url
+    },
+    async loadCategories() {
       try {
-        const res = await getMyFoods()
-        if (res && res.商品列表) {
-          this.foodList = res.商品列表
-          const cats = [...new Set(this.foodList.map(item => item.分类).filter(Boolean))]
-          this.categories = cats
-        }
+        const res = await request({ url: '/merchant/my-categories', method: 'GET' })
+        this.categoryList = this.normalizeCategories(res)
       } catch (e) {
-        console.log('加载商品失败', e)
+        this.categoryList = []
       }
     },
-    switchCategory(category) {
-      this.currentCategory = category
-      if (category === 'all') {
-        this.loadFoods()
-      } else {
-        this.foodList = this.foodList.filter(item => item.分类 === category)
+    async loadProducts() {
+      try {
+        const res = await getMyProducts({})
+        this.productList = this.normalizeProducts(res)
+      } catch (e) {
+        this.productList = []
       }
     },
-    goAddFood() {
-      uni.navigateTo({
-        url: '/pages/shop/food-edit'
-      })
+    formatPrice(v) {
+      const n = Number(v)
+      return Number.isFinite(n) ? n.toFixed(2) : '--'
     },
-    goEditFood(item) {
-      uni.navigateTo({
-        url: `/pages/shop/food-edit?id=${item.商品 ID}`
-      })
+    switchCategory(id) {
+      this.currentCategoryId = id
+    },
+    noopSearch() {
+      uni.showToast({ title: '搜索功能敬请期待', icon: 'none' })
+    },
+    goCategoryAdd() {
+      uni.navigateTo({ url: '/pages/shop/category-add' })
+    },
+    goCategoryManage() {
+      uni.navigateTo({ url: '/pages/shop/category-manage' })
+    },
+    goPublish() {
+      uni.navigateTo({ url: '/pages/shop/product-publish' })
+    },
+    goEdit(item) {
+      uni.navigateTo({ url: '/pages/shop/food-edit?id=' + item.id })
+    },
+    previewImg(item) {
+      const u = this.formatImageUrl(item.image)
+      if (!u) {
+        uni.showToast({ title: '暂无图片', icon: 'none' })
+        return
+      }
+      uni.previewImage({ urls: [u] })
+    },
+    async toggleShelf(item) {
+      const next = item.status === 1 ? 0 : 1
+      try {
+        await request({
+          url: '/merchant/product/' + item.id,
+          method: 'PUT',
+          data: { status: next }
+        })
+        uni.showToast({ title: next === 1 ? '已上架' : '已下架', icon: 'success' })
+        await this.loadProducts()
+      } catch (e) {
+        uni.showToast({ title: '操作失败', icon: 'none' })
+      }
     },
     handleDelete(item) {
       uni.showModal({
         title: '删除商品',
-        content: `确定要删除"${item.商品名称}"吗？`,
+        content: '确定删除「' + item.name + '」吗？',
         success: async (res) => {
-          if (res.confirm) {
-            try {
-              await deleteFood(item.商品 ID)
-              uni.showToast({
-                title: '删除成功',
-                icon: 'success'
-              })
-              this.loadFoods()
-            } catch (e) {
-              uni.showToast({
-                title: '删除失败',
-                icon: 'none'
-              })
-            }
+          if (!res.confirm) return
+          try {
+            await request({ url: '/merchant/product/' + item.id, method: 'DELETE' })
+            uni.showToast({ title: '已删除', icon: 'success' })
+            await this.loadProducts()
+          } catch (e) {
+            uni.showToast({ title: '删除失败', icon: 'none' })
           }
         }
-      })
-    },
-    goSearch() {
-      uni.showToast({
-        title: '搜索功能开发中',
-        icon: 'none'
       })
     }
   }
@@ -168,92 +229,85 @@ export default {
 <style>
 .container {
   min-height: 100vh;
-  background-color: #F5F5F5;
-  padding-bottom: 140rpx;
+  background-color: #f5f5f5;
+  padding-bottom: 40rpx;
 }
-
 .header {
+  background-color: #fff;
+  padding: 20rpx;
+}
+.header-row {
   display: flex;
   align-items: center;
-  padding: 20rpx;
-  background-color: #fff;
+  gap: 16rpx;
 }
-
+.btn-cat {
+  flex-shrink: 0;
+  font-size: 24rpx;
+  padding: 0 20rpx;
+  height: 64rpx;
+  line-height: 64rpx;
+  background: #fff7f2;
+  color: #ff6b35;
+  border: 1rpx solid #ffccb3;
+  border-radius: 32rpx;
+}
 .search-bar {
   flex: 1;
-  height: 70rpx;
-  background-color: #F5F5F5;
-  border-radius: 35rpx;
+  height: 64rpx;
+  background-color: #f5f5f5;
+  border-radius: 32rpx;
   display: flex;
   align-items: center;
   padding: 0 24rpx;
 }
-
 .search-icon {
-  font-size: 32rpx;
-  margin-right: 16rpx;
+  font-size: 28rpx;
+  margin-right: 12rpx;
 }
-
 .search-placeholder {
-  font-size: 26rpx;
+  font-size: 24rpx;
   color: #999;
 }
-
+.add-wrap {
+  margin-top: 20rpx;
+}
 .add-btn {
-  width: 70rpx;
-  height: 70rpx;
-  background-color: #FF6B35;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-left: 20rpx;
-}
-
-.add-icon {
-  font-size: 40rpx;
+  width: 100%;
+  background: linear-gradient(135deg, #ff6b35, #ff8f65);
   color: #fff;
+  border: none;
+  border-radius: 40rpx;
+  font-size: 28rpx;
 }
-
 .category-scroll {
   background-color: #fff;
   padding: 20rpx 0;
-  margin-bottom: 20rpx;
+  margin-bottom: 16rpx;
 }
-
 .category-list {
   white-space: nowrap;
 }
-
-.category-list::-webkit-scrollbar {
-  display: none;
-}
-
 .category-item {
   display: inline-block;
-  padding: 12rpx 32rpx;
+  padding: 12rpx 28rpx;
   margin: 0 10rpx;
-  background-color: #F5F5F5;
+  background-color: #f5f5f5;
   border-radius: 30rpx;
 }
-
 .category-item.category-active {
-  background-color: #FF6B35;
+  background-color: #ff6b35;
 }
-
 .category-text {
   font-size: 26rpx;
   color: #666;
 }
-
 .category-item.category-active .category-text {
   color: #fff;
 }
-
 .food-list {
   padding: 0 20rpx;
 }
-
 .food-card {
   background-color: #fff;
   border-radius: 16rpx;
@@ -262,212 +316,120 @@ export default {
   display: flex;
   align-items: flex-start;
 }
-
 .food-image {
   width: 160rpx;
   height: 160rpx;
-  background-color: #F5F5F5;
+  background-color: #f5f5f5;
   border-radius: 12rpx;
+  margin-right: 20rpx;
+  flex-shrink: 0;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-right: 20rpx;
-  flex-shrink: 0;
 }
-
+.food-image .img {
+  width: 100%;
+  height: 100%;
+}
 .food-emoji {
-  font-size: 80rpx;
+  font-size: 64rpx;
 }
-
 .food-info {
   flex: 1;
-  display: flex;
-  flex-direction: column;
+  min-width: 0;
 }
-
 .food-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   margin-bottom: 12rpx;
 }
-
 .food-name {
   font-size: 30rpx;
   font-weight: bold;
   color: #333;
   flex: 1;
+  padding-right: 12rpx;
 }
-
 .food-status {
   padding: 4rpx 12rpx;
   border-radius: 8rpx;
-  background-color: #F6FFED;
-  margin-left: 12rpx;
+  background-color: #f6ffed;
+  flex-shrink: 0;
 }
-
-.food-status.food-off {
-  background-color: #FFF0F6;
+.food-status.off {
+  background-color: #fff2f0;
 }
-
 .status-text {
   font-size: 22rpx;
-  color: #52C41A;
+  color: #52c41a;
 }
-
-.food-status.food-off .status-text {
-  color: #FF4D4F;
+.food-status.off .status-text {
+  color: #ff4d4f;
 }
-
-.food-desc {
-  font-size: 24rpx;
-  color: #999;
-  margin-bottom: 16rpx;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 1;
-  overflow: hidden;
-}
-
 .food-footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12rpx;
+  margin-bottom: 16rpx;
 }
-
 .food-price-wrap {
   display: flex;
   align-items: baseline;
 }
-
 .price-symbol {
   font-size: 24rpx;
-  color: #FF6B35;
+  color: #ff6b35;
   font-weight: bold;
 }
-
 .food-price {
-  font-size: 36rpx;
-  color: #FF6B35;
+  font-size: 34rpx;
+  color: #ff6b35;
   font-weight: bold;
 }
-
-.food-sales {
-  display: flex;
-  align-items: center;
-}
-
-.sales-text {
-  font-size: 22rpx;
+.stock-text {
+  font-size: 24rpx;
   color: #999;
 }
-
-.food-meta {
-  display: flex;
-  gap: 20rpx;
-}
-
-.meta-text {
-  font-size: 22rpx;
-  color: #999;
-}
-
 .food-actions {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   gap: 12rpx;
-  margin-left: 20rpx;
 }
-
-.action-btn {
-  min-width: 100rpx;
-  height: 56rpx;
-  border-radius: 28rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 2rpx solid #ddd;
+.food-actions .mini {
+  font-size: 22rpx;
 }
-
-.action-btn-text {
-  font-size: 24rpx;
-  color: #666;
+.food-actions .primary {
+  background: #e6f7ff;
+  color: #1890ff;
+  border: 1rpx solid #91d5ff;
 }
-
-.edit-btn {
-  border-color: #1890FF;
+.food-actions .danger {
+  background: #fff2f0;
+  color: #ff4d4f;
+  border: 1rpx solid #ffccc7;
 }
-
-.edit-btn .action-btn-text {
-  color: #1890FF;
-}
-
-.delete-btn {
-  border-color: #FF4D4F;
-}
-
-.delete-btn .action-btn-text {
-  color: #FF4D4F;
-}
-
 .empty {
   display: flex;
   flex-direction: column;
   align-items: center;
   padding: 120rpx 0;
 }
-
 .empty-icon {
   font-size: 100rpx;
   margin-bottom: 24rpx;
 }
-
 .empty-text {
   font-size: 28rpx;
   color: #999;
   margin-bottom: 40rpx;
 }
-
 .empty-btn {
-  width: 300rpx;
-  height: 80rpx;
-  background-color: #FF6B35;
+  background: #ff6b35;
+  color: #fff;
   border-radius: 40rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.empty-btn-text {
   font-size: 28rpx;
-  color: #fff;
-}
-
-.add-food-btn {
-  position: fixed;
-  bottom: 40rpx;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 400rpx;
-  height: 100rpx;
-  background: linear-gradient(135deg, #FF6B35 0%, #FF8F65 100%);
-  border-radius: 50rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 8rpx 24rpx rgba(255, 107, 53, 0.4);
-}
-
-.add-food-icon {
-  font-size: 40rpx;
-  color: #fff;
-  margin-right: 16rpx;
-}
-
-.add-food-text {
-  font-size: 32rpx;
-  font-weight: bold;
-  color: #fff;
+  padding: 0 48rpx;
 }
 </style>

@@ -1,6 +1,6 @@
 /**
  * API 接口统一管理
- * 后端接口地址：http://121.43.190.218:3000/api
+ * 后端接口地址：由 config/index.js 的 BASE_URL + /api（与 BASE_URL 保持一致）
  */
 
 import request from '../utils/request.js';
@@ -36,20 +36,34 @@ export function rejectOrder(id, data) {
   return request({ url: '/order/reject', method: 'POST', data: { order_id: id, reason: data?.reason || '商品已售罄' } });
 }
 
-// 开始制作（备货中）- 已废弃，接单后自动进入备餐中
-export function startMaking(id) {
+// 出餐完成：状态 2 -> 3（POST /api/order/prepare）
+export function prepareOrder(id) {
   return request({ url: '/order/prepare', method: 'POST', data: { order_id: id } });
 }
 
-// 出餐完成（呼叫骑手）
+// 兼容旧名
+export function startMaking(id) {
+  return prepareOrder(id);
+}
+
 export function readyForDelivery(id) {
-  return request({ url: '/order/prepare', method: 'POST', data: { order_id: id } });
+  return prepareOrder(id);
+}
+
+// 县城订单呼叫骑手 / 提交调度：POST /api/order/deliver
+export function deliverOrder(id) {
+  return request({ url: '/order/deliver', method: 'POST', data: { order_id: id } });
 }
 
 // ========== 商品 ==========
-// 获取商品列表
+// 获取商品列表（非本店维度时请改用 getMyProducts）
 export function getProductList(params) {
   return request({ url: '/merchant/products', method: 'GET', data: params });
+}
+
+/** 当前商家店铺商品 GET /api/merchant/my-products */
+export function getMyProducts(params) {
+  return request({ url: '/merchant/my-products', method: 'GET', data: params || {} });
 }
 
 // 获取商品详情（后端可能不支持，先保留）

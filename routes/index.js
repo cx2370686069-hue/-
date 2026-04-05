@@ -10,9 +10,11 @@ const payRouter = require('./pay');
 const riderRouter = require('./rider');
 const testRouter = require('./test');
 const shopRouter = require('./shop');
+const uploadRouter = require('./upload');
 
 // 挂载路由
 router.use('/', require('./sandbox')); // 暴露直接给前端测试的 /api/products, /api/orders
+router.use('/upload', uploadRouter);
 router.use('/auth', authRouter);
 router.use('/merchant', merchantRouter);
 router.use('/shop', shopRouter);

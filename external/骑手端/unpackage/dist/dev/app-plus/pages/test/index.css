@@ -1,0 +1,23 @@
+
+.container[data-v-b11b71c1] {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #1890ff, #40a9ff);
+}
+.content[data-v-b11b71c1] {
+  text-align: center;
+}
+.title[data-v-b11b71c1] {
+  font-size: 1.25rem;
+  font-weight: bold;
+  color: #fff;
+  display: block;
+  margin-bottom: 0.625rem;
+}
+.subtitle[data-v-b11b71c1] {
+  font-size: 0.875rem;
+  color: rgba(255,255,255,0.9);
+  display: block;
+}

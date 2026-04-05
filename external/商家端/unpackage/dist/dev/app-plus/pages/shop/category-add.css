@@ -1,0 +1,28 @@
+
+.page[data-v-d1ff5ae2] {
+  min-height: 100vh;
+  padding: 1rem;
+  background: #f5f5f5;
+  box-sizing: border-box;
+}
+.field[data-v-d1ff5ae2] {
+  background: #fff;
+  border-radius: 0.375rem;
+  padding: 0.75rem;
+  margin-bottom: 1rem;
+}
+.label[data-v-d1ff5ae2] {
+  display: block;
+  font-size: 0.8125rem;
+  color: #666;
+  margin-bottom: 0.5rem;
+}
+.input[data-v-d1ff5ae2] {
+  border: 0.03125rem solid #ddd;
+  border-radius: 0.25rem;
+  padding: 0.625rem;
+  font-size: 0.875rem;
+}
+.btn[data-v-d1ff5ae2] {
+  margin-top: 0.5rem;
+}

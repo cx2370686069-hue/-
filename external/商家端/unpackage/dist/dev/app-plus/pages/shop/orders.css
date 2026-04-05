@@ -1,0 +1,185 @@
+
+.container[data-v-01c150c3] {
+  background-color: #f5f5f5;
+  min-height: 100vh;
+}
+.tab-bar[data-v-01c150c3] {
+  display: flex;
+  background-color: #fff;
+  padding: 0 0.3125rem;
+  box-shadow: 0 0.0625rem 0.25rem rgba(0,0,0,0.06);
+  position: -webkit-sticky;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.tab-item[data-v-01c150c3] {
+  flex: 1;
+  text-align: center;
+  padding: 0.75rem 0;
+  font-size: 0.8125rem;
+  color: #666;
+  border-bottom: 0.125rem solid transparent;
+  position: relative;
+}
+.tab-active[data-v-01c150c3] {
+  color: #FF6B35;
+  font-weight: bold;
+  border-bottom-color: #FF6B35;
+}
+.tab-badge[data-v-01c150c3] {
+  position: absolute;
+  top: 0.3125rem;
+  right: 0.3125rem;
+  background-color: #ff3b30;
+  color: #fff;
+  font-size: 0.5625rem;
+  min-width: 0.875rem;
+  height: 0.875rem;
+  line-height: 0.875rem;
+  text-align: center;
+  border-radius: 0.4375rem;
+  padding: 0 0.1875rem;
+  font-weight: normal;
+}
+.order-list[data-v-01c150c3] {
+  padding: 0.5rem 0.625rem;
+}
+.order-card[data-v-01c150c3] {
+  background-color: #fff;
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  margin-bottom: 0.5rem;
+  box-shadow: 0 0.0625rem 0.25rem rgba(0,0,0,0.04);
+}
+.order-header[data-v-01c150c3] {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 0.03125rem solid #f5f5f5;
+}
+.order-id[data-v-01c150c3] {
+  font-size: 0.75rem;
+  color: #999;
+}
+.order-status[data-v-01c150c3] {
+  font-size: 0.75rem;
+  font-weight: bold;
+  padding: 0.125rem 0.5rem;
+  border-radius: 0.625rem;
+}
+.status-unpaid[data-v-01c150c3] { color: #ff3b30; background-color: #FFF0F0;
+}
+.status-waiting[data-v-01c150c3] { color: #FF6B35; background-color: #FFF3EE;
+}
+.status-cooking[data-v-01c150c3] { color: #faad14; background-color: #FFFBE6;
+}
+.status-delivering[data-v-01c150c3] { color: #1890ff; background-color: #E6F7FF;
+}
+.status-done[data-v-01c150c3] { color: #52c41a; background-color: #F6FFED;
+}
+.status-cancelled[data-v-01c150c3] { color: #999; background-color: #f5f5f5;
+}
+.order-user[data-v-01c150c3] {
+  display: flex;
+  align-items: center;
+  margin-bottom: 0.375rem;
+}
+.user-icon[data-v-01c150c3] {
+  font-size: 0.875rem;
+  margin-right: 0.25rem;
+}
+.user-name[data-v-01c150c3] {
+  font-size: 0.875rem;
+  color: #333;
+  font-weight: bold;
+  margin-right: 0.5rem;
+}
+.user-phone[data-v-01c150c3] {
+  font-size: 0.75rem;
+  color: #666;
+}
+.order-foods[data-v-01c150c3] {
+  margin-bottom: 0.375rem;
+  padding: 0.375rem 0.5rem;
+  background-color: #FAFAFA;
+  border-radius: 0.3125rem;
+}
+.food-row[data-v-01c150c3] {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.1875rem 0;
+}
+.food-name[data-v-01c150c3] {
+  font-size: 0.8125rem;
+  color: #333;
+}
+.food-price[data-v-01c150c3] {
+  font-size: 0.8125rem;
+  color: #666;
+}
+.order-addr[data-v-01c150c3], .order-remark[data-v-01c150c3] {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 0.25rem;
+}
+.addr-icon[data-v-01c150c3], .remark-icon[data-v-01c150c3] {
+  font-size: 0.75rem;
+  margin-right: 0.25rem;
+  flex-shrink: 0;
+}
+.addr-text[data-v-01c150c3], .remark-text[data-v-01c150c3] {
+  font-size: 0.75rem;
+  color: #999;
+  line-height: 1.5;
+}
+.order-footer[data-v-01c150c3] {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 0.5rem;
+  border-top: 0.03125rem solid #f5f5f5;
+}
+.order-time[data-v-01c150c3] {
+  font-size: 0.6875rem;
+  color: #ccc;
+}
+.order-footer-right[data-v-01c150c3] {
+  display: flex;
+  align-items: center;
+}
+.order-total[data-v-01c150c3] {
+  font-size: 0.9375rem;
+  color: #FF6B35;
+  font-weight: bold;
+  margin-right: 0.5rem;
+}
+.action-btn[data-v-01c150c3] {
+  background: linear-gradient(135deg, #FF6B35, #FF8C42);
+  padding: 0.375rem 0.875rem;
+  border-radius: 0.9375rem;
+}
+.cooking-btn[data-v-01c150c3] {
+  background: linear-gradient(135deg, #faad14, #ffc53d);
+}
+.action-btn-text[data-v-01c150c3] {
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: bold;
+}
+.empty[data-v-01c150c3] {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 6.25rem;
+}
+.empty-icon[data-v-01c150c3] {
+  font-size: 2.5rem;
+}
+.empty-text[data-v-01c150c3] {
+  font-size: 0.875rem;
+  color: #999;
+  margin-top: 0.625rem;
+}

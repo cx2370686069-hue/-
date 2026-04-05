@@ -3,7 +3,7 @@
  */
 export const BASE_URL = 'http://121.43.190.218:3000'
 
-export const TIANDITU_TK = ''
+export const TIANDITU_TK = '63a693ed968db6b7256470395e40fe5b'
 
 // 骑手端配置
 export const RIDER = {

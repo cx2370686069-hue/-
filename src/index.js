@@ -28,6 +28,11 @@ app.options('*', cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+app.use((req, res, next) => {
+  console.log(`[REQUEST] ${req.method} ${req.originalUrl}`);
+  next();
+});
+
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // 统一响应拦截器中间件 (必须放在路由之前)
@@ -74,7 +79,8 @@ app.get('/', (req, res) => {
   });
 });
 
-app.use((req, res) => {
+app.use((req, res, next) => {
+  console.log(`[404 NOT FOUND] 请求方法: ${req.method}, 请求路径: ${req.originalUrl}`);
   res.status(404).json({
     code: 404,
     message: '接口不存在'
@@ -87,6 +93,20 @@ const startServer = async () => {
   try {
     await sequelize.authenticate();
     console.log('✅ 数据库连接验证完成');
+
+    // 自动数据库迁移：为 merchants 表添加 category 字段（如果不存在）
+    try {
+      await sequelize.query("ALTER TABLE merchants ADD COLUMN category VARCHAR(50) COMMENT '商家分类'");
+      await sequelize.query("UPDATE merchants SET category = '美食'");
+      console.log('✅ 自动迁移：成功添加 merchants.category 字段');
+    } catch (err) {
+      // 忽略已存在该字段的报错
+      if (err.message && err.message.includes('Duplicate column')) {
+        console.log('✅ 自动迁移：merchants.category 字段已存在');
+      } else {
+        console.log('⚠️ 自动迁移提示：', err.message);
+      }
+    }
 
     socketService.init(server);
 

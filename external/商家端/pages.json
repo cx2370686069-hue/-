@@ -54,7 +54,7 @@
 		{
 			"path": "pages/login/index",
 			"style": {
-				"navigationBarTitleText": "登录注册",
+				"navigationBarTitleText": "商家登录",
 				"navigationBarBackgroundColor": "#FF6B35"
 			}
 		},
@@ -228,13 +228,52 @@
 		{
 			"path": "pages/shop/index",
 			"style": {
-				"navigationBarTitleText": "商家管理"
+				"navigationBarTitleText": "店铺设置"
+			}
+		},
+		{
+			"path": "pages/shop/shop-apply",
+			"style": {
+				"navigationBarTitleText": "申请开店"
+			}
+		},
+		{
+			"path": "pages/shop/tianditu-picker",
+			"style": {
+				"navigationBarTitleText": "选择店铺位置",
+				"navigationBarBackgroundColor": "#FF6B35"
+			}
+		},
+		{
+			"path": "pages/shop/food-list",
+			"style": {
+				"navigationBarTitleText": "商品管理",
+				"enablePullDownRefresh": true
+			}
+		},
+		{
+			"path": "pages/shop/category-manage",
+			"style": {
+				"navigationBarTitleText": "商品分类",
+				"enablePullDownRefresh": true
+			}
+		},
+		{
+			"path": "pages/shop/category-add",
+			"style": {
+				"navigationBarTitleText": "添加分类"
+			}
+		},
+		{
+			"path": "pages/shop/product-publish",
+			"style": {
+				"navigationBarTitleText": "发布商品"
 			}
 		},
 		{
 			"path": "pages/shop/food-edit",
 			"style": {
-				"navigationBarTitleText": "添加商品"
+				"navigationBarTitleText": "编辑商品"
 			}
 		},
 		{

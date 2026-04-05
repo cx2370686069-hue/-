@@ -38,6 +38,8 @@
 </template>
 
 <script>
+import { disconnectSocket } from '@/utils/socket.js'
+
 export default {
   data() {
     return {
@@ -77,6 +79,7 @@ export default {
         content: '确定退出登录吗？',
         success: (res) => {
           if (res.confirm) {
+            disconnectSocket()
             uni.removeStorageSync('token')
             uni.removeStorageSync('userInfo')
             this.userInfo = null

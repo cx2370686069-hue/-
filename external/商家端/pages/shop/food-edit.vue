@@ -1,335 +1,397 @@
 <template>
-  <view class="container">
-    <view class="form-section">
-      <view class="form-item">
-        <text class="form-label">商品名称</text>
-        <input 
-          class="form-input" 
-          v-model="formData.商品名称" 
-          placeholder="请输入商品名称"
-          placeholder-class="input-placeholder"
-        />
+  <view class="page">
+    <view class="card">
+      <view class="field">
+        <text class="label">商品名称 (name)</text>
+        <input class="input" v-model="form.name" placeholder="请输入商品名称" />
       </view>
 
-      <view class="form-item">
-        <text class="form-label">商品价格</text>
-        <input 
-          class="form-input" 
-          v-model="formData.价格" 
-          type="digit"
-          placeholder="请输入价格"
-          placeholder-class="input-placeholder"
-        />
+      <view class="field">
+        <text class="label">现价 (price)</text>
+        <input class="input" v-model="form.price" type="digit" placeholder="请输入售价" />
       </view>
 
-      <view class="form-item">
-        <text class="form-label">商品分类</text>
-        <picker 
-          class="picker" 
-          :range="categories" 
-          range-key="name"
-          @change="onCategoryChange"
-        >
-          <view class="picker-value">
-            {{ formData.分类 || '请选择分类' }}
-          </view>
+      <view class="field">
+        <text class="label">原价 (original_price)</text>
+        <input class="input" v-model="form.original_price" type="digit" placeholder="选填，原价用于划线价展示" />
+      </view>
+
+      <view class="field">
+        <text class="label">分类 (category_id)</text>
+        <picker mode="selector" :range="categories" range-key="name" :value="pickerIndex" @change="onCategoryPick">
+          <view class="picker-line">{{ categoryLabel }}</view>
         </picker>
       </view>
 
-      <view class="form-item">
-        <text class="form-label">库存数量</text>
-        <input 
-          class="form-input" 
-          v-model="formData.库存" 
-          type="number"
-          placeholder="请输入库存数量"
-          placeholder-class="input-placeholder"
-        />
+      <view class="field">
+        <text class="label">商品描述 (description)</text>
+        <textarea class="textarea" v-model="form.description" placeholder="选填，输入商品描述" maxlength="2000" />
       </view>
 
-      <view class="form-item">
-        <text class="form-label">商品描述</text>
-        <textarea 
-          class="form-textarea" 
-          v-model="formData.描述" 
-          placeholder="请输入商品描述"
-          placeholder-class="input-placeholder"
-          maxlength="200"
-        />
-      </view>
-
-      <view class="form-item">
-        <text class="form-label">商品图片</text>
-        <view class="image-upload" @click="chooseImage">
-          <view class="upload-box" v-if="!formData.图片">
-            <text class="upload-icon">📷</text>
-            <text class="upload-text">点击上传图片</text>
+      <view class="field">
+        <text class="label">商品图片 (images)</text>
+        <view class="upload-list">
+          <view class="upload-item add" @click="chooseAndUploadImage">
+            <text class="add-text">{{ uploading ? '上传中...' : '+ 上传图片' }}</text>
           </view>
-          <image v-else :src="formData.图片" mode="aspectFill" class="upload-image" />
-        </view>
-      </view>
-
-      <view class="form-item">
-        <text class="form-label">商品状态</text>
-        <view class="switch-wrap">
-          <switch 
-            :checked="formData.状态 === 1" 
-            @change="onStatusChange"
-            color="#FF6B35"
-          />
-          <text class="switch-text">{{ formData.状态 === 1 ? '在售' : '售罄' }}</text>
+          <view v-for="(url, i) in imageList" :key="url + i" class="upload-item preview">
+            <image class="preview-img" :src="formatImageUrl(url)" mode="aspectFill" />
+            <view class="remove" @click.stop="removeImage(i)">×</view>
+          </view>
         </view>
       </view>
     </view>
 
-    <view class="submit-btn" @click="handleSubmit">
-      <text class="submit-btn-text">{{ isEdit ? '保存修改' : '添加商品' }}</text>
-    </view>
+    <button class="btn-save" type="primary" :loading="saving" @click="saveProduct">保存商品</button>
+    <button class="btn-delete" type="default" :loading="deleting" @click="deleteProduct">删除商品</button>
   </view>
 </template>
 
 <script>
-import { addFood, updateFood, getFoodDetail } from '@/api/food.js'
+import { BASE_URL } from '@/config/index.js'
+import request from '@/utils/request.js'
+
+const API_BASE_URL = BASE_URL + '/api'
 
 export default {
   data() {
     return {
-      foodId: '',
-      isEdit: false,
-      formData: {
-        商品名称： '',
-        价格： '',
-        分类： '',
-        库存： '',
-        描述： '',
-        图片： '',
-        状态： 1
-      },
-      categories: [
-        { id: 1, name: '主食' },
-        { id: 2, name: '小吃' },
-        { id: 3, name: '饮料' },
-        { id: 4, name: '甜点' },
-        { id: 5, name: '套餐' }
-      ]
+      productId: '',
+      categories: [],
+      imageList: [],
+      uploading: false,
+      saving: false,
+      deleting: false,
+      form: {
+        name: '',
+        price: '',
+        original_price: '',
+        category_id: null,
+        description: ''
+      }
+    }
+  },
+  computed: {
+    pickerIndex() {
+      if (!this.categories.length || this.form.category_id == null) return 0
+      const i = this.categories.findIndex((c) => String(c.id) === String(this.form.category_id))
+      return i >= 0 ? i : 0
+    },
+    categoryLabel() {
+      if (!this.categories.length) return '暂无分类，请先新增分类'
+      const c = this.categories[this.pickerIndex]
+      return c ? `${c.name} (id:${c.id})` : '请选择分类'
     }
   },
   onLoad(options) {
-    if (options.id) {
-      this.foodId = options.id
-      this.isEdit = true
-      this.loadFoodDetail()
+    this.productId = options && options.id ? String(options.id) : ''
+    if (!this.productId) {
+      uni.showToast({ title: '商品ID无效', icon: 'none' })
+      setTimeout(() => uni.navigateBack(), 600)
+      return
     }
+    uni.setNavigationBarTitle({ title: '编辑商品' })
+    this.bootstrap()
   },
   methods: {
-    async loadFoodDetail() {
-      try {
-        const res = await getFoodDetail(this.foodId)
-        if (res) {
-          this.formData = {
-            商品名称：res.商品名称 || '',
-            价格：res.价格 || '',
-            分类：res.分类 || '',
-            库存：res.库存 || '',
-            描述：res.描述 || '',
-            图片：res.图片 || '',
-            状态：res.状态 !== undefined ? res.状态 : 1
-          }
-        }
-      } catch (e) {
-        uni.showToast({
-          title: '加载失败',
-          icon: 'none'
-        })
+    formatImageUrl(url) {
+      if (!url) return ''
+      if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:image') || url.startsWith('blob:')) {
+        return url
+      }
+      return url.startsWith('/') ? BASE_URL + url : BASE_URL + '/' + url
+    },
+    async bootstrap() {
+      await Promise.all([this.loadCategories(), this.loadProductDetail()])
+      if (this.categories.length && this.form.category_id == null) {
+        this.form.category_id = this.categories[0].id
       }
     },
-    onCategoryChange(e) {
-      const index = e.detail.value
-      this.formData.分类 = this.categories[index].name
+    normalizeCategoryList(res) {
+      const arr =
+        (res && res.data && Array.isArray(res.data.data) && res.data.data) ||
+        (res && Array.isArray(res.data) && res.data) ||
+        (res && Array.isArray(res) && res) ||
+        []
+      return arr
+        .map((c) => ({
+          id: c.id,
+          name: c.name != null ? String(c.name) : ''
+        }))
+        .filter((c) => c.id != null)
     },
-    onStatusChange(e) {
-      this.formData.状态 = e.detail.value ? 1 : 0
+    parseImageList(rawImages) {
+      if (Array.isArray(rawImages)) {
+        return rawImages.filter((u) => typeof u === 'string' && u)
+      }
+      if (typeof rawImages !== 'string' || !rawImages.trim()) return []
+      try {
+        const parsed = JSON.parse(rawImages)
+        return Array.isArray(parsed) ? parsed.filter((u) => typeof u === 'string' && u) : []
+      } catch (e) {
+        return []
+      }
     },
-    chooseImage() {
+    parseUploadResponse(rawData) {
+      let parsed = rawData
+      if (typeof rawData === 'string') {
+        try {
+          parsed = JSON.parse(rawData)
+        } catch (e) {
+          parsed = null
+        }
+      }
+      const data = parsed && parsed.data && typeof parsed.data === 'object' ? parsed.data : parsed
+      return data && data.url ? String(data.url) : ''
+    },
+    async loadCategories() {
+      try {
+        const res = await request({ url: '/merchant/my-categories', method: 'GET' })
+        this.categories = this.normalizeCategoryList(res)
+      } catch (e) {
+        this.categories = []
+      }
+    },
+    async loadProductDetail() {
+      try {
+        const res = await request({
+          url: '/merchant/product/' + this.productId,
+          method: 'GET'
+        })
+        const raw = res && typeof res === 'object' && res.data !== undefined ? res.data : res
+        const p = raw && typeof raw === 'object' ? raw : {}
+        this.form = {
+          name: p.name != null ? String(p.name) : '',
+          price: p.price != null ? String(p.price) : '',
+          original_price: p.original_price != null ? String(p.original_price) : '',
+          category_id: p.category_id != null ? p.category_id : null,
+          description: p.description != null ? String(p.description) : ''
+        }
+        this.imageList = this.parseImageList(p.images)
+      } catch (e) {
+        uni.showToast({ title: '加载商品失败', icon: 'none' })
+      }
+    },
+    onCategoryPick(e) {
+      const index = Number(e.detail.value)
+      const c = this.categories[index]
+      this.form.category_id = c ? c.id : null
+    },
+    removeImage(index) {
+      this.imageList.splice(index, 1)
+    },
+    chooseAndUploadImage() {
+      if (this.uploading) return
+      const token = uni.getStorageSync('token') || ''
+      if (!token) {
+        uni.showToast({ title: '请先登录', icon: 'none' })
+        return
+      }
       uni.chooseImage({
-        count: 1,
-        success: (res) => {
-          this.formData.图片 = res.tempFilePaths[0]
+        count: 9,
+        success: async (chooseRes) => {
+          const files = (chooseRes.tempFilePaths || []).filter(Boolean)
+          if (!files.length) return
+          this.uploading = true
+          try {
+            for (const filePath of files) {
+              const url = await this.uploadSingle(filePath, token)
+              if (url) this.imageList.push(url)
+            }
+            uni.showToast({ title: '上传成功', icon: 'success' })
+          } catch (e) {
+            uni.showToast({ title: '上传失败', icon: 'none' })
+          } finally {
+            this.uploading = false
+          }
         }
       })
     },
-    async handleSubmit() {
-      if (!this.formData.商品名称) {
-        uni.showToast({
-          title: '请输入商品名称',
-          icon: 'none'
+    uploadSingle(filePath, token) {
+      return new Promise((resolve, reject) => {
+        uni.uploadFile({
+          url: API_BASE_URL + '/upload/image',
+          filePath,
+          name: 'file',
+          header: {
+            Authorization: 'Bearer ' + token
+          },
+          success: (uploadRes) => {
+            const url = this.parseUploadResponse(uploadRes.data)
+            if (!url) {
+              reject(new Error('no url'))
+              return
+            }
+            resolve(url)
+          },
+          fail: reject
         })
+      })
+    },
+    buildPayload() {
+      const name = (this.form.name || '').trim()
+      const price = Number(this.form.price)
+      const originalPriceText = String(this.form.original_price || '').trim()
+      const originalPrice = originalPriceText === '' ? null : Number(originalPriceText)
+      const category_id = Number(this.form.category_id)
+      const description = (this.form.description || '').trim()
+      return {
+        name,
+        price,
+        original_price: originalPriceText === '' ? null : originalPrice,
+        category_id,
+        description,
+        images: JSON.stringify(this.imageList.length ? this.imageList : [])
+      }
+    },
+    async saveProduct() {
+      const payload = this.buildPayload()
+      if (!payload.name) {
+        uni.showToast({ title: '请填写商品名称', icon: 'none' })
         return
       }
-      if (!this.formData.价格) {
-        uni.showToast({
-          title: '请输入商品价格',
-          icon: 'none'
-        })
+      if (!Number.isFinite(payload.price) || payload.price <= 0) {
+        uni.showToast({ title: '请填写有效售价', icon: 'none' })
         return
       }
-      if (!this.formData.分类) {
-        uni.showToast({
-          title: '请选择商品分类',
-          icon: 'none'
-        })
+      if (payload.original_price != null && (!Number.isFinite(payload.original_price) || payload.original_price < 0)) {
+        uni.showToast({ title: '原价格式不正确', icon: 'none' })
+        return
+      }
+      if (!Number.isFinite(payload.category_id) || payload.category_id < 1) {
+        uni.showToast({ title: '请选择分类', icon: 'none' })
         return
       }
 
+      this.saving = true
       try {
-        if (this.isEdit) {
-          await updateFood(this.foodId, this.formData)
-          uni.showToast({
-            title: '修改成功',
-            icon: 'success'
-          })
-        } else {
-          await addFood(this.formData)
-          uni.showToast({
-            title: '添加成功',
-            icon: 'success'
-          })
-        }
-        setTimeout(() => {
-          uni.navigateBack()
-        }, 1500)
-      } catch (e) {
-        uni.showToast({
-          title: '操作失败',
-          icon: 'none'
+        await request({
+          url: '/merchant/product/' + this.productId,
+          method: 'PUT',
+          data: payload
         })
+        uni.showToast({ title: '保存成功', icon: 'success' })
+        setTimeout(() => uni.navigateBack(), 600)
+      } finally {
+        this.saving = false
       }
+    },
+    deleteProduct() {
+      uni.showModal({
+        title: '删除商品',
+        content: '确定要删除该商品吗？',
+        success: async (res) => {
+          if (!res.confirm) return
+          this.deleting = true
+          try {
+            await request({
+              url: '/merchant/product/' + this.productId,
+              method: 'DELETE'
+            })
+            uni.showToast({ title: '删除成功', icon: 'success' })
+            setTimeout(() => uni.navigateBack(), 600)
+          } finally {
+            this.deleting = false
+          }
+        }
+      })
     }
   }
 }
 </script>
 
-<style>
-.container {
+<style scoped>
+.page {
   min-height: 100vh;
-  background-color: #F5F5F5;
-  padding: 20rpx;
-  padding-bottom: 140rpx;
+  padding: 24rpx;
+  background: #f5f5f5;
+  box-sizing: border-box;
 }
-
-.form-section {
-  background-color: #fff;
-  border-radius: 16rpx;
-  padding: 20rpx;
-}
-
-.form-item {
-  padding: 30rpx 0;
-  border-bottom: 1rpx solid #F0F0F0;
-}
-
-.form-item:last-child {
-  border-bottom: none;
-}
-
-.form-label {
-  display: block;
-  font-size: 28rpx;
-  color: #333;
-  margin-bottom: 16rpx;
-  font-weight: 500;
-}
-
-.form-input {
-  width: 100%;
-  height: 80rpx;
-  font-size: 28rpx;
-  color: #333;
-}
-
-.input-placeholder {
-  color: #999;
-}
-
-.form-textarea {
-  width: 100%;
-  height: 200rpx;
-  font-size: 28rpx;
-  color: #333;
-}
-
-.picker {
-  height: 80rpx;
-  display: flex;
-  align-items: center;
-}
-
-.picker-value {
-  font-size: 28rpx;
-  color: #333;
-}
-
-.image-upload {
-  width: 100%;
-}
-
-.upload-box {
-  width: 200rpx;
-  height: 200rpx;
-  background-color: #F5F5F5;
+.card {
+  background: #fff;
   border-radius: 12rpx;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  border: 2rpx dashed #ddd;
+  padding: 24rpx;
+  margin-bottom: 24rpx;
 }
-
-.upload-icon {
-  font-size: 60rpx;
+.field {
+  margin-bottom: 28rpx;
+}
+.field:last-child {
+  margin-bottom: 0;
+}
+.label {
+  display: block;
+  font-size: 26rpx;
+  color: #666;
   margin-bottom: 12rpx;
 }
-
-.upload-text {
+.input {
+  border: 1rpx solid #ddd;
+  border-radius: 8rpx;
+  padding: 16rpx 20rpx;
+  font-size: 28rpx;
+}
+.textarea {
+  width: 100%;
+  min-height: 160rpx;
+  border: 1rpx solid #ddd;
+  border-radius: 8rpx;
+  padding: 16rpx 20rpx;
+  font-size: 28rpx;
+  box-sizing: border-box;
+}
+.picker-line {
+  border: 1rpx solid #ddd;
+  border-radius: 8rpx;
+  padding: 16rpx 20rpx;
+  font-size: 28rpx;
+  color: #333;
+}
+.upload-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16rpx;
+}
+.upload-item {
+  width: 160rpx;
+  height: 160rpx;
+  border-radius: 10rpx;
+  overflow: hidden;
+  position: relative;
+}
+.upload-item.add {
+  border: 2rpx dashed #ddd;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.add-text {
   font-size: 24rpx;
   color: #999;
 }
-
-.upload-image {
-  width: 200rpx;
-  height: 200rpx;
-  border-radius: 12rpx;
+.preview-img {
+  width: 100%;
+  height: 100%;
 }
-
-.switch-wrap {
-  display: flex;
-  align-items: center;
-}
-
-.switch-text {
-  font-size: 28rpx;
-  color: #333;
-  margin-left: 16rpx;
-}
-
-.submit-btn {
-  position: fixed;
-  bottom: 40rpx;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 600rpx;
-  height: 100rpx;
-  background: linear-gradient(135deg, #FF6B35 0%, #FF8F65 100%);
-  border-radius: 50rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 8rpx 24rpx rgba(255, 107, 53, 0.4);
-}
-
-.submit-btn-text {
-  font-size: 32rpx;
-  font-weight: bold;
+.remove {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 36rpx;
+  height: 36rpx;
+  line-height: 36rpx;
+  text-align: center;
   color: #fff;
+  background: rgba(0, 0, 0, 0.5);
+  font-size: 28rpx;
+}
+.btn-save {
+  margin-top: 8rpx;
+}
+.btn-delete {
+  margin-top: 20rpx;
+  border: 1rpx solid #ff4d4f;
+  color: #ff4d4f;
+  background: #fff;
 }
 </style>

@@ -57,8 +57,13 @@ export default {
     this.loadCart()
   },
   async onPullDownRefresh() {
-    await this.loadCart()
-    uni.stopPullDownRefresh()
+    try {
+      await this.loadCart()
+    } catch (e) {
+      console.error(e)
+    } finally {
+      uni.stopPullDownRefresh()
+    }
   },
   methods: {
     async loadCart() {

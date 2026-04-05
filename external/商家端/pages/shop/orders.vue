@@ -67,8 +67,8 @@
 <script>
 import { getOrderList, acceptOrder } from '@/api/order.js'
 import { ORDER_STATUS_CLASS } from '@/config/index.js'
-import { initSocket, onNewOrder, getSocket } from '@/utils/socket.js'
-import { getToken } from '@/utils/auth.js'
+import { initSocket, onNewOrder, offNewOrder, getSocket } from '@/utils/socket.js'
+import { getToken, getUser } from '@/utils/auth.js'
 
 export default {
   data() {
@@ -81,7 +81,8 @@ export default {
         { label: '配送中', status: '配送中', count: 0, emptyText: '暂无配送订单' },
         { label: '已完成', status: '已完成', count: 0, emptyText: '暂无已完成订单' },
         { label: '全部', status: '', count: 0, emptyText: '暂无订单' }
-      ]
+      ],
+      _newOrderHandler: null
     }
   },
   computed: {
@@ -93,13 +94,23 @@ export default {
   },
   onLoad() {
     const token = getToken()
+    const userInfo = getUser()
+    const userId = userInfo?.id || userInfo?.userId || ''
+    
     if (token && !getSocket()) {
-      initSocket(token)
+      initSocket(token, userId)
     }
-    onNewOrder((data) => {
-      uni.showToast({ title: '收到新订单！', icon: 'none' })
+    this._newOrderHandler = (data) => {
+      console.log('收到新订单推送：', data)
       this.loadOrders()
-    })
+    }
+    onNewOrder(this._newOrderHandler)
+  },
+  onUnload() {
+    if (this._newOrderHandler) {
+      offNewOrder(this._newOrderHandler)
+      this._newOrderHandler = null
+    }
   },
   onShow() {
     this.loadOrders()

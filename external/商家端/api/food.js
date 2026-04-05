@@ -1,47 +1,60 @@
-import { get, post } from '@/utils/request.js'
+import request from '@/utils/request.js'
 
 export function getFoodList(category, sort, search) {
   let url = '/food/list'
   const params = []
-  if (category) params.push('分类=' + encodeURIComponent(category))
-  if (sort && sort !== '综合排序') params.push('排序=' + encodeURIComponent(sort))
-  if (search) params.push('搜索=' + encodeURIComponent(search))
+  if (category) params.push('category=' + encodeURIComponent(category))
+  if (sort && sort !== '综合排序') params.push('sort=' + encodeURIComponent(sort))
+  if (search) params.push('search=' + encodeURIComponent(search))
   if (params.length) url += '?' + params.join('&')
-  return get(url)
+  return request({ url, method: 'GET' })
 }
 
 export function searchFood(keyword) {
-  return get('/food/list?搜索=' + encodeURIComponent(keyword))
+  return request({ url: '/food/list?search=' + encodeURIComponent(keyword), method: 'GET' })
 }
 
 export function getFoodDetail(id) {
-  return get('/food/detail?商品ID=' + id)
+  return request({ url: '/food/detail?id=' + id, method: 'GET' })
 }
 
 export function getMyFoods() {
-  return get('/food/my')
+  return request({ url: '/food/my', method: 'GET' })
 }
 
 export function addFood(data) {
-  return post('/food/add', {
-    '商品名称': data.name,
-    '价格': data.price,
-    '分类': data.category,
-    '库存': data.stock,
-    '描述': data.desc
+  return request({
+    url: '/food/add',
+    method: 'POST',
+    data: {
+      name: data.name,
+      price: data.price,
+      category: data.category,
+      stock: data.stock,
+      description: data.description,
+      image: data.image,
+      status: data.status
+    }
   })
 }
 
 export function updateFood(id, data) {
-  return post('/food/update?商品ID=' + id, {
-    '商品名称': data.name,
-    '价格': data.price,
-    '分类': data.category,
-    '库存': data.stock,
-    '描述': data.desc
+  return request({
+    url: '/food/update',
+    method: 'POST',
+    data: {
+      id: id,
+      name: data.name,
+      price: data.price,
+      category: data.category,
+      stock: data.stock,
+      description: data.description,
+      image: data.image,
+      status: data.status
+    }
   })
 }
 
 export function deleteFood(id) {
-  return post('/food/delete?商品ID=' + id)
+  return request({ url: '/food/delete', method: 'POST', data: { id } })
 }

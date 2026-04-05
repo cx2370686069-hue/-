@@ -25,6 +25,8 @@ const ProductCategory = sequelize.define('ProductCategory', {
   }
 }, {
   tableName: 'product_categories',
+  createdAt: 'created_at',
+  updatedAt: 'updated_at',
   indexes: [
     { fields: ['merchant_id'] }
   ]

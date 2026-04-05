@@ -77,6 +77,8 @@
 
 <script>
 import { getDashboard } from '../../api/index.js';
+import { getToken, getUser } from '@/utils/auth.js';
+import { initSocket, getSocket } from '@/utils/socket.js';
 
 export default {
   data() {
@@ -90,7 +92,18 @@ export default {
     };
   },
   onLoad() {
+    const token = getToken();
+    const userInfo = getUser();
+    const userId = userInfo?.id || userInfo?.userId || '';
+    
+    if (token && !getSocket()) {
+      initSocket(token, userId);
+    }
+    uni.$on('merchant_new_order', this.loadData);
     this.loadData();
+  },
+  onUnload() {
+    uni.$off('merchant_new_order', this.loadData);
   },
   onShow() {
     this.loadData();

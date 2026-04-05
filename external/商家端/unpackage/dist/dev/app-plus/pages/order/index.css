@@ -1,0 +1,140 @@
+
+.container[data-v-17a44f9d] {
+  background-color: #f5f5f5;
+  min-height: 100vh;
+  padding: 0.5rem 0;
+}
+.order-card[data-v-17a44f9d] {
+  background-color: #fff;
+  margin: 0.5rem 0.625rem;
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+}
+.order-header[data-v-17a44f9d] {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 0.03125rem solid #f5f5f5;
+}
+.order-id[data-v-17a44f9d] {
+  font-size: 0.75rem;
+  color: #999;
+}
+.order-status[data-v-17a44f9d] {
+  font-size: 0.8125rem;
+  font-weight: bold;
+  padding: 0.125rem 0.5rem;
+  border-radius: 0.625rem;
+}
+.status-unpaid[data-v-17a44f9d] {
+  color: #ff3b30;
+  background-color: #FFF0F0;
+}
+.status-waiting[data-v-17a44f9d] {
+  color: #FF6B35;
+  background-color: #FFF3EE;
+}
+.status-cooking[data-v-17a44f9d] {
+  color: #faad14;
+  background-color: #FFFBE6;
+}
+.status-delivering[data-v-17a44f9d] {
+  color: #1890ff;
+  background-color: #E6F7FF;
+}
+.status-done[data-v-17a44f9d] {
+  color: #52c41a;
+  background-color: #F6FFED;
+}
+.status-cancelled[data-v-17a44f9d] {
+  color: #999;
+  background-color: #f5f5f5;
+}
+.pay-action[data-v-17a44f9d] {
+  background: linear-gradient(135deg, #ff3b30, #ff6b5a);
+}
+.cancel-action[data-v-17a44f9d] {
+  background: #fff;
+  border: 0.03125rem solid #999;
+  margin-left: 0.375rem;
+}
+.cancel-action .action-btn-text[data-v-17a44f9d] {
+  color: #666;
+}
+.order-foods[data-v-17a44f9d] {
+  margin-bottom: 0.5rem;
+}
+.food-row[data-v-17a44f9d] {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.25rem 0;
+}
+.food-name[data-v-17a44f9d] {
+  font-size: 0.875rem;
+  color: #333;
+}
+.food-price[data-v-17a44f9d] {
+  font-size: 0.875rem;
+  color: #666;
+}
+.order-footer[data-v-17a44f9d] {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 0.5rem;
+  border-top: 0.03125rem solid #f5f5f5;
+}
+.order-time[data-v-17a44f9d] {
+  font-size: 0.6875rem;
+  color: #999;
+}
+.order-footer-right[data-v-17a44f9d] {
+  display: flex;
+  align-items: center;
+}
+.order-total[data-v-17a44f9d] {
+  font-size: 0.875rem;
+  color: #FF6B35;
+  font-weight: bold;
+  margin-right: 0.5rem;
+}
+.action-btn[data-v-17a44f9d] {
+  background: linear-gradient(135deg, #FF6B35, #FF8C42);
+  padding: 0.3125rem 0.75rem;
+  border-radius: 0.9375rem;
+}
+.action-btn-text[data-v-17a44f9d] {
+  color: #fff;
+  font-size: 0.75rem;
+}
+.empty[data-v-17a44f9d] {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 6.25rem;
+}
+.empty-icon[data-v-17a44f9d] {
+  font-size: 2.5rem;
+}
+.empty-text[data-v-17a44f9d] {
+  font-size: 1rem;
+  color: #333;
+  margin-top: 0.625rem;
+}
+.empty-tip[data-v-17a44f9d] {
+  font-size: 0.8125rem;
+  color: #999;
+  margin-top: 0.3125rem;
+}
+.login-btn[data-v-17a44f9d] {
+  margin-top: 0.9375rem;
+  background: linear-gradient(135deg, #FF6B35, #FF8C42);
+  padding: 0.5rem 1.875rem;
+  border-radius: 1.25rem;
+}
+.login-btn-text[data-v-17a44f9d] {
+  color: #fff;
+  font-size: 0.875rem;
+}

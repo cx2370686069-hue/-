@@ -49,11 +49,16 @@ function init(server) {
       const headerRole = socket.handshake.headers?.role;
       
       socket.userRole = userRole || (authRole || queryRole || headerRole || 'user').toString().toLowerCase();
-      socket.userId = userId ||
+      
+      // 提取原始的用户ID
+      let rawUserId = userId ||
         socket.handshake.auth?.userId ||
         socket.handshake.query?.userId ||
         socket.handshake.headers?.['x-user-id'] ||
         `${socket.userRole}_${socket.id}`;
+        
+      // 关键修复：强制转换 userId 为数字，如果包含字母(如 dispatcher_xxxx)，则默认为 1
+      socket.userId = isNaN(Number(rawUserId)) ? 1 : Number(rawUserId);
 
       next();
     } catch (e) {
@@ -75,6 +80,73 @@ function init(server) {
       dispatcherSockets.set(socket.userId, socket);
       socket.join('dispatcher');
       socket.join('dispatcher_room');
+
+      // 【大屏刷新防丢失优化】当调度员连接时，主动将数据库里的活跃订单和骑手推给它
+      setTimeout(async () => {
+        try {
+          const { Order, Merchant, User } = require('../models');
+          const { Op } = require('sequelize');
+          
+          // 1. 推送活跃订单 (状态 1~5 代表未完成的活跃订单)
+          const activeOrders = await Order.findAll({
+            where: { status: { [Op.in]: [1, 2, 3, 4, 5] } },
+            include: [{ model: Merchant, as: 'merchant' }]
+          });
+          
+          if (activeOrders.length > 0) {
+            const radarData = activeOrders.map(order => {
+              const m = order.merchant || {};
+              const lng = order.customer_lng ?? order.delivery_longitude ?? null;
+              const lat = order.customer_lat ?? order.delivery_latitude ?? null;
+              return {
+                id: order.id,
+                orderId: order.order_no,
+                order_no: order.order_no,
+                restaurant: m.name,
+                customer_town: order.customer_town,
+                status: order.dispatch_status || 'pending',
+                type: order.order_type || 'takeout',
+                merchant_lng: m.longitude ? Number(m.longitude) : null,
+                merchant_lat: m.latitude ? Number(m.latitude) : null,
+                customer_lng: lng ? Number(lng) : null,
+                customer_lat: lat ? Number(lat) : null,
+                position: (lng && lat) ? [Number(lng), Number(lat)] : null,
+                delivery_address: order.delivery_address || ''
+              };
+            });
+            
+            socket.emit('orders_update', {
+              type: 'orders_update',
+              orders: radarData
+            });
+          }
+
+          // 2. 推送活跃骑手坐标
+          const activeRiders = await User.findAll({
+            where: { 
+              role: 'rider', 
+              status: 1, 
+              rider_status: 1,
+              rider_longitude: { [Op.not]: null },
+              rider_latitude: { [Op.not]: null }
+            }
+          });
+          
+          activeRiders.forEach(rider => {
+            socket.emit('location_update', {
+              type: 'location_update',
+              vehicleId: String(rider.id),
+              position: [Number(rider.rider_longitude), Number(rider.rider_latitude)],
+              status: 'idle',
+              timestamp: Date.now()
+            });
+          });
+          
+          console.log(`[大屏初始化] 已向调度员 ${socket.userId} 推送 ${activeOrders.length} 个活跃订单和 ${activeRiders.length} 个骑手坐标`);
+        } catch (err) {
+          console.error('初始化大屏数据失败:', err);
+        }
+      }, 1500); // 稍微延迟一下等前端渲染好
     } else {
       userSockets.set(socket.userId, socket);
       socket.join(`user_${socket.userId}`);

@@ -58,13 +58,14 @@
 import { getOrderList, acceptOrder, deliverOrder, confirmOrder, cancelOrder } from '@/api/order.js'
 import { useUserStore } from '@/store/user.js'
 import { ORDER_STATUS_CLASS } from '@/config/index.js'
-import { initSocket, onNewOrder, getSocket } from '../../utils/socket.js'
-import { getToken } from '../../utils/auth.js'
+import { initSocket, onNewOrder, offNewOrder, getSocket } from '@/utils/socket.js'
+import { getToken, getUser } from '@/utils/auth.js'
 
 export default {
   data() {
     return {
-      orderList: []
+      orderList: [],
+      _newOrderHandler: null
     }
   },
   computed: {
@@ -76,17 +77,26 @@ export default {
     }
   },
   onLoad() {
-    // 初始化 Socket 并监听新订单
     const token = getToken()
+    const userInfo = getUser()
+    const userId = userInfo?.id || userInfo?.userId || ''
+    
     if (token && !getSocket()) {
-      initSocket(token)
+      initSocket(token, userId)
     }
-    onNewOrder((data) => {
-      uni.showToast({ title: '收到新订单！', icon: 'none' })
+    this._newOrderHandler = (data) => {
+      console.log('收到新订单推送：', data)
       if (this.isLogin) {
         this.loadOrders()
       }
-    })
+    }
+    onNewOrder(this._newOrderHandler)
+  },
+  onUnload() {
+    if (this._newOrderHandler) {
+      offNewOrder(this._newOrderHandler)
+      this._newOrderHandler = null
+    }
   },
   onShow() {
     if (this.isLogin) {
@@ -94,10 +104,15 @@ export default {
     }
   },
   async onPullDownRefresh() {
-    if (this.isLogin) {
-      await this.loadOrders()
+    try {
+      if (this.isLogin) {
+        await this.loadOrders()
+      }
+    } catch (e) {
+      console.error(e)
+    } finally {
+      uni.stopPullDownRefresh()
     }
-    uni.stopPullDownRefresh()
   },
   methods: {
     async loadOrders() {

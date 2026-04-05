@@ -1,0 +1,38 @@
+
+.section-title[data-v-1fa681a1] { font-size: 0.9375rem; font-weight: 600; margin-bottom: 0.75rem;
+}
+.stats-grid[data-v-1fa681a1] { display: flex; justify-content: space-around; padding: 0.5rem 0;
+}
+.stats-item[data-v-1fa681a1] { text-align: center;
+}
+.stats-item .num[data-v-1fa681a1] { display: block; font-size: 1.25rem; font-weight: 600;
+}
+.stats-item .label[data-v-1fa681a1] { font-size: 0.75rem; color: #999;
+}
+.chart-placeholder[data-v-1fa681a1] {
+  display: flex;
+  justify-content: space-around;
+  align-items: flex-end;
+  height: 6.25rem;
+  padding: 0.75rem 0;
+}
+.chart-bar-wrap[data-v-1fa681a1] { display: flex; flex-direction: column; align-items: center; flex: 1;
+}
+.chart-bar[data-v-1fa681a1] {
+  width: 0.75rem;
+  background: linear-gradient(180deg, #FF6B35 0%, #FF8C42 100%);
+  border-radius: 0.25rem 0.25rem 0 0;
+  min-height: 0.25rem;
+}
+.chart-label[data-v-1fa681a1] { font-size: 0.6875rem; color: #999; margin-top: 0.25rem;
+}
+.rank-item[data-v-1fa681a1] { padding: 0.625rem 0; border-bottom: 0.03125rem solid #f0f0f0;
+}
+.rank[data-v-1fa681a1] { width: 1.5rem; text-align: center; font-weight: 600; color: #FF6B35;
+}
+.name[data-v-1fa681a1] { flex: 1; margin: 0 0.5rem;
+}
+.count[data-v-1fa681a1] { color: #999; font-size: 0.8125rem;
+}
+.empty[data-v-1fa681a1] { padding: 1rem; text-align: center;
+}

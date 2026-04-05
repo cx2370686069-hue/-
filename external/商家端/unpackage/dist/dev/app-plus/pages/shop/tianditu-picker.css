@@ -1,0 +1,15 @@
+
+.page[data-v-e6c2b886] {
+  flex: 1;
+  height: 100vh;
+}
+.fallback[data-v-e6c2b886] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+}
+.fallback-text[data-v-e6c2b886] {
+  font-size: 0.875rem;
+  color: #999;
+}

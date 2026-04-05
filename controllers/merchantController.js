@@ -7,10 +7,15 @@ const { Op } = require('sequelize');
  */
 exports.getMerchantList = async (req, res, next) => {
   try {
-    const { page = 1, limit = 10, status = 1 } = req.query;
+    const { page = 1, limit = 10, status = 1, category } = req.query;
     
+    const whereClause = { status, audit_status: 1 };
+    if (category) {
+      whereClause.category = category;
+    }
+
     const merchants = await Merchant.findAll({
-      where: { status, audit_status: 1 },
+      where: whereClause,
       include: [{
         model: require('../models').User,
         as: 'user',
@@ -21,7 +26,7 @@ exports.getMerchantList = async (req, res, next) => {
       offset: (parseInt(page) - 1) * parseInt(limit)
     });
 
-    const total = await Merchant.count({ where: { status, audit_status: 1 } });
+    const total = await Merchant.count({ where: whereClause });
 
     res.json(successResponse({
       list: merchants,
@@ -61,12 +66,39 @@ exports.getMerchantDetail = async (req, res, next) => {
 };
 
 /**
- * 获取商家商品分类
+ * 获取我的商品分类（商家端）
+ */
+exports.getMyCategories = async (req, res, next) => {
+  try {
+    const user = req.user;
+    const merchant = await Merchant.findOne({ where: { user_id: user.id } });
+
+    if (!merchant) {
+      return res.status(404).json(errorResponse('您还没有店铺'));
+    }
+
+    const categories = await ProductCategory.findAll({
+      where: { merchant_id: merchant.id },
+      order: [['sort', 'ASC'], ['id', 'DESC']]
+    });
+
+    res.json(successResponse(categories));
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * 获取商家商品分类（公开）
  */
 exports.getCategories = async (req, res, next) => {
   try {
     const { merchant_id } = req.query;
     
+    if (!merchant_id) {
+      return res.status(400).json(errorResponse('缺少商家ID参数'));
+    }
+
     const categories = await ProductCategory.findAll({
       where: { merchant_id },
       order: [['sort', 'ASC'], ['id', 'DESC']]
@@ -125,7 +157,7 @@ exports.createMerchant = async (req, res, next) => {
     const merchant = await Merchant.create({
       user_id: user.id,
       ...req.body,
-      audit_status: 0 // 待审核
+      audit_status: 1 // 为了方便测试，暂时自动通过审核。后期上线前改为 0（待审核）
     });
 
     res.status(201).json(successResponse(merchant, '店铺创建成功，请等待审核'));

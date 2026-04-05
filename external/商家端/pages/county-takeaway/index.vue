@@ -200,9 +200,14 @@ export default {
     this.updateCartBadge()
   },
   async onPullDownRefresh() {
-    await this.loadRecommend()
-    await this.getGoodsList(this.currentCategory || undefined, this.sortType)
-    uni.stopPullDownRefresh()
+    try {
+      await this.loadRecommend()
+      await this.getGoodsList(this.currentCategory || undefined, this.sortType)
+    } catch (e) {
+      console.error(e)
+    } finally {
+      uni.stopPullDownRefresh()
+    }
   },
   methods: {
     async loadRecommend() {

@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>天地图选点</title>
+  <script src="https://js.cdn.aliyun.dcloud.net.cn/dev/uni-app/uni.webview.1.5.4.js"></script>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; font-family: sans-serif; }
+    #map { width: 100%; height: calc(100% - 120px); }
+    #bar {
+      position: fixed; left: 0; right: 0; bottom: 0; height: 120px;
+      background: #fff; box-shadow: 0 -4px 12px rgba(0,0,0,.08);
+      display: flex; flex-direction: column; justify-content: center; align-items: center;
+      padding: 0 16px; box-sizing: border-box;
+    }
+    #tip { font-size: 12px; color: #666; margin-bottom: 8px; text-align: center; }
+    #btn {
+      width: 100%; max-width: 320px; height: 44px; border: none; border-radius: 22px;
+      background: linear-gradient(135deg, #FF6B35, #FF8C42); color: #fff; font-size: 16px;
+    }
+    #err { padding: 24px; color: #c00; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div id="err" style="display:none;"></div>
+  <div id="map"></div>
+  <div id="bar">
+    <div id="tip">地图提供商：国家地理信息公共服务平台 · 天地图（点击地图更新标记）</div>
+    <button id="btn" type="button">确认选点</button>
+  </div>
+  <script>
+    function getQuery(name) {
+      var m = new RegExp('[?&]' + name + '=([^&]*)').exec(location.search);
+      return m ? decodeURIComponent(m[1]) : '';
+    }
+    function showErr(msg) {
+      var el = document.getElementById('err');
+      el.style.display = 'block';
+      el.textContent = msg;
+      document.getElementById('map').style.display = 'none';
+      document.getElementById('bar').style.display = 'none';
+    }
+    var tk = getQuery('tk');
+    if (!tk) {
+      showErr('缺少天地图密钥：请配置 config/index.js 中的 TIANDITU_TK');
+    } else {
+      var script = document.createElement('script');
+      script.src = 'https://api.tianditu.gov.cn/api?v=4.0&tk=' + encodeURIComponent(tk);
+      script.onerror = function () {
+        showErr('天地图脚本加载失败，请检查网络与密钥是否有效');
+      };
+      script.onload = initMap;
+      document.head.appendChild(script);
+    }
+
+    var map;
+    var marker;
+    var currentLngLat;
+
+    function initMap() {
+      if (typeof T === 'undefined') {
+        showErr('天地图 API 未就绪');
+        return;
+      }
+      var lat = parseFloat(getQuery('lat'));
+      var lng = parseFloat(getQuery('lng'));
+      if (isNaN(lat) || isNaN(lng)) {
+        lat = 32.168;
+        lng = 115.654;
+      }
+      map = new T.Map('map');
+      currentLngLat = new T.LngLat(lng, lat);
+      map.centerAndZoom(currentLngLat, 16);
+      marker = new T.Marker(currentLngLat);
+      map.addOverlay(marker);
+
+      map.addEventListener('click', function (e) {
+        currentLngLat = e.lnglat || e.lngLat;
+        if (!currentLngLat) return;
+        map.clearOverlays();
+        marker = new T.Marker(currentLngLat);
+        map.addOverlay(marker);
+      });
+
+      document.getElementById('btn').addEventListener('click', function () {
+        if (!currentLngLat) return;
+        var la = typeof currentLngLat.getLat === 'function' ? currentLngLat.getLat() : currentLngLat.lat;
+        var ln = typeof currentLngLat.getLng === 'function' ? currentLngLat.getLng() : currentLngLat.lng;
+        if (typeof uni !== 'undefined' && uni.postMessage) {
+          uni.postMessage({
+            data: {
+              latitude: la,
+              longitude: ln
+            }
+          });
+        }
+      });
+    }
+  </script>
+</body>
+</html>

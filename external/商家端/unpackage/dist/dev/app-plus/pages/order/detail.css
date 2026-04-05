@@ -1,0 +1,21 @@
+
+.detail-row[data-v-6b23c96c] { display: flex; justify-content: space-between; padding: 0.625rem 0; font-size: 0.875rem;
+}
+.label[data-v-6b23c96c] { color: #999;
+}
+.value[data-v-6b23c96c] { flex: 1; margin-left: 0.75rem; text-align: right;
+}
+.status-tag[data-v-6b23c96c] { font-weight: 600;
+}
+.divider[data-v-6b23c96c] { height: 0.03125rem; background: #eee; margin: 0.5rem 0;
+}
+.goods-section[data-v-6b23c96c] { padding: 0.5rem 0;
+}
+.section-title[data-v-6b23c96c] { font-size: 0.875rem; font-weight: 600; margin-bottom: 0.5rem;
+}
+.goods-item[data-v-6b23c96c] { padding: 0.375rem 0; font-size: 0.8125rem;
+}
+.footer-actions[data-v-6b23c96c] { display: flex; gap: 0.75rem; margin-top: 1rem;
+}
+.btn-outline[data-v-6b23c96c] { background: transparent; border: 0.03125rem solid #ddd; color: #666;
+}

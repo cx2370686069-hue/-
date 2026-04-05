@@ -34,9 +34,17 @@ const Merchant = sequelize.define('Merchant', {
     type: DataTypes.STRING(20),
     comment: '联系电话'
   },
+  business_license: {
+    type: DataTypes.STRING(255),
+    comment: '营业执照图片URL'
+  },
   address: {
     type: DataTypes.STRING(255),
     comment: '店铺地址'
+  },
+  category: {
+    type: DataTypes.STRING(50),
+    comment: '商家分类'
   },
   latitude: {
     type: DataTypes.DECIMAL(10, 8),

@@ -9,6 +9,11 @@ export function getShopInfo() {
   return request({ url: '/merchant/my', method: 'GET' })
 }
 
+/** GET /api/merchant/my，404 时不弹窗，返回 null（用于判断是否已开店） */
+export function fetchMerchantMy() {
+  return request({ url: '/merchant/my', method: 'GET', allow404: true })
+}
+
 // 创建店铺信息 (就是缺了这个！！)
 export function createShop(data) {
   return request({ url: '/merchant/create', method: 'POST', data: data })
@@ -34,14 +39,34 @@ export function getDashboard() {
   return request({ url: '/shop/dashboard', method: 'GET' })
 }
 
-// 获取商品列表
+// 商家分类列表（当前商家私有接口）
+export function getMerchantCategoryList() {
+  return request({ url: '/merchant/my-categories', method: 'GET' })
+}
+
+/** POST /api/merchant/category */
+export function createCategory(data) {
+  return request({ url: '/merchant/category', method: 'POST', data })
+}
+
+// 获取商品列表（旧接口，慎用：可能非本店维度）
 export function getProductList(params = {}) {
   return request({ url: '/merchant/products', method: 'GET', data: params })
+}
+
+/** GET /api/merchant/my-products — 当前登录商家店铺下的商品 */
+export function getMyProducts(params = {}) {
+  return request({ url: '/merchant/my-products', method: 'GET', data: params })
 }
 
 // 创建商品
 export function createProduct(data) {
   return request({ url: '/merchant/product/create', method: 'POST', data: data })
+}
+
+/** POST /api/merchant/product（与后端约定字段：name, price, category_id, description, images 等） */
+export function createMerchantProduct(data) {
+  return request({ url: '/merchant/product', method: 'POST', data })
 }
 
 // 更新商品

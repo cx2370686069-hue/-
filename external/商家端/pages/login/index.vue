@@ -1,9 +1,9 @@
 <template>
   <view class="container">
     <view class="logo-area">
-      <text class="logo-emoji">🛵</text>
+      <text class="logo-emoji">🏪</text>
       <text class="logo-title">固始县外卖</text>
-      <text class="logo-sub">乡镇外卖 · 跑腿 · 生活服务</text>
+      <text class="logo-sub">商家端 · 店铺经营与订单管理</text>
     </view>
 
     <view class="form-card">
@@ -22,29 +22,14 @@
         <input class="input" v-model="password" placeholder="请输入密码" password />
       </view>
 
-      <view v-if="isRegister">
-        <view class="input-group">
-          <text class="input-icon">😊</text>
-          <input class="input" v-model="nickname" placeholder="昵称（选填）" />
-        </view>
-
-        <view class="role-section">
-          <text class="role-label">选择身份：</text>
-          <view class="role-list">
-            <text :class="['role-tag', role === 'user' && 'role-tag-active']" @click="role = 'user'">👤 用户</text>
-            <text :class="['role-tag', role === 'shop' && 'role-tag-active']" @click="role = 'shop'">🏪 商家</text>
-            <text :class="['role-tag', role === 'rider' && 'role-tag-active']" @click="role = 'rider'">🛵 骑手</text>
-          </view>
-        </view>
+      <view v-if="isRegister" class="input-group">
+        <text class="input-icon">😊</text>
+        <input class="input" v-model="nickname" placeholder="店铺老板昵称" />
       </view>
 
       <button class="submit-btn" @click="handleSubmit" :loading="loading">
-        {{ isRegister ? '注 册' : '真实账号登录' }}
+        {{ isRegister ? '注册成为商家' : '登 录' }}
       </button>
-
-      <view v-if="!isRegister" class="test-login-area">
-        <button class="test-btn" @click="handleTestLogin">一键测试登录</button>
-      </view>
     </view>
   </view>
 </template>
@@ -52,7 +37,8 @@
 <script>
 import { register, login } from '@/api/user.js'
 import { useUserStore } from '@/store/user.js'
-import { isValidPhone, isValidPassword } from '@/utils/validate.js'
+import { initSocket } from '@/utils/socket.js'
+import { isValidPhone, isValidPassword, isNotEmpty } from '@/utils/validate.js'
 
 export default {
   data() {
@@ -61,7 +47,6 @@ export default {
       phone: '',
       password: '',
       nickname: '',
-      role: 'user',
       loading: false
     }
   },
@@ -75,6 +60,10 @@ export default {
         uni.showToast({ title: '密码至少6位', icon: 'none' })
         return
       }
+      if (this.isRegister && !isNotEmpty(this.nickname)) {
+        uni.showToast({ title: '请填写店铺老板昵称', icon: 'none' })
+        return
+      }
 
       this.loading = true
 
@@ -83,8 +72,7 @@ export default {
           await register({
             phone: this.phone,
             password: this.password,
-            role: this.role,
-            nickname: this.nickname
+            nickname: this.nickname.trim()
           })
           uni.showToast({ title: '注册成功，请登录', icon: 'success' })
           this.isRegister = false
@@ -93,49 +81,47 @@ export default {
             phone: this.phone,
             password: this.password
           })
-          console.log('登录接口返回:', res)
-          
+
           const userStore = useUserStore()
-          
-          // 严格按照后端规范，优先从 res.data.token 或 res.token 获取
-          const token = res.data?.token || res.token || res.access_token || ''
-          const userInfo = res.data?.userInfo || res.用户信息 || res.userInfo || res.user || res.data?.user || { name: '商家用户', phone: this.phone, role: 'merchant' }
-          
+
+          const token =
+            res.data?.token ||
+            res.token ||
+            res.access_token ||
+            res.data?.access_token ||
+            ''
+
+          const userInfo =
+            res.data?.userInfo ||
+            res.data?.user ||
+            res.userInfo ||
+            res.user || {
+              name: '商家',
+              phone: this.phone,
+              role: 'merchant'
+            }
+
           if (!token) {
-            uni.showToast({ title: '登录返回数据异常，未获取到Token', icon: 'none' })
+            uni.showToast({ title: '登录返回数据异常，未获取到 Token', icon: 'none' })
             return
           }
-          
+
+          uni.setStorageSync('token', token)
           userStore.login(token, userInfo)
-          console.log('保存的token:', uni.getStorageSync('token'))
-          console.log('保存的userInfo:', uni.getStorageSync('userInfo'))
+
+          const userId = userInfo?.id || userInfo?.userId || ''
+          initSocket(token, userId)
 
           uni.showToast({ title: '登录成功', icon: 'success' })
           setTimeout(() => {
-            uni.reLaunch({ url: '/pages/index/index' })
-          }, 1000)
+            uni.reLaunch({ url: '/pages/shop/shop-apply' })
+          }, 800)
         }
       } catch (e) {
+        // 错误提示由 request.js 统一处理
       } finally {
         this.loading = false
       }
-    },
-    handleTestLogin() {
-      // 一键测试登录，不需要请求后端
-      const mockToken = 'test_merchant_token_123'
-      const mockUserInfo = {
-        name: '测试商家',
-        phone: '13800138000',
-        role: 'merchant'
-      }
-      
-      const userStore = useUserStore()
-      userStore.login(mockToken, mockUserInfo)
-      
-      uni.showToast({ title: '测试登录成功', icon: 'success' })
-      setTimeout(() => {
-        uni.reLaunch({ url: '/pages/index/index' })
-      }, 1000)
     }
   }
 }
@@ -210,32 +196,6 @@ export default {
   font-size: 28rpx;
 }
 
-.role-section {
-  padding: 24rpx 0;
-}
-.role-label {
-  font-size: 26rpx;
-  color: #666;
-  margin-bottom: 16rpx;
-  display: block;
-}
-.role-list {
-  display: flex;
-  gap: 16rpx;
-}
-.role-tag {
-  font-size: 26rpx;
-  padding: 12rpx 24rpx;
-  border-radius: 30rpx;
-  border: 2rpx solid #ddd;
-  color: #666;
-}
-.role-tag-active {
-  border-color: #FF6B35;
-  color: #FF6B35;
-  background-color: #FFF3EE;
-}
-
 .submit-btn {
   margin-top: 40rpx;
   background: linear-gradient(135deg, #FF6B35, #FF8C42);
@@ -245,16 +205,5 @@ export default {
   height: 88rpx;
   line-height: 88rpx;
   border: none;
-}
-
-.test-login-area {
-  margin-top: 30rpx;
-}
-.test-btn {
-  background: #f0f0f0;
-  color: #666;
-  border-radius: 40rpx;
-  font-size: 30rpx;
-  padding: 10rpx 0;
 }
 </style>

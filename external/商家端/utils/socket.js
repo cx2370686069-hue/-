@@ -2,32 +2,87 @@ import { io } from 'socket.io-client'
 import { SOCKET_URL } from '../config/index.js'
 
 let socket = null
+const newOrderCallbacks = []
+const orderUpdateCallbacks = []
+const newDeliveryCallbacks = []
 
-export function initSocket(token) {
+function bindSocketListeners() {
+  if (!socket) return
+  socket.on('connect', () => {
+    console.log('[socket] connected', socket.id)
+  })
+  socket.on('connect_error', (err) => {
+    console.log('[socket] connect_error', JSON.stringify({
+      message: err?.message,
+      description: err?.description,
+      type: err?.type
+    }))
+  })
+  socket.on('disconnect', (reason) => {
+    console.log('[socket] disconnect', reason)
+  })
+  socket.on('new_order', (data) => {
+    newOrderCallbacks.forEach((cb) => {
+      try {
+        cb(data)
+      } catch (e) {
+        console.error('new_order 回调异常', e)
+      }
+    })
+  })
+  socket.on('order_update', (data) => {
+    orderUpdateCallbacks.forEach((cb) => {
+      try {
+        cb(data)
+      } catch (e) {
+        console.error('order_update 回调异常', e)
+      }
+    })
+  })
+  socket.on('new_delivery', (data) => {
+    newDeliveryCallbacks.forEach((cb) => {
+      try {
+        cb(data)
+      } catch (e) {
+        console.error('new_delivery 回调异常', e)
+      }
+    })
+  })
+}
+
+export function initSocket(token, userId) {
+  if (!token) {
+    return null
+  }
   if (socket) {
     socket.disconnect()
+    socket = null
   }
-  
-  // 根据后端规范，Socket 连接也使用 Bearer 格式传递 token
-  const authFormat = token.startsWith('Bearer ') ? token : 'Bearer ' + token;
-  
+
+  const tokenStr = typeof token === 'string' ? token : ''
+  const bearer = tokenStr.startsWith('Bearer ') ? tokenStr : 'Bearer ' + tokenStr
+
   socket = io(SOCKET_URL, {
-    auth: { token: authFormat },
-    transports: ['websocket', 'polling']
+    path: '/socket.io',
+    transports: ['websocket', 'polling'],
+    upgrade: true,
+    rememberUpgrade: true,
+    timeout: 60000,
+    reconnection: true,
+    reconnectionAttempts: 20,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 5000,
+    // 仅传 token，避免后端握手校验不通过（多余字段可能导致进不了商家房间）
+    auth: {
+      token: bearer
+    },
+    query: {
+      role: 'merchant',
+      userId: String(userId || '')
+    }
   })
-  
-  socket.on('connect', () => {
-    console.log('Socket 已连接')
-  })
-  
-  socket.on('disconnect', () => {
-    console.log('Socket 已断开')
-  })
-  
-  socket.on('connect_error', (err) => {
-    console.log('Socket 连接错误:', err.message)
-  })
-  
+
+  bindSocketListeners()
   return socket
 }
 
@@ -42,25 +97,37 @@ export function disconnectSocket() {
   }
 }
 
+/** 注册新订单监听（可先注册再 initSocket；支持多页面同时监听） */
 export function onNewOrder(callback) {
-  if (socket) {
-    socket.on('new_order', callback)
+  if (typeof callback !== 'function') return
+  if (!newOrderCallbacks.includes(callback)) {
+    newOrderCallbacks.push(callback)
   }
 }
 
+export function offNewOrder(callback) {
+  const i = newOrderCallbacks.indexOf(callback)
+  if (i !== -1) newOrderCallbacks.splice(i, 1)
+}
+
 export function onOrderUpdate(callback) {
-  if (socket) {
-    socket.on('order_update', callback)
+  if (typeof callback !== 'function') return
+  if (!orderUpdateCallbacks.includes(callback)) {
+    orderUpdateCallbacks.push(callback)
   }
 }
 
 export function onNewDelivery(callback) {
-  if (socket) {
-    socket.on('new_delivery', callback)
+  if (typeof callback !== 'function') return
+  if (!newDeliveryCallbacks.includes(callback)) {
+    newDeliveryCallbacks.push(callback)
   }
 }
 
 export function offAllListeners() {
+  newOrderCallbacks.length = 0
+  orderUpdateCallbacks.length = 0
+  newDeliveryCallbacks.length = 0
   if (socket) {
     socket.removeAllListeners()
   }
@@ -71,6 +138,7 @@ export default {
   getSocket,
   disconnectSocket,
   onNewOrder,
+  offNewOrder,
   onOrderUpdate,
   onNewDelivery,
   offAllListeners

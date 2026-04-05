@@ -1,6 +1,10 @@
-// 生产环境地址（阿里云服务器）
-export const BASE_URL = 'http://121.43.190.218:3000'
-export const SOCKET_URL = 'ws://121.43.190.218:3000'
+// 局域网联调（手机真机与电脑同一 WiFi）
+export const BASE_URL = 'http://192.168.1.4:3000'
+// Socket.io 客户端应使用与服务同源的 HTTP(S) 地址，由客户端自动协商 WebSocket；不要写 ws://
+export const SOCKET_URL = 'http://192.168.1.4:3000'
+
+/** 天地图开放平台「浏览器端」密钥（仅用于内嵌地图选点，勿用于服务端） https://console.tianditu.gov.cn/ */
+export const TIANDITU_TK = '63a693ed968db6b7256470395e40fe5b'
 
 export const CATEGORY_LIST = [
   { id: 1, name: '跑腿代购', emoji: '🏃', bgColor: '#FFF1F0' },

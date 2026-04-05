@@ -1,20 +1,18 @@
 <template>
   <view class="container">
-    <view class="logo-section">
-      <text class="logo-emoji">🛵</text>
-      <text class="app-name">固始县外卖骑手端</text>
-      <text class="app-desc">骑手专用接单配送</text>
+    <view class="header">
+      <text class="title">{{ isRegisterMode ? '骑手注册' : '骑手登录' }}</text>
     </view>
 
-    <view class="form-section">
+    <view class="form-container">
       <view class="form-item">
         <text class="form-label">手机号</text>
         <input 
           v-model="form.phone" 
           type="number" 
-          maxlength="11"
-          placeholder="请输入手机号"
-          class="form-input"
+          maxlength="11" 
+          placeholder="请输入手机号" 
+          class="form-input" 
         />
       </view>
 
@@ -22,38 +20,19 @@
         <text class="form-label">密码</text>
         <input 
           v-model="form.password" 
-
-
-      <view class="for【指令】请帮我在骑手端增加“实时上报地理位置”的功能。当前后端大屏调度台需要收到骑手坐标才能派单。
-
-具体要求：
-1. 打开 `api/user.js`，在文件末尾新增以下接口：
-```javascript
-/**
- * 上报骑手位置
- */
-export function reportLocation(latitude, longitude) {
-  return post('/rider/location/report', { latitude, longitude })
-}
-```
-2. 打开 `App.vue`，在全局增加一个定时器，每 10 秒上报一次位置：
-- 在 `data` 或外部定义一个 `locationTimer`。
-- 在 `onShow` 生命周期中，判断如果本地有 token（即已登录状态），则启动 `setInterval`。
-- 定时器内使用 `uni.getLocation({ type: 'gcj02' })` 获取经纬度，获取成功后调用 `reportLocation(res.latitude, res.longitude)` 上报给后端。
-- 在 `onHide` 生命周期中清除定时器 `clearInterval`，防止后台耗电。
-- 注意：如果获取定位失败，`catch` 捕获异常打印个日志即可，千万不要让程序崩溃或弹窗报错打扰用户。
-
-请直接帮我修改代码！修改完后我会刷新 HBuilderX 测试。          type="password" 
-          placeholder="请输入密码（至少6位）"
-          class="form-input"
+          type="password" 
+          placeholder="请输入密码（至少6位）" 
+          class="form-input" 
         />
-      </view>m-item" v-if="isRegisterMode">
+      </view>
+
+      <view class="form-item" v-if="isRegisterMode">
         <text class="form-label">确认密码</text>
         <input 
           v-model="form.confirmPassword" 
           type="password" 
-          placeholder="请再次输入密码"
-          class="form-input"
+          placeholder="请再次输入密码" 
+          class="form-input" 
         />
       </view>
 
@@ -62,17 +41,17 @@ export function reportLocation(latitude, longitude) {
         <input 
           v-model="form.nickname" 
           type="text" 
-          placeholder="请输入昵称"
-          class="form-input"
+          placeholder="请输入昵称" 
+          class="form-input" 
         />
       </view>
 
-      <button class="login-btn" @click="handleSubmit" :loading="loading">
+      <button class="submit-btn" @click="handleSubmit">
         {{ isRegisterMode ? '注册' : '登录' }}
       </button>
 
-      <view class="tips">
-        <text class="tip-text">{{ isRegisterMode ? '已有账号？' : '还没有账号？' }}</text>
+      <view class="toggle-mode">
+        <text class="tip-text">{{ isRegisterMode ? '已有账号？' : '没有账号？' }}</text>
         <text class="tip-link" @click="toggleMode">{{ isRegisterMode ? '立即登录' : '立即注册' }}</text>
       </view>
     </view>
@@ -204,34 +183,23 @@ export default {
 .container {
   min-height: 100vh;
   background: linear-gradient(135deg, #1890ff 0%, #40a9ff 100%);
-  padding: 120rpx 40rpx 40rpx;
+  padding: 80rpx 40rpx 40rpx;
 }
 
-.logo-section {
+.header {
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-bottom: 80rpx;
+  margin-bottom: 60rpx;
 }
 
-.logo-emoji {
-  font-size: 120rpx;
-  margin-bottom: 24rpx;
-}
-
-.app-name {
-  font-size: 40rpx;
+.title {
+  font-size: 44rpx;
   font-weight: bold;
   color: #fff;
-  margin-bottom: 12rpx;
 }
 
-.app-desc {
-  font-size: 26rpx;
-  color: rgba(255,255,255,0.8);
-}
-
-.form-section {
+.form-container {
   background: #fff;
   border-radius: 24rpx;
   padding: 48rpx 40rpx;
@@ -258,7 +226,7 @@ export default {
   font-size: 28rpx;
 }
 
-.login-btn {
+.submit-btn {
   width: 100%;
   height: 88rpx;
   background: linear-gradient(135deg, #1890ff, #40a9ff);
@@ -270,7 +238,7 @@ export default {
   margin-top: 24rpx;
 }
 
-.tips {
+.toggle-mode {
   display: flex;
   justify-content: center;
   margin-top: 32rpx;

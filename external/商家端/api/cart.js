@@ -1,17 +1,25 @@
-import { get, post } from '@/utils/request.js'
+import request from '@/utils/request.js'
 
 export function getCartList() {
-  return get('/cart/list')
+  return request({ url: '/cart/list', method: 'GET' })
 }
 
 export function addToCart(foodId, quantity = 1) {
-  return post('/cart/add', { '商品ID': foodId, '数量': quantity })
+  return request({
+    url: '/cart/add',
+    method: 'POST',
+    data: { foodId, quantity }
+  })
 }
 
 export function removeFromCart(foodId) {
-  return post('/cart/remove', { '商品ID': foodId })
+  return request({
+    url: '/cart/remove',
+    method: 'POST',
+    data: { foodId }
+  })
 }
 
 export function clearCart() {
-  return post('/cart/clear')
+  return request({ url: '/cart/clear', method: 'POST' })
 }

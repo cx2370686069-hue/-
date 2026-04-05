@@ -38,6 +38,8 @@ function request(options) {
         }
         if (res.statusCode === 200) {
           resolve(res.data);
+        } else if (options.allow404 && res.statusCode === 404) {
+          resolve(null);
         } else {
           let msg = res.data.detail || res.data.message || res.data.msg || '请求失败';
           

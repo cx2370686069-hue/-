@@ -1,0 +1,31 @@
+
+.balance-card[data-v-b0c916dd] { text-align: center; padding: 1.5rem;
+}
+.balance-card .label[data-v-b0c916dd] { font-size: 0.875rem; color: #999;
+}
+.balance-card .amount[data-v-b0c916dd] { display: block; font-size: 1.75rem; font-weight: 700; color: #FF6B35; margin: 0.75rem 0;
+}
+.section-title[data-v-b0c916dd] { font-size: 0.9375rem; font-weight: 600; margin-bottom: 0.75rem;
+}
+.stats-row[data-v-b0c916dd] { display: flex; justify-content: space-around; padding: 0.5rem 0;
+}
+.stats-item[data-v-b0c916dd] { text-align: center;
+}
+.stats-item .num[data-v-b0c916dd] { display: block; font-size: 1.125rem; font-weight: 600;
+}
+.stats-item .label[data-v-b0c916dd] { font-size: 0.75rem; color: #999;
+}
+.record-item[data-v-b0c916dd] { padding: 0.75rem 0; border-bottom: 0.03125rem solid #f0f0f0;
+}
+.record-item[data-v-b0c916dd]:last-child { border-bottom: none;
+}
+.record-item .amount[data-v-b0c916dd] { font-size: 0.9375rem; font-weight: 600;
+}
+.record-item .time[data-v-b0c916dd] { font-size: 0.75rem; margin-left: 0.5rem;
+}
+.record-item .status.done[data-v-b0c916dd] { color: #52c41a;
+}
+.record-item .status.pending[data-v-b0c916dd] { color: #faad14;
+}
+.empty[data-v-b0c916dd] { padding: 1rem; text-align: center;
+}

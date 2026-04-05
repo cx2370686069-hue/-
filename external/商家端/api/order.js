@@ -4,6 +4,16 @@ import request from '../utils/request.js'
  * 订单模块接口（商家端）
  */
 
+// 创建订单
+export function createOrder(data) {
+  return request({ url: '/order/create', method: 'POST', data })
+}
+
+// 支付订单
+export function payOrder(orderId, payMethod) {
+  return request({ url: '/order/pay', method: 'POST', data: { order_id: orderId, pay_method: payMethod } })
+}
+
 // 获取商家订单列表
 export function getOrderList(params = {}) {
   return request({ url: '/order/my', method: 'GET', data: params })

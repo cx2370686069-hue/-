@@ -47,7 +47,11 @@ export default {
     this.loadList()
   },
   onPullDownRefresh() {
-    this.loadList().then(() => uni.stopPullDownRefresh())
+    this.loadList()
+      .catch(() => {})
+      .finally(() => {
+        uni.stopPullDownRefresh()
+      })
   },
   methods: {
     goBack() {

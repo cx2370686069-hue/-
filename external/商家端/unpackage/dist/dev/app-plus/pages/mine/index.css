@@ -1,0 +1,38 @@
+
+.user-card[data-v-569e925a] { display: flex; align-items: center; gap: 0.75rem;
+}
+.user-avatar[data-v-569e925a] {
+  width: 3.75rem;
+  height: 3.75rem;
+  background: linear-gradient(135deg, #FF6B35 0%, #FF8C42 100%);
+  color: #fff;
+  font-size: 1.5rem;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.user-name[data-v-569e925a] { font-size: 1.0625rem; font-weight: 600; display: block;
+}
+.user-phone[data-v-569e925a] { font-size: 0.8125rem; margin-top: 0.25rem;
+}
+.menu-item[data-v-569e925a] {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 0;
+  font-size: 0.9375rem;
+  border-bottom: 0.03125rem solid #f5f5f5;
+}
+.menu-item[data-v-569e925a]:last-child { border-bottom: none;
+}
+.arrow[data-v-569e925a] { color: #ccc; font-size: 1.125rem;
+}
+.logout-btn[data-v-569e925a] {
+  width: 100%;
+  background: transparent;
+  color: #f44336;
+  border: none;
+  padding: 0.75rem;
+  font-size: 0.9375rem;
+}

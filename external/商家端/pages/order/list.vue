@@ -43,20 +43,17 @@
       </view>
     </view>
 
-    <!-- 订单状态标签 -->
-    <view class="status-tabs">
-      <scroll-view scroll-x class="tabs-scroll">
-        <view 
-          v-for="item in statusTabs" 
-          :key="item.key"
-          class="tab-item"
-          :class="{ active: currentStatus === item.key }"
-          @click="switchStatus(item.key)"
-        >
-          <text>{{ item.label }}</text>
-          <text v-if="item.count > 0" class="badge">{{ item.count }}</text>
-        </view>
-      </scroll-view>
+    <!-- 订单处理大厅：状态分桶，严禁跨级（1→2→3→4） -->
+    <view class="hall-tabs">
+      <view
+        v-for="tab in hallTabs"
+        :key="tab.key"
+        class="hall-tab"
+        :class="{ active: hallTab === tab.key }"
+        @click="switchHallTab(tab.key)"
+      >
+        <text class="hall-tab-text">{{ tab.label }}</text>
+      </view>
     </view>
 
     <!-- 订单列表 -->
@@ -123,50 +120,53 @@
             </view>
           </view>
 
-          <!-- 订单金额 -->
+          <!-- 预计收入：pay_amount - delivery_fee，缺省时用实付 -->
           <view class="order-amount">
-            <text class="amount-label">合计</text>
-            <text class="amount-num">¥{{ order.totalAmount }}</text>
+            <text class="amount-label">预计收入</text>
+            <text class="amount-num">¥{{ order.estimatedIncome }}</text>
             <text class="amount-detail">
-              商品¥{{ order.goodsAmount }} + 配送¥{{ order.deliveryFee }}
+              实付¥{{ order.totalAmount }}<text v-if="order.deliveryFee != null"> · 配送¥{{ order.deliveryFee }}</text>
             </text>
           </view>
 
-          <!-- 订单备注 -->
+          <!-- 订单备注（买家备注） -->
           <view v-if="order.remark" class="order-remark">
-            <text class="remark-label">备注：</text>
+            <text class="remark-label">买家备注：</text>
             <text class="remark-content">{{ order.remark }}</text>
           </view>
 
-          <!-- 操作按钮 -->
+          <!-- 操作按钮（按状态流转，不跨级） -->
           <view class="order-actions">
-            <!-- 状态 1：待接单 - 只显示接单和拒单 -->
-            <button 
-              v-if="order.status === 1" 
+            <button
+              v-if="order.status === 1"
               class="btn btn-primary"
-              @click.stop="acceptOrder(order)"
+              @click.stop="handleAccept(order)"
             >
               接单
             </button>
-            <button 
-              v-if="order.status === 1" 
+            <button
+              v-if="order.status === 1"
               class="btn btn-danger"
               @click.stop="rejectOrder(order)"
             >
               拒单
             </button>
-            <!-- 状态 2：备餐中 - 只显示制作完成 -->
-            <button 
-              v-if="order.status === 2" 
+            <button
+              v-if="order.status === 2"
               class="btn btn-primary"
               @click.stop="finishMake(order)"
             >
-              制作完成
+              出餐完成
             </button>
-            <!-- 状态 3：待配送/已呼叫骑手 -->
-            <text v-if="order.status === 3" class="status-hint">已呼叫骑手</text>
-            <!-- 状态 4：配送中 -->
-            <text v-if="order.status === 4" class="status-hint">配送中</text>
+            <button
+              v-if="(order.status === 3 || order.status === 4) && order.orderType === 'county'"
+              class="btn btn-primary"
+              @click.stop="submitDeliver(order)"
+            >
+              {{ order.status === 3 ? '呼叫骑手' : '提交调度' }}
+            </button>
+            <text v-if="order.status === 3 && order.orderType !== 'county'" class="status-hint">待配送</text>
+            <text v-if="order.status === 4 && order.orderType !== 'county'" class="status-hint">配送中</text>
             <!-- 通用按钮 -->
             <button 
               class="btn btn-default"
@@ -205,10 +205,17 @@
 </template>
 
 <script>
-import { getDashboard, getOrderList, acceptOrder, rejectOrder, readyForDelivery } from '../../api/index.js'
+import {
+  getDashboard,
+  getOrderList,
+  acceptOrder as apiAcceptOrder,
+  rejectOrder,
+  prepareOrder,
+  deliverOrder
+} from '../../api/index.js'
 import { ORDER_STATUS, formatTime } from '../../utils/index.js'
-import { initSocket, onNewOrder, getSocket } from '../../utils/socket.js'
-import { getToken } from '../../utils/auth.js'
+import { initSocket, onNewOrder, offNewOrder, getSocket } from '@/utils/socket.js'
+import { getToken, getUser } from '../../utils/auth.js'
 
 export default {
   data() {
@@ -232,16 +239,12 @@ export default {
         { label: '近30天', value: 'month' }
       ],
       
-      // 状态筛选（与后端 status 含义一致）
-      currentStatus: '',
-      statusTabs: [
-        { key: '', label: '全部', count: 0 },
-        { key: '1', label: '待接单', count: 0 },
-        { key: '2', label: '备餐中', count: 0 },
-        { key: '3', label: '待配送', count: 0 },
-        { key: '4', label: '配送中', count: 0 },
-        { key: '5', label: '已完成', count: 0 },
-        { key: '6', label: '已取消', count: 0 }
+      // 订单大厅：新订单(1) / 制作中(2) / 待配送(3与4)
+      hallTab: '1',
+      hallTabs: [
+        { key: '1', label: '新订单(1)' },
+        { key: '2', label: '制作中(2)' },
+        { key: '34', label: '待配送(3/4)' }
       ],
       
       // 订单列表（已适配后端字段）
@@ -250,7 +253,8 @@ export default {
       pageSize: 10,
       refreshing: false,
       loadingMore: false,
-      noMore: false
+      noMore: false,
+      _newOrderHandler: null
     }
   },
   
@@ -259,10 +263,7 @@ export default {
       if (this.searchKey) {
         return '未找到匹配的订单'
       }
-      if (this.currentStatus !== '') {
-        return '该状态下暂无订单'
-      }
-      return '今天还没有订单，加油！'
+      return '当前阶段暂无订单'
     }
   },
   
@@ -270,23 +271,46 @@ export default {
     this.loadStats()
     this.loadOrderList()
 
-    // 初始化 Socket 并监听新订单
     const token = getToken()
+    const userInfo = getUser()
+    const userId = userInfo?.id || userInfo?.userId || ''
+    
     if (token && !getSocket()) {
-      initSocket(token)
+      initSocket(token, userId)
     }
-    onNewOrder((data) => {
-      uni.showToast({ title: '收到新订单！', icon: 'none' })
+    this._newOrderHandler = () => {
+      this.page = 1
       this.loadOrderList()
       this.loadStats()
-    })
+    }
+    onNewOrder(this._newOrderHandler)
   },
-  
+
+  onUnload() {
+    if (this._newOrderHandler) {
+      offNewOrder(this._newOrderHandler)
+      this._newOrderHandler = null
+    }
+  },
+
   onShow() {
     this.loadStats()
     this.loadOrderList()
   },
-  
+
+  async onPullDownRefresh() {
+    try {
+      this.page = 1
+      this.refreshing = true
+      await Promise.all([this.loadOrderList(), this.loadStats()])
+    } catch (e) {
+      console.error(e)
+    } finally {
+      this.refreshing = false
+      uni.stopPullDownRefresh()
+    }
+  },
+
   methods: {
     // 加载统计数据
     async loadStats() {
@@ -326,14 +350,77 @@ export default {
       this.loadOrderList()
     },
     
-    // 切换状态
-    switchStatus(status) {
-      this.currentStatus = status
+    switchHallTab(key) {
+      this.hallTab = key
       this.page = 1
       this.loadOrderList()
     },
-    
-    // 加载订单列表（对接后端 /order/my）
+
+    extractListPayload(res) {
+      return res?.data?.订单列表 || res?.data?.data || res?.订单列表 || res?.data || []
+    },
+
+    mapOrderRow(o) {
+      let goodsList = []
+      try {
+        let raw = o.products_info ?? o.items
+        if (typeof raw === 'string') {
+          raw = JSON.parse(raw)
+        }
+        const arr = Array.isArray(raw) ? raw : raw ? [raw] : []
+        goodsList = arr.map((g) => ({
+          name: g.name || g.商品名称 || g.title || '',
+          num: g.num || g.数量 || g.count || 1,
+          price: g.price || g.价格 || g.amount || 0,
+          spec: g.spec || g.规格 || '',
+          image: g.image || g.img || ''
+        }))
+      } catch (e) {
+        goodsList = []
+      }
+
+      const createdAt = o.createdAt || o.created_at
+      const customerName = o.user?.nickname || o.contact_name || '顾客'
+      const customerPhone = o.contact_phone || o.user?.phone || ''
+      const rawAddress = o.delivery_address
+      const address =
+        typeof rawAddress === 'string'
+          ? rawAddress
+          : rawAddress
+            ? JSON.stringify(rawAddress)
+            : ''
+
+      const pay = Number(o.pay_amount)
+      const fee = Number(o.delivery_fee)
+      let est = pay
+      if (Number.isFinite(pay) && Number.isFinite(fee)) {
+        est = pay - fee
+      } else if (Number.isFinite(pay)) {
+        est = pay
+      } else {
+        est = 0
+      }
+
+      return {
+        id: o.id,
+        orderNo: o.order_no || o.orderNo,
+        status: o.status,
+        statusText: ORDER_STATUS[o.status]?.text || '未知状态',
+        createTime: createdAt ? formatTime(new Date(createdAt).getTime() / 1000, 'HH:mm') : '',
+        customerName,
+        customerPhone,
+        address,
+        goodsList,
+        goodsAmount: o.total_amount,
+        deliveryFee: o.delivery_fee,
+        totalAmount: o.pay_amount,
+        estimatedIncome: Number.isFinite(est) ? Number(est).toFixed(2) : '0.00',
+        remark: o.remark || o.buyer_remark || '',
+        orderType: o.order_type || o.orderType || '',
+        isUrgent: false
+      }
+    },
+
     async loadOrderList() {
       try {
         const params = {
@@ -346,110 +433,41 @@ export default {
         if (this.currentDate) {
           params.date_range = this.currentDate
         }
-        if (this.currentStatus !== '') {
-          params.status = this.currentStatus
-        }
-        const res = await getOrderList(params)
-        const list = res?.data?.订单列表 || res?.data?.data || res?.订单列表 || res?.data || []
 
-        // 映射后端订单结构到前端展示结构
-        const mapped = list.map((o) => {
-          let goodsList = []
-          try {
-            if (o.products_info) {
-              const parsed = typeof o.products_info === 'string' ? JSON.parse(o.products_info) : o.products_info
-              // 兼容不同字段命名
-              goodsList = (parsed || []).map((g) => ({
-                name: g.name || g.商品名称 || g.title || '',
-                num: g.num || g.数量 || g.count || 1,
-                price: g.price || g.价格 || g.amount || 0,
-                spec: g.spec || g.规格 || ''
-              }))
+        let list = []
+        if (this.hallTab === '34') {
+          const [r3, r4] = await Promise.all([
+            getOrderList({ ...params, status: 3 }),
+            getOrderList({ ...params, status: 4 })
+          ])
+          const a = this.extractListPayload(r3)
+          const b = this.extractListPayload(r4)
+          const byId = new Map()
+          ;[...a, ...b].forEach((row) => {
+            if (row && row.id != null && !byId.has(row.id)) {
+              byId.set(row.id, row)
             }
-          } catch (e) {
-            goodsList = []
-          }
+          })
+          list = Array.from(byId.values())
+          list.sort((x, y) => {
+            const tx = new Date(x.createdAt || x.created_at || 0).getTime()
+            const ty = new Date(y.createdAt || y.created_at || 0).getTime()
+            return ty - tx
+          })
+        } else {
+          params.status = Number(this.hallTab)
+          const res = await getOrderList(params)
+          list = this.extractListPayload(res)
+        }
 
-          const createdAt = o.createdAt || o.created_at
-          const customerName = o.user?.nickname || o.contact_name || '顾客'
-          const customerPhone = o.contact_phone || o.user?.phone || ''
-          const rawAddress = o.delivery_address
-          const address = typeof rawAddress === 'string'
-            ? rawAddress
-            : rawAddress
-              ? JSON.stringify(rawAddress)
-              : ''
-
-          return {
-            id: o.id,
-            orderNo: o.order_no,
-            status: o.status,
-            statusText: ORDER_STATUS[o.status]?.text || '未知状态',
-            createTime: createdAt ? formatTime(new Date(createdAt).getTime() / 1000, 'HH:mm') : '',
-            customerName,
-            customerPhone,
-            address,
-            goodsList,
-            goodsAmount: o.total_amount,
-            deliveryFee: o.delivery_fee,
-            totalAmount: o.pay_amount,
-            remark: o.remark || o.cancel_reason || '',
-            isUrgent: false
-          }
-        })
+        const mapped = list.map((o) => this.mapOrderRow(o))
 
         this.orderList = this.page > 1 ? [...this.orderList, ...mapped] : mapped
-        this.updateStatsAndCounts()
+        await this.loadStats()
         this.noMore = mapped.length < this.pageSize
       } catch (e) {
         console.error('加载订单列表失败', e)
       }
-    },
-
-    // 根据订单列表更新顶部统计和各状态数量
-    updateStatsAndCounts() {
-      const today = new Date()
-      today.setHours(0, 0, 0, 0)
-
-      let todayOrders = 0
-      let todayIncome = 0
-      let pendingCount = 0
-
-      const statusCounter = {}
-
-      this.orderList.forEach((order) => {
-        // 统计今日
-        if (order.createTime) {
-          todayOrders += 1
-          // 已完成的订单计入收入
-          if (order.status === 5) {
-            todayIncome += Number(order.totalAmount || 0)
-          }
-        }
-
-        // 待处理：待接单、备餐中、待配送、配送中
-        if ([1, 2, 3, 4].includes(order.status)) {
-          pendingCount += 1
-        }
-
-        // 标签数量
-        statusCounter[order.status] = (statusCounter[order.status] || 0) + 1
-      })
-
-      this.todayStats = {
-        orderCount: todayOrders,
-        income: Number(todayIncome || 0).toFixed(2),
-        pendingCount
-      }
-
-      // 更新标签上的数量（key 为字符串）
-      this.statusTabs = this.statusTabs.map((tab) => {
-        if (tab.key === '') {
-          return { ...tab, count: this.orderList.length }
-        }
-        const keyNum = Number(tab.key)
-        return { ...tab, count: statusCounter[keyNum] || 0 }
-      })
     },
     
     // 下拉刷新
@@ -470,16 +488,16 @@ export default {
       })
     },
     
-    // 接单（状态：1 待接单）
-    async acceptOrder(order) {
+    async handleAccept(order) {
       try {
-        await acceptOrder(order.id, {
+        await apiAcceptOrder(order.id, {
           merchant_lng: 115.681123,
           merchant_lat: 32.181234
         })
         uni.showToast({ title: '接单成功', icon: 'success' })
-        this.loadOrderList()
-        this.loadStats()
+        this.page = 1
+        await this.loadOrderList()
+        await this.loadStats()
       } catch (e) {
         uni.showToast({ title: '接单失败', icon: 'none' })
       }
@@ -510,18 +528,27 @@ export default {
       }
     },
     
-    // 制作完成 / 出餐（状态：2 备餐中 -> 3 待配送）
+    // 出餐完成：POST /api/order/prepare，状态 2 -> 3
     async finishMake(order) {
       try {
-        await readyForDelivery(order.id)
-        uni.showToast({ title: '出餐成功，已呼叫骑手', icon: 'success' })
-        // 更新本地订单状态
-        const idx = this.orderList.findIndex(o => o.id === order.id)
-        if (idx !== -1) {
-          this.orderList[idx].status = 3
-          this.orderList[idx].statusText = '待配送'
-        }
-        this.updateStatsAndCounts()
+        await prepareOrder(order.id)
+        uni.showToast({ title: '出餐完成', icon: 'success' })
+        this.page = 1
+        await this.loadOrderList()
+        await this.loadStats()
+      } catch (e) {
+        uni.showToast({ title: '操作失败', icon: 'none' })
+      }
+    },
+
+    // 县城订单：POST /api/order/deliver（状态 3 或 4）
+    async submitDeliver(order) {
+      try {
+        await deliverOrder(order.id)
+        uni.showToast({ title: '已提交', icon: 'success' })
+        this.page = 1
+        await this.loadOrderList()
+        await this.loadStats()
       } catch (e) {
         uni.showToast({ title: '操作失败', icon: 'none' })
       }
@@ -641,44 +668,32 @@ export default {
   font-weight: 500;
 }
 
-/* 状态标签 */
-.status-tabs {
+/* 订单大厅 Tab */
+.hall-tabs {
+  display: flex;
   background: #fff;
   border-bottom: 1rpx solid #f0f0f0;
+  padding: 16rpx 20rpx;
+  gap: 16rpx;
 }
-.tabs-scroll {
-  white-space: nowrap;
-  padding: 0 20rpx;
+.hall-tab {
+  flex: 1;
+  text-align: center;
+  padding: 20rpx 12rpx;
+  border-radius: 12rpx;
+  background: #f5f5f5;
 }
-.tab-item {
-  display: inline-flex;
-  align-items: center;
-  padding: 24rpx 20rpx;
-  font-size: 28rpx;
+.hall-tab.active {
+  background: #fff1f0;
+  border: 2rpx solid #ff6b35;
+}
+.hall-tab-text {
+  font-size: 26rpx;
   color: #666;
-  position: relative;
-}
-.tab-item.active {
-  color: #FF6B35;
   font-weight: 500;
 }
-.tab-item.active::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 20rpx;
-  right: 20rpx;
-  height: 4rpx;
-  background: #FF6B35;
-  border-radius: 2rpx;
-}
-.badge {
-  background: #ff4d4f;
-  color: #fff;
-  font-size: 20rpx;
-  padding: 2rpx 10rpx;
-  border-radius: 20rpx;
-  margin-left: 8rpx;
+.hall-tab.active .hall-tab-text {
+  color: #ff6b35;
 }
 
 /* 订单列表 */
