@@ -28,13 +28,31 @@
         <textarea class="textarea" v-model="form.description" placeholder="选填，输入商品描述" maxlength="2000" />
       </view>
 
+      <view v-if="isSupermarket" class="field">
+        <text class="label">单组规格（超市专属）</text>
+        <input class="input" v-model="specGroupName" placeholder="请输入规格组名，例如：口味" />
+        <view class="spec-options">
+          <view v-for="(option, index) in specOptions" :key="'spec-' + index" class="spec-option-row">
+            <input
+              class="input spec-option-input"
+              :value="option"
+              :placeholder="'规格项' + (index + 1)"
+              @input="onSpecOptionInput(index, $event)"
+            />
+            <button class="spec-remove-btn" type="warn" size="mini" @click="removeSpecOption(index)">删除</button>
+          </view>
+        </view>
+        <button class="spec-add-btn" type="default" size="mini" @click="addSpecOption">添加规格项</button>
+        <text class="hint">可不配置；如配置，将提交 `spec_group_name` 和 `spec_options`</text>
+      </view>
+
       <view class="field">
         <text class="label">商品图片 (images)</text>
         <view class="upload-list">
           <view class="upload-item add" @click="chooseAndUploadImage">
             <text class="add-text">{{ uploading ? '上传中...' : '+ 上传图片' }}</text>
           </view>
-          <view v-for="(url, i) in imageList" :key="url + i" class="upload-item preview">
+          <view v-for="(url, i) in imageList" :key="url + i" class="upload-item preview" @click="chooseAndUploadImage(i)">
             <image class="preview-img" :src="formatImageUrl(url)" mode="aspectFill" />
             <view class="remove" @click.stop="removeImage(i)">×</view>
           </view>
@@ -49,6 +67,7 @@
 
 <script>
 import { BASE_URL } from '@/config/index.js'
+import { getShopInfo } from '@/api/shop.js'
 import request from '@/utils/request.js'
 
 const API_BASE_URL = BASE_URL + '/api'
@@ -59,6 +78,9 @@ export default {
       productId: '',
       categories: [],
       imageList: [],
+      merchantCategory: '',
+      specGroupName: '',
+      specOptions: [],
       uploading: false,
       saving: false,
       deleting: false,
@@ -67,11 +89,15 @@ export default {
         price: '',
         original_price: '',
         category_id: null,
-        description: ''
+        description: '',
+        images: []
       }
     }
   },
   computed: {
+    isSupermarket() {
+      return this.merchantCategory === '超市'
+    },
     pickerIndex() {
       if (!this.categories.length || this.form.category_id == null) return 0
       const i = this.categories.findIndex((c) => String(c.id) === String(this.form.category_id))
@@ -102,7 +128,7 @@ export default {
       return url.startsWith('/') ? BASE_URL + url : BASE_URL + '/' + url
     },
     async bootstrap() {
-      await Promise.all([this.loadCategories(), this.loadProductDetail()])
+      await Promise.all([this.loadCategories(), this.loadProductDetail(), this.loadMerchantCategory()])
       if (this.categories.length && this.form.category_id == null) {
         this.form.category_id = this.categories[0].id
       }
@@ -119,6 +145,11 @@ export default {
           name: c.name != null ? String(c.name) : ''
         }))
         .filter((c) => c.id != null)
+    },
+    normalizeMerchantCategory(res) {
+      const raw = res && typeof res === 'object' && res.data !== undefined ? res.data : res
+      const merchant = raw && typeof raw === 'object' && raw.merchant && typeof raw.merchant === 'object' ? raw.merchant : raw
+      return merchant && merchant.category != null ? String(merchant.category).trim() : ''
     },
     parseImageList(rawImages) {
       if (Array.isArray(rawImages)) {
@@ -144,12 +175,32 @@ export default {
       const data = parsed && parsed.data && typeof parsed.data === 'object' ? parsed.data : parsed
       return data && data.url ? String(data.url) : ''
     },
+    parseSpecOptions(rawOptions) {
+      if (Array.isArray(rawOptions)) {
+        return rawOptions.map((item) => String(item || '').trim()).filter(Boolean)
+      }
+      if (typeof rawOptions !== 'string' || !rawOptions.trim()) return []
+      try {
+        const parsed = JSON.parse(rawOptions)
+        return Array.isArray(parsed) ? parsed.map((item) => String(item || '').trim()).filter(Boolean) : []
+      } catch (e) {
+        return rawOptions.split(',').map((item) => String(item || '').trim()).filter(Boolean)
+      }
+    },
     async loadCategories() {
       try {
         const res = await request({ url: '/merchant/my-categories', method: 'GET' })
         this.categories = this.normalizeCategoryList(res)
       } catch (e) {
         this.categories = []
+      }
+    },
+    async loadMerchantCategory() {
+      try {
+        const res = await getShopInfo()
+        this.merchantCategory = this.normalizeMerchantCategory(res)
+      } catch (e) {
+        this.merchantCategory = ''
       }
     },
     async loadProductDetail() {
@@ -165,12 +216,28 @@ export default {
           price: p.price != null ? String(p.price) : '',
           original_price: p.original_price != null ? String(p.original_price) : '',
           category_id: p.category_id != null ? p.category_id : null,
-          description: p.description != null ? String(p.description) : ''
+          description: p.description != null ? String(p.description) : '',
+          images: this.parseImageList(p.images)
         }
-        this.imageList = this.parseImageList(p.images)
+        this.imageList = Array.isArray(this.form.images) ? [...this.form.images] : []
+        this.specGroupName = p.spec_group_name != null ? String(p.spec_group_name).trim() : ''
+        this.specOptions = this.parseSpecOptions(p.spec_options)
       } catch (e) {
         uni.showToast({ title: '加载商品失败', icon: 'none' })
       }
+    },
+    onSpecOptionInput(index, e) {
+      const value = e && e.detail ? String(e.detail.value || '') : ''
+      this.$set ? this.$set(this.specOptions, index, value) : this.specOptions.splice(index, 1, value)
+    },
+    addSpecOption() {
+      this.specOptions.push('')
+    },
+    removeSpecOption(index) {
+      this.specOptions.splice(index, 1)
+    },
+    normalizeSpecOptions() {
+      return this.specOptions.map((item) => String(item || '').trim()).filter(Boolean)
     },
     onCategoryPick(e) {
       const index = Number(e.detail.value)
@@ -179,8 +246,9 @@ export default {
     },
     removeImage(index) {
       this.imageList.splice(index, 1)
+      this.form.images = [...this.imageList]
     },
-    chooseAndUploadImage() {
+    chooseAndUploadImage(replaceIndex = -1) {
       if (this.uploading) return
       const token = uni.getStorageSync('token') || ''
       if (!token) {
@@ -196,8 +264,15 @@ export default {
           try {
             for (const filePath of files) {
               const url = await this.uploadSingle(filePath, token)
-              if (url) this.imageList.push(url)
+              if (!url) continue
+              if (replaceIndex > -1) {
+                this.imageList.splice(replaceIndex, 1, url)
+                replaceIndex = -1
+              } else {
+                this.imageList.push(url)
+              }
             }
+            this.form.images = [...this.imageList]
             uni.showToast({ title: '上传成功', icon: 'success' })
           } catch (e) {
             uni.showToast({ title: '上传失败', icon: 'none' })
@@ -241,11 +316,13 @@ export default {
         original_price: originalPriceText === '' ? null : originalPrice,
         category_id,
         description,
-        images: JSON.stringify(this.imageList.length ? this.imageList : [])
+        images: JSON.stringify(Array.isArray(this.form.images) ? this.form.images : [])
       }
     },
     async saveProduct() {
       const payload = this.buildPayload()
+      const spec_group_name = (this.specGroupName || '').trim()
+      const spec_options = this.normalizeSpecOptions()
       if (!payload.name) {
         uni.showToast({ title: '请填写商品名称', icon: 'none' })
         return
@@ -261,6 +338,18 @@ export default {
       if (!Number.isFinite(payload.category_id) || payload.category_id < 1) {
         uni.showToast({ title: '请选择分类', icon: 'none' })
         return
+      }
+      if (this.isSupermarket) {
+        if (spec_group_name && !spec_options.length) {
+          uni.showToast({ title: '请至少填写一个规格项', icon: 'none' })
+          return
+        }
+        if (!spec_group_name && spec_options.length) {
+          uni.showToast({ title: '请填写规格组名', icon: 'none' })
+          return
+        }
+        payload.spec_group_name = spec_group_name
+        payload.spec_options = spec_options
       }
 
       this.saving = true
@@ -387,6 +476,24 @@ export default {
 }
 .btn-save {
   margin-top: 8rpx;
+}
+.spec-options {
+  margin-top: 16rpx;
+}
+.spec-option-row {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  margin-top: 12rpx;
+}
+.spec-option-input {
+  flex: 1;
+}
+.spec-add-btn {
+  margin-top: 16rpx;
+}
+.spec-remove-btn {
+  flex-shrink: 0;
 }
 .btn-delete {
   margin-top: 20rpx;

@@ -38,19 +38,9 @@ if (uni.restoreGlobal) {
       console[type].apply(console, [...args, filename]);
     }
   }
-  const BASE_URL = "http://192.168.1.4:3000";
-  const SOCKET_URL = "http://192.168.1.4:3000";
+  const BASE_URL = "http://121.43.190.218:3000";
+  const SOCKET_URL = "http://121.43.190.218:3000";
   const TIANDITU_TK = "63a693ed968db6b7256470395e40fe5b";
-  const CATEGORY_LIST = [
-    { id: 1, name: "跑腿代购", emoji: "🏃", bgColor: "#FFF1F0" },
-    { id: 2, name: "二手机买卖", emoji: "📱", bgColor: "#E6F4FF" },
-    { id: 3, name: "数码配件", emoji: "🎧", bgColor: "#E6F4FF" },
-    { id: 4, name: "五金工具", emoji: "🛠️", bgColor: "#FFF7E6" },
-    { id: 5, name: "代取快递", emoji: "📦", bgColor: "#E6F7FF" },
-    { id: 6, name: "附近超市", emoji: "🏪", bgColor: "#F0F5FF" },
-    { id: 7, name: "家电维修", emoji: "🔧", bgColor: "#FFFBE6" },
-    { id: 8, name: "顺路带货", emoji: "🚚", bgColor: "#F3E8FF" }
-  ];
   const ORDER_STATUS_CLASS = {
     "待付款": "status-unpaid",
     "待接单": "status-waiting",
@@ -59,27 +49,6 @@ if (uni.restoreGlobal) {
     "已完成": "status-done",
     "已取消": "status-cancelled"
   };
-  const ROLE_MAP = {
-    user: "普通用户",
-    shop: "商家",
-    rider: "骑手"
-  };
-  const ROLE_EMOJI = {
-    user: "😊",
-    shop: "🏪",
-    rider: "🛵"
-  };
-  const PAY_METHODS = [
-    { id: "wechat", name: "微信支付", desc: "推荐使用", icon: "💚" },
-    { id: "alipay", name: "支付宝", desc: "支付宝快捷支付", icon: "💙" },
-    { id: "balance", name: "余额支付", desc: "账户余额支付", icon: "💰" }
-  ];
-  const PAY_METHOD_NAMES = {
-    wechat: "微信支付",
-    alipay: "支付宝",
-    balance: "余额支付"
-  };
-  const HOT_SEARCH = ["奶茶", "炸鸡", "米饭", "拉面", "烧烤", "蛋糕", "早餐"];
   const API_BASE_URL$2 = BASE_URL + "/api";
   function request(options) {
     return new Promise((resolve, reject) => {
@@ -106,7 +75,7 @@ if (uni.restoreGlobal) {
             reject(res.data);
             return;
           }
-          if (res.statusCode === 200) {
+          if (res.statusCode >= 200 && res.statusCode < 300) {
             resolve(res.data);
           } else if (options.allow404 && res.statusCode === 404) {
             resolve(null);
@@ -128,50 +97,109 @@ if (uni.restoreGlobal) {
       });
     });
   }
-  function getDashboard() {
+  function normalizeCoordinateValue$5(value2) {
+    if (value2 == null)
+      return null;
+    const raw = typeof value2 === "string" ? value2.trim() : value2;
+    if (raw === "")
+      return null;
+    const num = Number(raw);
+    return Number.isFinite(num) ? num : null;
+  }
+  function getValidCoordinatePair$6(latitude, longitude) {
+    const lat = normalizeCoordinateValue$5(latitude);
+    const lng = normalizeCoordinateValue$5(longitude);
+    if (lat == null || lng == null)
+      return null;
+    if (lat === 0 && lng === 0)
+      return null;
+    return {
+      latitude: lat,
+      longitude: lng
+    };
+  }
+  function buildShopPayload(data) {
+    const body = { ...data };
+    const coordinatePair = getValidCoordinatePair$6(body.latitude, body.longitude);
+    if (!coordinatePair) {
+      throw new Error("地图坐标无效，请重新选点后再提交");
+    }
+    body.latitude = coordinatePair.latitude;
+    body.longitude = coordinatePair.longitude;
+    return body;
+  }
+  function getShopInfo() {
+    return request({ url: "/merchant/my", method: "GET" });
+  }
+  function fetchMerchantMy() {
+    return request({ url: "/merchant/my", method: "GET", allow404: true });
+  }
+  function createShop(data) {
+    return request({ url: "/merchant/create", method: "POST", data: buildShopPayload(data) });
+  }
+  function updateShopInfo(data) {
+    return request({ url: "/merchant/update", method: "PUT", data: buildShopPayload(data) });
+  }
+  function uploadShopImage(filePath) {
+    return new Promise((resolve, reject) => {
+      const token = uni.getStorageSync("token") || "";
+      const header = token ? { Authorization: "Bearer " + token } : {};
+      uni.uploadFile({
+        url: BASE_URL + "/api/upload/image",
+        filePath,
+        name: "file",
+        header,
+        success: (res) => {
+          let data = null;
+          try {
+            data = typeof res.data === "string" ? JSON.parse(res.data) : res.data;
+          } catch (e2) {
+            reject(new Error("上传响应解析失败"));
+            return;
+          }
+          if (res.statusCode >= 200 && res.statusCode < 300 && data && (data.code === 200 || data.success) && data.data && data.data.url) {
+            resolve(data);
+            return;
+          }
+          const message = data && (data.detail || data.message || data.msg) ? data.detail || data.message || data.msg : "上传失败";
+          reject(new Error(message));
+        },
+        fail: () => {
+          reject(new Error("上传失败，请检查网络"));
+        }
+      });
+    });
+  }
+  function getDashboard$1() {
     return request({ url: "/shop/dashboard", method: "GET" });
   }
-  function getOrderList$1(params) {
-    return request({ url: "/order/my", method: "GET", data: params });
+  function getMerchantCategoryList() {
+    return request({ url: "/merchant/my-categories", method: "GET" });
   }
-  function getOrderDetail(id) {
-    return request({ url: "/order/detail/" + id, method: "GET" });
+  function createCategory(data) {
+    return request({ url: "/merchant/category", method: "POST", data });
   }
-  function acceptOrder$1(id, data = {}) {
-    return request({ url: "/order/accept", method: "POST", data: { order_id: id, ...data } });
+  function updateCategory(id, data) {
+    return request({ url: "/merchant/category/" + id, method: "PUT", data });
   }
-  function rejectOrder(id, data) {
-    return request({ url: "/order/reject", method: "POST", data: { order_id: id, reason: (data == null ? void 0 : data.reason) || "商品已售罄" } });
+  function deleteCategory(id) {
+    return request({ url: "/merchant/category/" + id, method: "DELETE" });
   }
-  function prepareOrder(id) {
-    return request({ url: "/order/prepare", method: "POST", data: { order_id: id } });
+  function getMyProducts(params = {}) {
+    return request({ url: "/merchant/my-products", method: "GET", data: params });
   }
-  function deliverOrder$1(id) {
-    return request({ url: "/order/deliver", method: "POST", data: { order_id: id } });
+  function createMerchantProduct(data) {
+    return request({ url: "/merchant/product", method: "POST", data });
   }
-  function getFinanceStats(params) {
-    return request({ url: "/merchant/finance/stats", method: "GET", data: params });
+  function updateProduct(id, data) {
+    return request({ url: "/merchant/product/" + id, method: "PUT", data });
   }
-  function getWithdrawList(params) {
-    return request({ url: "/merchant/finance/withdraw", method: "GET", data: params });
-  }
-  function applyWithdraw(data) {
-    return request({ url: "/merchant/finance/withdraw", method: "POST", data });
-  }
-  function getStatsData(params) {
-    return request({ url: "/merchant/stats", method: "GET", data: params });
-  }
-  function getHotProducts() {
-    return request({ url: "/merchant/hot-products", method: "GET" });
-  }
-  function getReviewList(params) {
-    return request({ url: "/merchant/reviews", method: "GET", data: params });
-  }
-  function replyReview(orderId, data) {
-    return request({ url: "/merchant/reviews/" + orderId + "/reply", method: "POST", data });
+  function deleteProduct(id) {
+    return request({ url: "/merchant/product/" + id, method: "DELETE" });
   }
   const TOKEN_KEY = "token";
   const USER_KEY = "userInfo";
+  const MERCHANT_KEYS = ["merchantInfo", "merchant_info", "shopInfo", "shop_info"];
   function getToken() {
     return uni.getStorageSync(TOKEN_KEY) || "";
   }
@@ -184,24 +212,49 @@ if (uni.restoreGlobal) {
   function setUser(info) {
     uni.setStorageSync(USER_KEY, info);
   }
-  function isLoggedIn() {
-    return !!(getToken() && getUser());
+  function normalizeUserRole(userInfo) {
+    if (!userInfo || typeof userInfo !== "object")
+      return "";
+    const candidates = [
+      userInfo.role,
+      userInfo.Role,
+      userInfo.user_role,
+      userInfo.userRole,
+      userInfo.type,
+      userInfo.user_type,
+      userInfo.userType,
+      userInfo.account_type,
+      userInfo.accountType,
+      userInfo.identity,
+      userInfo["角色"]
+    ];
+    for (const value2 of candidates) {
+      const role = String(value2 || "").trim().toLowerCase();
+      if (!role)
+        continue;
+      if (role === "merchant" || role === "shop" || role === "商家") {
+        return "merchant";
+      }
+    }
+    return "";
+  }
+  function getUserId(userInfo = getUser()) {
+    if (!userInfo || typeof userInfo !== "object")
+      return "";
+    return userInfo.id || userInfo.userId || userInfo.user_id || userInfo.uid || "";
+  }
+  function isMerchantUser(userInfo = getUser()) {
+    return normalizeUserRole(userInfo) === "merchant";
+  }
+  function hasValidMerchantSession() {
+    const token = getToken();
+    const userInfo = getUser();
+    return !!(token && getUserId(userInfo) && isMerchantUser(userInfo));
   }
   function clearAuth() {
     uni.removeStorageSync(TOKEN_KEY);
     uni.removeStorageSync(USER_KEY);
-  }
-  function requireLogin(callback) {
-    if (!isLoggedIn()) {
-      uni.showToast({ title: "请先登录", icon: "none" });
-      setTimeout(() => {
-        uni.navigateTo({ url: "/pages/login/index" });
-      }, 1e3);
-      return false;
-    }
-    if (callback)
-      callback();
-    return true;
+    MERCHANT_KEYS.forEach((key) => uni.removeStorageSync(key));
   }
   const PACKET_TYPES = /* @__PURE__ */ Object.create(null);
   PACKET_TYPES["open"] = "0";
@@ -4013,6 +4066,319 @@ if (uni.restoreGlobal) {
     io: lookup,
     connect: lookup
   });
+  const STORAGE_KEY = "merchantNotifyEnabled";
+  const AUDIO_PATH = "/static/audio/new-order.mp3";
+  let _audio = null;
+  let _webAudioContext = null;
+  let _enabled = false;
+  let _unlocked = false;
+  let _lastError = "";
+  let _mode = "idle";
+  function beepByAppDevice() {
+    try {
+      if (typeof plus !== "undefined" && plus.device && typeof plus.device.beep === "function") {
+        plus.device.beep(1);
+        _mode = "app-beep";
+        _lastError = "";
+        emitNotifyStatus();
+        logNotify("app-beep-success", { count: 1 });
+        return true;
+      }
+    } catch (e2) {
+      _lastError = e2 && (e2.message || e2.errMsg) || "app-beep-failed";
+      logNotify("app-beep-failed", _lastError);
+      emitNotifyStatus();
+    }
+    return false;
+  }
+  function speakByAppTTS(text) {
+    try {
+      if (typeof plus !== "undefined" && plus.speech && typeof plus.speech.speak === "function") {
+        plus.speech.speak(String(text || "您有新的订单，请及时处理"), {
+          engine: "baidu",
+          volume: 1,
+          pitch: 1,
+          rate: 1
+        });
+        _mode = "app-tts";
+        _lastError = "";
+        emitNotifyStatus();
+        logNotify("app-tts-success", { text });
+        return true;
+      }
+    } catch (e2) {
+      _lastError = e2 && (e2.message || e2.errMsg) || "app-tts-failed";
+      logNotify("app-tts-failed", _lastError);
+      emitNotifyStatus();
+    }
+    return false;
+  }
+  function isH5Runtime() {
+    return typeof window !== "undefined" && typeof document !== "undefined";
+  }
+  function logNotify(step, payload) {
+    try {
+      formatAppLog("log", "at utils/merchant-notify.js:69", "[merchant-notify][" + step + "]", payload || "");
+    } catch (e2) {
+    }
+  }
+  function emitNotifyStatus() {
+    try {
+      uni.$emit("merchant_notify_status_changed", getMerchantNotifyStatus());
+    } catch (e2) {
+    }
+  }
+  function persistEnabled(enabled) {
+    _enabled = !!enabled;
+    try {
+      uni.setStorageSync(STORAGE_KEY, _enabled ? 1 : 0);
+    } catch (e2) {
+    }
+    emitNotifyStatus();
+  }
+  function initEnabledState() {
+    if (_enabled || _unlocked)
+      return;
+    try {
+      const saved = uni.getStorageSync(STORAGE_KEY);
+      if (saved === 1 || saved === "1" || saved === true) {
+        _enabled = true;
+        _unlocked = !isH5Runtime();
+      } else if (!isH5Runtime()) {
+        _enabled = true;
+        _unlocked = true;
+      }
+    } catch (e2) {
+      if (!isH5Runtime()) {
+        _enabled = true;
+        _unlocked = true;
+      }
+    }
+  }
+  function ensureInnerAudio() {
+    if (typeof uni.createInnerAudioContext !== "function")
+      return null;
+    if (_audio)
+      return _audio;
+    _audio = uni.createInnerAudioContext();
+    _audio.autoplay = false;
+    _audio.loop = false;
+    _audio.obeyMuteSwitch = false;
+    _audio.src = AUDIO_PATH;
+    _audio.onCanplay(() => {
+      _mode = "audio-file";
+      logNotify("audio-canplay", { src: AUDIO_PATH });
+      emitNotifyStatus();
+    });
+    _audio.onPlay(() => {
+      _mode = "audio-file";
+      _lastError = "";
+      logNotify("audio-play-success", { src: AUDIO_PATH });
+      emitNotifyStatus();
+    });
+    _audio.onError((err) => {
+      _lastError = err && (err.errMsg || err.message) || "audio-error";
+      logNotify("audio-play-error", err);
+      emitNotifyStatus();
+    });
+    return _audio;
+  }
+  function ensureWebAudioContext() {
+    if (!isH5Runtime())
+      return null;
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx)
+      return null;
+    if (!_webAudioContext) {
+      _webAudioContext = new AudioCtx();
+    }
+    return _webAudioContext;
+  }
+  async function unlockWebAudio() {
+    const ctx = ensureWebAudioContext();
+    if (!ctx)
+      return false;
+    try {
+      if (ctx.state === "suspended") {
+        await ctx.resume();
+      }
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      gain.gain.value = 1e-4;
+      osc.type = "sine";
+      osc.frequency.value = 880;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      const now2 = ctx.currentTime;
+      osc.start(now2);
+      osc.stop(now2 + 0.02);
+      _mode = "web-audio";
+      _lastError = "";
+      return true;
+    } catch (e2) {
+      _lastError = e2 && e2.message || "web-audio-unlock-failed";
+      logNotify("unlock-web-audio-failed", _lastError);
+      return false;
+    }
+  }
+  function playWebAudioBeep() {
+    const ctx = ensureWebAudioContext();
+    if (!ctx)
+      return false;
+    if (ctx.state !== "running") {
+      _lastError = "web-audio-not-running";
+      return false;
+    }
+    const now2 = ctx.currentTime;
+    const gain = ctx.createGain();
+    gain.connect(ctx.destination);
+    gain.gain.setValueAtTime(1e-4, now2);
+    gain.gain.exponentialRampToValueAtTime(0.2, now2 + 0.01);
+    gain.gain.exponentialRampToValueAtTime(1e-4, now2 + 0.45);
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(880, now2);
+    osc.frequency.setValueAtTime(988, now2 + 0.18);
+    osc.connect(gain);
+    osc.start(now2);
+    osc.stop(now2 + 0.46);
+    const osc2 = ctx.createOscillator();
+    osc2.type = "triangle";
+    osc2.frequency.setValueAtTime(660, now2 + 0.12);
+    osc2.frequency.setValueAtTime(784, now2 + 0.34);
+    osc2.connect(gain);
+    osc2.start(now2 + 0.12);
+    osc2.stop(now2 + 0.48);
+    _mode = "web-audio";
+    _lastError = "";
+    return true;
+  }
+  function getMerchantNotifyStatus() {
+    initEnabledState();
+    return {
+      enabled: !!_enabled,
+      unlocked: !!_unlocked,
+      mode: _mode,
+      lastError: _lastError
+    };
+  }
+  async function enableMerchantNotifyByUserGesture() {
+    initEnabledState();
+    logNotify("enable-start", getMerchantNotifyStatus());
+    let unlocked = false;
+    const audio = ensureInnerAudio();
+    if (audio && typeof audio.play === "function") {
+      try {
+        audio.stop();
+        audio.play();
+        audio.pause();
+        audio.seek && audio.seek(0);
+        unlocked = true;
+        _mode = "audio-file";
+        _lastError = "";
+        logNotify("enable-inner-audio-success", { src: AUDIO_PATH });
+      } catch (e2) {
+        _lastError = e2 && e2.message || "inner-audio-unlock-failed";
+        logNotify("enable-inner-audio-failed", _lastError);
+      }
+    }
+    if (!unlocked) {
+      unlocked = await unlockWebAudio();
+    }
+    _unlocked = unlocked || _unlocked || !isH5Runtime();
+    if (_unlocked) {
+      persistEnabled(true);
+    } else {
+      emitNotifyStatus();
+    }
+    logNotify("enable-end", getMerchantNotifyStatus());
+    return getMerchantNotifyStatus();
+  }
+  async function ensureMerchantNotifyReady() {
+    initEnabledState();
+    if (!_enabled) {
+      emitNotifyStatus();
+      return getMerchantNotifyStatus();
+    }
+    if (_unlocked) {
+      emitNotifyStatus();
+      return getMerchantNotifyStatus();
+    }
+    const audio = ensureInnerAudio();
+    if (audio && typeof audio.play === "function") {
+      try {
+        audio.stop();
+        audio.play();
+        audio.pause();
+        audio.seek && audio.seek(0);
+        _unlocked = true;
+        _mode = "audio-file";
+        _lastError = "";
+        emitNotifyStatus();
+        logNotify("ensure-inner-audio-success", getMerchantNotifyStatus());
+        return getMerchantNotifyStatus();
+      } catch (e2) {
+        _lastError = e2 && e2.message || "ensure-inner-audio-failed";
+        logNotify("ensure-inner-audio-failed", _lastError);
+      }
+    }
+    if (!isH5Runtime()) {
+      _unlocked = true;
+      _lastError = "";
+      emitNotifyStatus();
+      logNotify("ensure-non-h5-ready", getMerchantNotifyStatus());
+      return getMerchantNotifyStatus();
+    }
+    emitNotifyStatus();
+    logNotify("ensure-h5-wait-user-gesture", getMerchantNotifyStatus());
+    return getMerchantNotifyStatus();
+  }
+  function playMerchantNewOrderNotify() {
+    initEnabledState();
+    logNotify("play-start", getMerchantNotifyStatus());
+    try {
+      uni.vibrateLong();
+    } catch (e2) {
+      try {
+        uni.vibrateShort();
+      } catch (e22) {
+      }
+    }
+    if (!_enabled) {
+      _lastError = "notify-disabled";
+      logNotify("play-skipped", { reason: _lastError });
+      emitNotifyStatus();
+      return false;
+    }
+    if (beepByAppDevice()) {
+      return true;
+    }
+    if (speakByAppTTS("您有新的订单，请及时处理")) {
+      return true;
+    }
+    const audio = ensureInnerAudio();
+    if (audio) {
+      try {
+        audio.stop();
+        audio.seek && audio.seek(0);
+        audio.play();
+        logNotify("play-inner-audio-called", { src: AUDIO_PATH });
+        return true;
+      } catch (e2) {
+        _lastError = e2 && e2.message || "inner-audio-play-failed";
+        logNotify("play-inner-audio-failed", _lastError);
+      }
+    }
+    const webAudioPlayed = playWebAudioBeep();
+    if (webAudioPlayed) {
+      logNotify("play-web-audio-success", getMerchantNotifyStatus());
+      emitNotifyStatus();
+      return true;
+    }
+    logNotify("play-failed", getMerchantNotifyStatus());
+    emitNotifyStatus();
+    return false;
+  }
   let socket = null;
   const newOrderCallbacks = [];
   const orderUpdateCallbacks = [];
@@ -4021,24 +4387,40 @@ if (uni.restoreGlobal) {
     if (!socket)
       return;
     socket.on("connect", () => {
-      formatAppLog("log", "at utils/socket.js:12", "[socket] connected", socket.id);
+      formatAppLog("log", "at utils/socket.js:13", "[socket] connected", socket.id);
     });
     socket.on("connect_error", (err) => {
-      formatAppLog("log", "at utils/socket.js:15", "[socket] connect_error", JSON.stringify({
+      formatAppLog("log", "at utils/socket.js:16", "[socket] connect_error", JSON.stringify({
         message: err == null ? void 0 : err.message,
         description: err == null ? void 0 : err.description,
         type: err == null ? void 0 : err.type
       }));
     });
     socket.on("disconnect", (reason) => {
-      formatAppLog("log", "at utils/socket.js:22", "[socket] disconnect", reason);
+      formatAppLog("log", "at utils/socket.js:23", "[socket] disconnect", reason);
     });
     socket.on("new_order", (data) => {
+      formatAppLog("log", "at utils/socket.js:26", "[socket] new_order received", data);
+      try {
+        const played = playMerchantNewOrderNotify();
+        formatAppLog("log", "at utils/socket.js:29", "[socket] new_order notify played =", played);
+      } catch (e2) {
+        formatAppLog("error", "at utils/socket.js:31", "[socket] playMerchantNewOrderNotify", e2);
+      }
+      try {
+        uni.showToast({ title: "您有新的外卖订单！", icon: "none" });
+      } catch (e2) {
+      }
+      try {
+        uni.$emit("merchant_new_order", data);
+      } catch (e2) {
+        formatAppLog("error", "at utils/socket.js:39", "[socket] merchant_new_order emit failed", e2);
+      }
       newOrderCallbacks.forEach((cb) => {
         try {
           cb(data);
         } catch (e2) {
-          formatAppLog("error", "at utils/socket.js:29", "new_order 回调异常", e2);
+          formatAppLog("error", "at utils/socket.js:45", "new_order 回调异常", e2);
         }
       });
     });
@@ -4047,7 +4429,7 @@ if (uni.restoreGlobal) {
         try {
           cb(data);
         } catch (e2) {
-          formatAppLog("error", "at utils/socket.js:38", "order_update 回调异常", e2);
+          formatAppLog("error", "at utils/socket.js:54", "order_update 回调异常", e2);
         }
       });
     });
@@ -4056,13 +4438,14 @@ if (uni.restoreGlobal) {
         try {
           cb(data);
         } catch (e2) {
-          formatAppLog("error", "at utils/socket.js:47", "new_delivery 回调异常", e2);
+          formatAppLog("error", "at utils/socket.js:63", "new_delivery 回调异常", e2);
         }
       });
     });
   }
   function initSocket(token, userId) {
     if (!token) {
+      formatAppLog("log", "at utils/socket.js:71", "[socket] init skipped: missing token");
       return null;
     }
     if (socket) {
@@ -4071,6 +4454,11 @@ if (uni.restoreGlobal) {
     }
     const tokenStr = typeof token === "string" ? token : "";
     const bearer = tokenStr.startsWith("Bearer ") ? tokenStr : "Bearer " + tokenStr;
+    formatAppLog("log", "at utils/socket.js:81", "[socket] initSocket", {
+      socketUrl: SOCKET_URL,
+      role: "merchant",
+      userId: String(userId || "")
+    });
     socket = lookup(SOCKET_URL, {
       path: "/socket.io",
       transports: ["websocket", "polling"],
@@ -4114,6 +4502,14 @@ if (uni.restoreGlobal) {
     if (i2 !== -1)
       newOrderCallbacks.splice(i2, 1);
   }
+  function offAllListeners() {
+    newOrderCallbacks.length = 0;
+    orderUpdateCallbacks.length = 0;
+    newDeliveryCallbacks.length = 0;
+    if (socket) {
+      socket.removeAllListeners();
+    }
+  }
   const _export_sfc = (sfc, props) => {
     const target = sfc.__vccOpts || sfc;
     for (const [key, val] of props) {
@@ -4121,78 +4517,137 @@ if (uni.restoreGlobal) {
     }
     return target;
   };
-  const _sfc_main$G = {
+  const _sfc_main$j = {
     data() {
       return {
-        isOpen: true,
-        shopName: "固始县外卖商家",
         todayOrders: 0,
         todayIncome: "0.00",
         todayNewOrders: 0,
-        pendingCount: 0
+        pendingCount: 0,
+        notifyEnabled: false,
+        notifyStatusText: "",
+        pageState: "loading",
+        pageMessage: ""
       };
     },
     onLoad() {
+      if (!this.ensureMerchantAccess())
+        return;
       const token = getToken();
       const userInfo = getUser();
-      const userId = (userInfo == null ? void 0 : userInfo.id) || (userInfo == null ? void 0 : userInfo.userId) || "";
-      if (token && !getSocket()) {
+      const userId = getUserId(userInfo);
+      if (token && userId && !getSocket()) {
         initSocket(token, userId);
       }
+      this.syncNotifyStatus();
+      uni.$on("merchant_notify_status_changed", this.syncNotifyStatus);
       uni.$on("merchant_new_order", this.loadData);
       this.loadData();
     },
     onUnload() {
+      uni.$off("merchant_notify_status_changed", this.syncNotifyStatus);
       uni.$off("merchant_new_order", this.loadData);
     },
     onShow() {
+      if (!this.ensureMerchantAccess())
+        return;
+      ensureMerchantNotifyReady();
+      this.syncNotifyStatus();
       this.loadData();
     },
     methods: {
-      async loadData() {
+      ensureMerchantAccess() {
+        if (hasValidMerchantSession())
+          return true;
+        clearAuth();
+        this.pageState = "loading";
+        this.pageMessage = "";
+        uni.reLaunch({ url: "/pages/login/index" });
+        return false;
+      },
+      resetDashboard() {
+        this.todayOrders = 0;
+        this.todayIncome = "0.00";
+        this.todayNewOrders = 0;
+        this.pendingCount = 0;
+      },
+      normalizeMoney(value2) {
+        const num = Number(value2);
+        return Number.isFinite(num) ? num.toFixed(2) : "0.00";
+      },
+      hasDashboardMetrics(data) {
+        if (!data || typeof data !== "object")
+          return false;
+        const metricKeys = ["todayOrders", "todayRevenue", "todayNewOrders", "pendingOrders", "orderCount", "income", "pendingCount"];
+        return metricKeys.some((key) => Object.prototype.hasOwnProperty.call(data, key));
+      },
+      applyDashboardData(data) {
+        this.todayOrders = Number(data.todayOrders ?? data.orderCount ?? 0);
+        this.todayIncome = this.normalizeMoney(data.todayRevenue ?? data.income ?? 0);
+        this.todayNewOrders = Number(data.todayNewOrders ?? data.todayOrders ?? data.orderCount ?? 0);
+        this.pendingCount = Number(data.pendingOrders ?? data.pendingCount ?? 0);
+      },
+      async resolveHasShop() {
         try {
-          const res = await getDashboard();
-          formatAppLog("log", "at pages/index/index.vue:115", "工作台数据:", res);
-          if (res && res.data) {
-            this.shopName = res.data.shopName || "固始县外卖商家";
-            this.todayOrders = res.data.todayOrders || 0;
-            this.todayIncome = res.data.todayRevenue ?? "0.00";
-            this.todayNewOrders = res.data.todayOrders || 0;
-            this.pendingCount = res.data.pendingOrders || 0;
-            this.isOpen = res.data.isOpen;
-          }
+          const merchant = await fetchMerchantMy();
+          return !!(merchant && typeof merchant === "object");
         } catch (e2) {
-          formatAppLog("error", "at pages/index/index.vue:125", "加载工作台数据失败:", e2);
-          this.todayOrders = 3;
-          this.todayIncome = "256.80";
-          this.todayNewOrders = 5;
-          this.pendingCount = 2;
+          return null;
         }
       },
-      toggleStatus(e2) {
-        const newValue = e2.detail.value;
-        if (!newValue) {
-          uni.showModal({
-            title: "提示",
-            content: "你确定现在打烊吗？",
-            confirmText: "确定",
-            cancelText: "取消",
-            success: (res) => {
-              if (res.confirm) {
-                this.isOpen = false;
-                uni.showToast({ title: "已打烊", icon: "none" });
-              } else {
-                this.isOpen = true;
-              }
-            }
-          });
-        } else {
-          this.isOpen = true;
-          uni.showToast({ title: "已开始营业", icon: "none" });
+      syncNotifyStatus() {
+        const status = getMerchantNotifyStatus();
+        this.notifyEnabled = !!status.enabled;
+        this.notifyStatusText = status.lastError || "";
+        formatAppLog("log", "at pages/index/index.vue:188", "[merchant-notify][status-sync]", status);
+      },
+      async enableNotifySound() {
+        const status = await enableMerchantNotifyByUserGesture();
+        this.notifyEnabled = !!status.enabled;
+        this.notifyStatusText = status.lastError || "";
+        formatAppLog("log", "at pages/index/index.vue:194", "[merchant-notify][enable-click-result]", status);
+        uni.showToast({
+          title: status.enabled ? "提示音已开启" : "提示音开启失败",
+          icon: "none"
+        });
+      },
+      async loadData() {
+        if (!this.ensureMerchantAccess())
+          return;
+        this.pageState = "loading";
+        this.pageMessage = "";
+        this.resetDashboard();
+        const hasShop = await this.resolveHasShop();
+        if (hasShop === false) {
+          this.pageState = "no_shop";
+          return;
         }
+        if (hasShop == null) {
+          this.pageState = "error";
+          this.pageMessage = "店铺信息校验失败，请稍后重试。";
+          return;
+        }
+        try {
+          const res = await getDashboard$1();
+          formatAppLog("log", "at pages/index/index.vue:217", "工作台数据:", res);
+          const data = res && typeof res === "object" && res.data !== void 0 ? res.data : res;
+          if (this.hasDashboardMetrics(data)) {
+            this.applyDashboardData(data);
+            this.pageState = "ready";
+            return;
+          }
+          this.pageState = "empty";
+        } catch (e2) {
+          formatAppLog("error", "at pages/index/index.vue:226", "加载工作台数据失败:", e2);
+          this.pageState = "error";
+          this.pageMessage = e2 && (e2.detail || e2.message || e2.msg) || "暂时无法获取首页数据，请稍后重试。";
+        }
+      },
+      goOpenShop() {
+        uni.navigateTo({ url: "/pages/shop/shop-apply" });
       },
       goOrders() {
-        uni.navigateTo({ url: "/pages/order/list" });
+        uni.switchTab({ url: "/pages/order/list" });
       },
       goProducts() {
         uni.navigateTo({ url: "/pages/product/list" });
@@ -4211,650 +4666,1915 @@ if (uni.restoreGlobal) {
       }
     }
   };
-  function _sfc_render$F(_ctx, _cache, $props, $setup, $data, $options) {
+  function _sfc_render$i(_ctx, _cache, $props, $setup, $data, $options) {
     return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      vue.createElementVNode("view", { class: "status-card" }, [
-        vue.createElementVNode("view", { class: "status-left" }, [
-          vue.createElementVNode(
-            "text",
-            { class: "shop-name" },
-            vue.toDisplayString($data.shopName || "我的店铺"),
-            1
-            /* TEXT */
-          )
-        ]),
-        vue.createElementVNode("switch", {
-          checked: $data.isOpen,
-          onChange: _cache[0] || (_cache[0] = (...args) => $options.toggleStatus && $options.toggleStatus(...args)),
-          color: "#07C160"
-        }, null, 40, ["checked"])
-      ]),
-      vue.createElementVNode("view", { class: "card overview" }, [
-        vue.createElementVNode("view", { class: "section-title" }, "今日概览"),
-        vue.createElementVNode("view", { class: "overview-grid" }, [
-          vue.createElementVNode("view", { class: "overview-item" }, [
-            vue.createElementVNode(
-              "text",
-              { class: "num primary-color" },
-              vue.toDisplayString($data.pendingCount),
-              1
-              /* TEXT */
-            ),
-            vue.createElementVNode("text", { class: "label" }, "待处理订单")
-          ]),
-          vue.createElementVNode("view", { class: "overview-item" }, [
-            vue.createElementVNode(
-              "text",
-              { class: "num" },
-              vue.toDisplayString($data.todayIncome),
-              1
-              /* TEXT */
-            ),
-            vue.createElementVNode("text", { class: "label" }, "今日营收(元)")
-          ]),
-          vue.createElementVNode("view", { class: "overview-item" }, [
-            vue.createElementVNode(
-              "text",
-              { class: "num" },
-              vue.toDisplayString($data.todayNewOrders),
-              1
-              /* TEXT */
-            ),
-            vue.createElementVNode("text", { class: "label" }, "新订单")
-          ])
-        ])
-      ]),
-      $data.pendingCount > 0 ? (vue.openBlock(), vue.createElementBlock("view", {
+      $data.pageState === "loading" ? (vue.openBlock(), vue.createElementBlock("view", {
         key: 0,
-        class: "pending-alert",
-        onClick: _cache[1] || (_cache[1] = (...args) => $options.goOrders && $options.goOrders(...args))
+        class: "card state-card"
       }, [
+        vue.createElementVNode("text", { class: "state-title" }, "工作台加载中"),
+        vue.createElementVNode("text", { class: "state-desc" }, "正在获取店铺经营数据，请稍候。")
+      ])) : $data.pageState === "no_shop" ? (vue.openBlock(), vue.createElementBlock("view", {
+        key: 1,
+        class: "card state-card"
+      }, [
+        vue.createElementVNode("text", { class: "state-title" }, "您还没有店铺"),
+        vue.createElementVNode("text", { class: "state-desc" }, "当前账号还未完成开店，请先去提交开店信息。"),
+        vue.createElementVNode("button", {
+          class: "state-btn primary",
+          type: "default",
+          onClick: _cache[0] || (_cache[0] = (...args) => $options.goOpenShop && $options.goOpenShop(...args))
+        }, "去开店")
+      ])) : $data.pageState === "error" ? (vue.openBlock(), vue.createElementBlock("view", {
+        key: 2,
+        class: "card state-card"
+      }, [
+        vue.createElementVNode("text", { class: "state-title" }, "工作台加载失败"),
         vue.createElementVNode(
           "text",
-          null,
-          "您有 " + vue.toDisplayString($data.pendingCount) + " 个订单待接单，点击处理",
+          { class: "state-desc" },
+          vue.toDisplayString($data.pageMessage || "暂时无法获取首页数据，请稍后重试。"),
           1
           /* TEXT */
         ),
-        vue.createElementVNode("text", { class: "arrow" }, "›")
-      ])) : vue.createCommentVNode("v-if", true),
-      vue.createElementVNode("view", { class: "card menu-grid" }, [
-        vue.createElementVNode("view", {
-          class: "menu-item",
-          onClick: _cache[2] || (_cache[2] = (...args) => $options.goOrders && $options.goOrders(...args))
-        }, [
-          vue.createElementVNode("view", { class: "icon-wrap order" }, [
-            vue.createElementVNode("text", { class: "icon" }, "📋")
+        vue.createElementVNode("button", {
+          class: "state-btn primary",
+          type: "default",
+          onClick: _cache[1] || (_cache[1] = (...args) => $options.loadData && $options.loadData(...args))
+        }, "重新加载")
+      ])) : (vue.openBlock(), vue.createElementBlock(
+        vue.Fragment,
+        { key: 3 },
+        [
+          $data.pageState === "empty" ? (vue.openBlock(), vue.createElementBlock("view", {
+            key: 0,
+            class: "card state-card"
+          }, [
+            vue.createElementVNode("text", { class: "state-title" }, "暂无经营数据"),
+            vue.createElementVNode("text", { class: "state-desc" }, "店铺已存在，但首页暂未返回有效统计数据，请稍后刷新或联系后端排查。"),
+            vue.createElementVNode("button", {
+              class: "state-btn",
+              type: "default",
+              onClick: _cache[2] || (_cache[2] = (...args) => $options.loadData && $options.loadData(...args))
+            }, "刷新首页")
+          ])) : vue.createCommentVNode("v-if", true),
+          $data.pageState === "ready" ? (vue.openBlock(), vue.createElementBlock("view", {
+            key: 1,
+            class: "card overview"
+          }, [
+            vue.createElementVNode("view", { class: "section-title" }, "今日概览"),
+            vue.createElementVNode("view", { class: "overview-grid" }, [
+              vue.createElementVNode("view", { class: "overview-item" }, [
+                vue.createElementVNode(
+                  "text",
+                  { class: "num primary-color" },
+                  vue.toDisplayString($data.pendingCount),
+                  1
+                  /* TEXT */
+                ),
+                vue.createElementVNode("text", { class: "label" }, "待处理订单")
+              ]),
+              vue.createElementVNode("view", { class: "overview-item" }, [
+                vue.createElementVNode(
+                  "text",
+                  { class: "num" },
+                  vue.toDisplayString($data.todayIncome),
+                  1
+                  /* TEXT */
+                ),
+                vue.createElementVNode("text", { class: "label" }, "今日营收(元)")
+              ]),
+              vue.createElementVNode("view", { class: "overview-item" }, [
+                vue.createElementVNode(
+                  "text",
+                  { class: "num" },
+                  vue.toDisplayString($data.todayNewOrders),
+                  1
+                  /* TEXT */
+                ),
+                vue.createElementVNode("text", { class: "label" }, "新订单")
+              ])
+            ])
+          ])) : vue.createCommentVNode("v-if", true),
+          vue.createElementVNode("view", {
+            class: "sound-tip-card",
+            onClick: _cache[3] || (_cache[3] = (...args) => $options.enableNotifySound && $options.enableNotifySound(...args))
+          }, [
+            vue.createElementVNode("view", { class: "sound-tip-main" }, [
+              vue.createElementVNode("text", { class: "sound-tip-title" }, "新订单提示音"),
+              vue.createElementVNode(
+                "text",
+                { class: "sound-tip-desc" },
+                vue.toDisplayString($data.notifyEnabled ? "已开启，收到新订单会播放提示音" : "未开启，点击启用提示音"),
+                1
+                /* TEXT */
+              )
+            ]),
+            vue.createElementVNode(
+              "text",
+              {
+                class: vue.normalizeClass(["sound-tip-status", { off: !$data.notifyEnabled }])
+              },
+              vue.toDisplayString($data.notifyEnabled ? "已开启" : "未开启"),
+              3
+              /* TEXT, CLASS */
+            )
           ]),
-          vue.createElementVNode("text", null, "订单管理")
-        ]),
-        vue.createElementVNode("view", {
-          class: "menu-item",
-          onClick: _cache[3] || (_cache[3] = (...args) => $options.goProducts && $options.goProducts(...args))
-        }, [
-          vue.createElementVNode("view", { class: "icon-wrap product" }, [
-            vue.createElementVNode("text", { class: "icon" }, "🍱")
-          ]),
-          vue.createElementVNode("text", null, "商品管理")
-        ]),
-        vue.createElementVNode("view", {
-          class: "menu-item",
-          onClick: _cache[4] || (_cache[4] = (...args) => $options.goShop && $options.goShop(...args))
-        }, [
-          vue.createElementVNode("view", { class: "icon-wrap shop" }, [
-            vue.createElementVNode("text", { class: "icon" }, "🏪")
-          ]),
-          vue.createElementVNode("text", null, "店铺设置")
-        ]),
-        vue.createElementVNode("view", {
-          class: "menu-item",
-          onClick: _cache[5] || (_cache[5] = (...args) => $options.goFinance && $options.goFinance(...args))
-        }, [
-          vue.createElementVNode("view", { class: "icon-wrap finance" }, [
-            vue.createElementVNode("text", { class: "icon" }, "💰")
-          ]),
-          vue.createElementVNode("text", null, "财务管理")
-        ]),
-        vue.createElementVNode("view", {
-          class: "menu-item",
-          onClick: _cache[6] || (_cache[6] = (...args) => $options.goStats && $options.goStats(...args))
-        }, [
-          vue.createElementVNode("view", { class: "icon-wrap stats" }, [
-            vue.createElementVNode("text", { class: "icon" }, "📊")
-          ]),
-          vue.createElementVNode("text", null, "数据统计")
-        ]),
-        vue.createElementVNode("view", {
-          class: "menu-item",
-          onClick: _cache[7] || (_cache[7] = (...args) => $options.goReview && $options.goReview(...args))
-        }, [
-          vue.createElementVNode("view", { class: "icon-wrap review" }, [
-            vue.createElementVNode("text", { class: "icon" }, "⭐")
-          ]),
-          vue.createElementVNode("text", null, "顾客评价")
-        ])
-      ])
+          $data.pageState === "ready" && $data.pendingCount > 0 ? (vue.openBlock(), vue.createElementBlock("view", {
+            key: 2,
+            class: "pending-alert",
+            onClick: _cache[4] || (_cache[4] = (...args) => $options.goOrders && $options.goOrders(...args))
+          }, [
+            vue.createElementVNode(
+              "text",
+              null,
+              "您有 " + vue.toDisplayString($data.pendingCount) + " 个订单待接单，点击处理",
+              1
+              /* TEXT */
+            ),
+            vue.createElementVNode("text", { class: "arrow" }, "›")
+          ])) : vue.createCommentVNode("v-if", true),
+          vue.createElementVNode("view", { class: "card menu-grid" }, [
+            vue.createElementVNode("view", {
+              class: "menu-item",
+              onClick: _cache[5] || (_cache[5] = (...args) => $options.goOrders && $options.goOrders(...args))
+            }, [
+              vue.createElementVNode("view", { class: "icon-wrap order" }, [
+                vue.createElementVNode("text", { class: "icon" }, "📋")
+              ]),
+              vue.createElementVNode("text", null, "订单管理")
+            ]),
+            vue.createElementVNode("view", {
+              class: "menu-item",
+              onClick: _cache[6] || (_cache[6] = (...args) => $options.goProducts && $options.goProducts(...args))
+            }, [
+              vue.createElementVNode("view", { class: "icon-wrap product" }, [
+                vue.createElementVNode("text", { class: "icon" }, "🍱")
+              ]),
+              vue.createElementVNode("text", null, "商品管理")
+            ]),
+            vue.createElementVNode("view", {
+              class: "menu-item",
+              onClick: _cache[7] || (_cache[7] = (...args) => $options.goShop && $options.goShop(...args))
+            }, [
+              vue.createElementVNode("view", { class: "icon-wrap shop" }, [
+                vue.createElementVNode("text", { class: "icon" }, "🏪")
+              ]),
+              vue.createElementVNode("text", null, "店铺设置")
+            ]),
+            vue.createElementVNode("view", {
+              class: "menu-item",
+              onClick: _cache[8] || (_cache[8] = (...args) => $options.goFinance && $options.goFinance(...args))
+            }, [
+              vue.createElementVNode("view", { class: "icon-wrap finance" }, [
+                vue.createElementVNode("text", { class: "icon" }, "💰")
+              ]),
+              vue.createElementVNode("text", null, "财务管理")
+            ]),
+            vue.createElementVNode("view", {
+              class: "menu-item",
+              onClick: _cache[9] || (_cache[9] = (...args) => $options.goStats && $options.goStats(...args))
+            }, [
+              vue.createElementVNode("view", { class: "icon-wrap stats" }, [
+                vue.createElementVNode("text", { class: "icon" }, "📊")
+              ]),
+              vue.createElementVNode("text", null, "数据统计")
+            ]),
+            vue.createElementVNode("view", {
+              class: "menu-item",
+              onClick: _cache[10] || (_cache[10] = (...args) => $options.goReview && $options.goReview(...args))
+            }, [
+              vue.createElementVNode("view", { class: "icon-wrap review" }, [
+                vue.createElementVNode("text", { class: "icon" }, "⭐")
+              ]),
+              vue.createElementVNode("text", null, "顾客评价")
+            ])
+          ])
+        ],
+        64
+        /* STABLE_FRAGMENT */
+      ))
     ]);
   }
-  const PagesIndexIndex = /* @__PURE__ */ _export_sfc(_sfc_main$G, [["render", _sfc_render$F], ["__scopeId", "data-v-1cf27b2a"], ["__file", "E:/固始县外卖商家端/pages/index/index.vue"]]);
-  function getFoodList(category, sort, search) {
-    let url2 = "/food/list";
-    const params = [];
-    if (category)
-      params.push("category=" + encodeURIComponent(category));
-    if (sort && sort !== "综合排序")
-      params.push("sort=" + encodeURIComponent(sort));
-    if (search)
-      params.push("search=" + encodeURIComponent(search));
-    if (params.length)
-      url2 += "?" + params.join("&");
-    return request({ url: url2, method: "GET" });
+  const PagesIndexIndex = /* @__PURE__ */ _export_sfc(_sfc_main$j, [["render", _sfc_render$i], ["__scopeId", "data-v-1cf27b2a"], ["__file", "E:/固始县外卖商家端/pages/index/index.vue"]]);
+  function getDashboard() {
+    return request({ url: "/shop/dashboard", method: "GET" });
   }
-  function searchFood(keyword) {
-    return request({ url: "/food/list?search=" + encodeURIComponent(keyword), method: "GET" });
+  function getOrderDetail(id) {
+    return request({ url: "/order/detail/" + id, method: "GET" });
   }
-  function getFoodDetail(id) {
-    return request({ url: "/food/detail?id=" + id, method: "GET" });
+  function acceptOrder$1(id, data = {}) {
+    return request({ url: "/order/accept", method: "POST", data: { order_id: id, ...data } });
   }
-  function getCartList() {
-    return request({ url: "/cart/list", method: "GET" });
+  function rejectOrder(id, data) {
+    return request({ url: "/order/reject", method: "POST", data: { order_id: id, reason: (data == null ? void 0 : data.reason) || "商品已售罄" } });
   }
-  function addToCart(foodId, quantity = 1) {
-    return request({
-      url: "/cart/add",
-      method: "POST",
-      data: { foodId, quantity }
-    });
+  function prepareOrder(id) {
+    return request({ url: "/order/prepare", method: "POST", data: { order_id: id } });
   }
-  function removeFromCart(foodId) {
-    return request({
-      url: "/cart/remove",
-      method: "POST",
-      data: { foodId }
-    });
+  function deliverOrder(id) {
+    return request({ url: "/order/deliver", method: "POST", data: { order_id: id } });
   }
-  const _sfc_main$F = {
+  function getFinanceStats(params) {
+    return request({ url: "/merchant/finance/stats", method: "GET", data: params });
+  }
+  function getWithdrawList(params) {
+    return request({ url: "/merchant/finance/withdraw", method: "GET", data: params });
+  }
+  function applyWithdraw(data) {
+    return request({ url: "/merchant/finance/withdraw", method: "POST", data });
+  }
+  function getStatsData(params) {
+    return request({ url: "/merchant/stats", method: "GET", data: params });
+  }
+  function getHotProducts() {
+    return request({ url: "/merchant/hot-products", method: "GET" });
+  }
+  function getReviewList(params) {
+    return request({ url: "/merchant/reviews", method: "GET", data: params });
+  }
+  function replyReview(orderId, data) {
+    return request({ url: "/merchant/reviews/" + orderId + "/reply", method: "POST", data });
+  }
+  function formatMoney(num) {
+    if (num === void 0 || num === null)
+      return "0.00";
+    return Number(num).toFixed(2);
+  }
+  function formatTime(timestamp, format = "YYYY-MM-DD HH:mm") {
+    if (!timestamp)
+      return "";
+    const date = new Date(timestamp * 1e3);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    const hour = String(date.getHours()).padStart(2, "0");
+    const minute = String(date.getMinutes()).padStart(2, "0");
+    const second = String(date.getSeconds()).padStart(2, "0");
+    return format.replace("YYYY", year).replace("MM", month).replace("DD", day).replace("HH", hour).replace("mm", minute).replace("ss", second);
+  }
+  const ORDER_STATUS = {
+    0: { text: "待支付", color: "#FF6B35" },
+    1: { text: "已支付待接单", color: "#1890ff" },
+    2: { text: "备餐中", color: "#722ed1" },
+    3: { text: "待配送", color: "#faad14" },
+    4: { text: "配送中", color: "#1890ff" },
+    5: { text: "已完成", color: "#52c41a" },
+    6: { text: "已取消", color: "#999" }
+  };
+  const HALL_TAB_CONFIG = [
+    { key: "new", label: "新订单", statuses: [1] },
+    { key: "making", label: "制作中", statuses: [2] },
+    { key: "delivery", label: "待配送", statuses: [3, 4, 5] }
+  ];
+  const _sfc_main$i = {
     data() {
       return {
-        goodsList: [],
-        currentCategory: "",
-        categoryList: CATEGORY_LIST,
-        sortType: "综合排序"
+        // 统计数据
+        todayStats: {
+          orderCount: 0,
+          income: "0.00",
+          pendingCount: 0
+        },
+        // 搜索
+        searchKey: "",
+        // 日期筛选
+        currentDate: "today",
+        dateFilters: [
+          { label: "今日", value: "today" },
+          { label: "昨日", value: "yesterday" },
+          { label: "近7天", value: "week" },
+          { label: "近30天", value: "month" }
+        ],
+        hallTab: "new",
+        hallTabs: HALL_TAB_CONFIG,
+        // 订单列表（已适配后端字段）
+        orderList: [],
+        page: 1,
+        pageSize: 10,
+        refreshing: false,
+        loadingMore: false,
+        noMore: false,
+        _newOrderHandler: null
       };
     },
+    computed: {
+      emptyTip() {
+        if (this.searchKey) {
+          return "未找到匹配的订单";
+        }
+        const activeTab = this.hallTabs.find((item) => item.key === this.hallTab);
+        return activeTab ? `${activeTab.label}暂无真实订单` : "当前阶段暂无订单";
+      }
+    },
+    onLoad() {
+      if (!this.ensureMerchantAccess())
+        return;
+      try {
+        const pages2 = getCurrentPages();
+        const cur = pages2 && pages2.length ? pages2[pages2.length - 1] : null;
+        formatAppLog("log", "at pages/order/list.vue:307", "order-page route =", cur && cur.route);
+        formatAppLog("log", "at pages/order/list.vue:308", "order-page fullPath =", cur && cur.$page && cur.$page.fullPath);
+      } catch (e2) {
+        formatAppLog("log", "at pages/order/list.vue:310", "order-page route read failed =", e2);
+      }
+      this.loadStats();
+      this.loadOrderList();
+      const token = getToken();
+      const userInfo = getUser();
+      const userId = getUserId(userInfo);
+      if (token && userId && !getSocket()) {
+        initSocket(token, userId);
+      }
+      this._newOrderHandler = () => {
+        this.page = 1;
+        this.loadOrderList();
+        this.loadStats();
+      };
+      onNewOrder(this._newOrderHandler);
+    },
+    onUnload() {
+      if (this._newOrderHandler) {
+        offNewOrder(this._newOrderHandler);
+        this._newOrderHandler = null;
+      }
+    },
     onShow() {
-      this.updateCartBadge();
+      if (!this.ensureMerchantAccess())
+        return;
+      this.loadStats();
+      this.loadOrderList();
     },
     async onPullDownRefresh() {
       try {
-        await this.getGoodsList(this.currentCategory || void 0, this.sortType);
+        this.page = 1;
+        this.refreshing = true;
+        await Promise.all([this.loadOrderList(), this.loadStats()]);
       } catch (e2) {
-        formatAppLog("error", "at pages/home/index.vue:114", e2);
+        formatAppLog("error", "at pages/order/list.vue:349", e2);
       } finally {
+        this.refreshing = false;
         uni.stopPullDownRefresh();
       }
     },
     methods: {
-      async getGoodsList(category, sort) {
-        try {
-          const res = await getFoodList(category || void 0, sort || this.sortType);
-          this.goodsList = res.商品列表 || [];
-        } catch (e2) {
-        }
+      ensureMerchantAccess() {
+        if (hasValidMerchantSession())
+          return true;
+        clearAuth();
+        uni.reLaunch({ url: "/pages/login/index" });
+        return false;
       },
-      onCountyTakeawayClick() {
-        uni.navigateTo({ url: "/pages/county-takeaway/index" });
-      },
-      onTownTakeawayClick() {
-        uni.navigateTo({ url: "/pages/town-takeaway/index" });
-      },
-      async handleAddToCart(item) {
-        if (!requireLogin())
+      // 加载统计数据
+      async loadStats() {
+        if (!this.ensureMerchantAccess())
           return;
         try {
-          const res = await addToCart(item.商品ID);
-          uni.showToast({ title: res.消息, icon: "success" });
-          this.updateCartBadge();
+          const res = await getDashboard();
+          const data = (res == null ? void 0 : res.data) || res || {};
+          this.todayStats = {
+            orderCount: Number(data.todayOrders || data.orderCount || 0),
+            income: Number(data.todayRevenue || data.income || 0).toFixed(2),
+            pendingCount: Number(data.pendingOrders || data.pendingCount || 0)
+          };
         } catch (e2) {
+          this.todayStats = {
+            orderCount: 0,
+            income: "0.00",
+            pendingCount: 0
+          };
         }
       },
-      async updateCartBadge() {
-        try {
-          const { getCartList: getCartList2 } = require("@/api/cart.js");
-          const res = await getCartList2();
-          const count = res.总数量 || 0;
-          if (count > 0) {
-            uni.setTabBarBadge({ index: 1, text: String(count) });
-          } else {
-            uni.removeTabBarBadge({ index: 1 });
+      // 搜索
+      onSearch() {
+        this.page = 1;
+        this.loadOrderList();
+      },
+      clearSearch() {
+        this.searchKey = "";
+        this.page = 1;
+        this.loadOrderList();
+      },
+      // 切换日期
+      switchDate(date) {
+        this.currentDate = date;
+        this.page = 1;
+        this.loadOrderList();
+      },
+      switchHallTab(key) {
+        this.hallTab = key;
+        this.page = 1;
+        this.loadOrderList();
+      },
+      extractListPayload(res) {
+        var _a, _b;
+        if (Array.isArray(res))
+          return res;
+        if (Array.isArray((_a = res == null ? void 0 : res.data) == null ? void 0 : _a.订单列表))
+          return res.data.订单列表;
+        if (Array.isArray((_b = res == null ? void 0 : res.data) == null ? void 0 : _b.data))
+          return res.data.data;
+        if (Array.isArray(res == null ? void 0 : res.订单列表))
+          return res.订单列表;
+        if (Array.isArray(res == null ? void 0 : res.data))
+          return res.data;
+        return [];
+      },
+      getActiveStatuses() {
+        const activeTab = this.hallTabs.find((item) => item.key === this.hallTab);
+        return activeTab && Array.isArray(activeTab.statuses) ? activeTab.statuses : [];
+      },
+      filterOrdersByActiveStatuses(orderList) {
+        const statuses = this.getActiveStatuses().map((item) => Number(item));
+        if (!statuses.length)
+          return Array.isArray(orderList) ? orderList : [];
+        return (Array.isArray(orderList) ? orderList : []).filter((order) => {
+          const status = Number(order && order.status);
+          return statuses.includes(status);
+        });
+      },
+      buildOrderListParams(extra = {}) {
+        const params = {
+          page: this.page,
+          page_size: this.pageSize,
+          ...extra
+        };
+        if (this.searchKey) {
+          params.keyword = this.searchKey;
+        }
+        if (this.currentDate) {
+          params.date_range = this.currentDate;
+        }
+        return params;
+      },
+      fetchMerchantOrders(params) {
+        return request({ url: "/merchant/orders", method: "GET", data: params });
+      },
+      formatDeliveryAddress(rawAddress) {
+        if (!rawAddress)
+          return "";
+        if (typeof rawAddress === "string") {
+          const s2 = String(rawAddress).trim();
+          const looksJson = s2.startsWith("{") && s2.endsWith("}") || s2.startsWith("[") && s2.endsWith("]") || /"lng"|"lat"|"contact_phone"|"contact_name"/.test(s2);
+          try {
+            const parsed = JSON.parse(s2);
+            if (parsed && typeof parsed === "object") {
+              const detail = parsed.detail != null ? String(parsed.detail).trim() : "";
+              const address = parsed.address != null ? String(parsed.address).trim() : "";
+              const town = parsed.town != null ? String(parsed.town).trim() : "";
+              return detail || (town && address ? `${town}${address}` : address || town || "");
+            }
+          } catch (e2) {
+            if (!looksJson)
+              return s2;
+            const pick2 = (key) => {
+              const m2 = s2.match(new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`));
+              return m2 && m2[1] ? String(m2[1]).trim() : "";
+            };
+            const detail = pick2("detail");
+            const address = pick2("address");
+            const town = pick2("town");
+            return detail || (town && address ? `${town}${address}` : address || town || "");
           }
+          return looksJson ? "" : s2;
+        }
+        if (typeof rawAddress === "object") {
+          const detail = rawAddress.detail != null ? String(rawAddress.detail).trim() : "";
+          const address = rawAddress.address != null ? String(rawAddress.address).trim() : "";
+          const town = rawAddress.town != null ? String(rawAddress.town).trim() : "";
+          return detail || (town && address ? `${town}${address}` : address || town || "");
+        }
+        return String(rawAddress);
+      },
+      mapOrderRow(o2) {
+        var _a, _b, _c;
+        const rawStatus = Number(o2.status);
+        const status = Number.isFinite(rawStatus) ? rawStatus : o2.status;
+        let goodsList = [];
+        try {
+          let raw = o2.products_info ?? o2.items;
+          if (typeof raw === "string") {
+            raw = JSON.parse(raw);
+          }
+          const arr = Array.isArray(raw) ? raw : raw ? [raw] : [];
+          goodsList = arr.map((g2) => ({
+            name: g2.name || g2.商品名称 || g2.title || "",
+            num: g2.num || g2.数量 || g2.count || 1,
+            price: g2.price || g2.价格 || g2.amount || 0,
+            spec: g2.spec || g2.规格 || "",
+            image: g2.image || g2.img || ""
+          }));
         } catch (e2) {
+          goodsList = [];
         }
-      },
-      onCategoryClick(item) {
-        if (item.name === "跑腿代购") {
-          uni.navigateTo({ url: "/pages/errand/index" });
-          return;
-        }
-        if (item.name === "二手机买卖") {
-          uni.navigateTo({ url: "/pages/mobile-digital/index" });
-          return;
-        }
-        if (item.name === "家电维修") {
-          uni.navigateTo({ url: "/pages/appliance-repair/index" });
-          return;
-        }
-        if (item.name === "五金工具") {
-          uni.navigateTo({ url: "/pages/hardware/index" });
-          return;
-        }
-        if (item.name === "数码配件") {
-          uni.navigateTo({ url: "/pages/digital-parts/index" });
-          return;
-        }
-        if (item.name === "代取快递") {
-          uni.navigateTo({ url: "/pages/express-pickup/index" });
-          return;
-        }
-        if (item.name === "附近超市") {
-          uni.navigateTo({ url: "/pages/supermarket/index" });
-          return;
-        }
-        if (item.name === "顺路带货") {
-          uni.navigateTo({ url: "/pages/ridealong/index" });
-          return;
-        }
-        if (this.currentCategory === item.name) {
-          this.clearFilter();
+        const createdAt = o2.createdAt || o2.created_at;
+        const customerName = ((_a = o2.user) == null ? void 0 : _a.nickname) || o2.contact_name || "顾客";
+        const customerPhone = o2.contact_phone || ((_b = o2.user) == null ? void 0 : _b.phone) || "";
+        const rawAddress = o2.delivery_address;
+        const address = this.formatDeliveryAddress(rawAddress);
+        const pay = Number(o2.pay_amount);
+        const fee = Number(o2.delivery_fee);
+        let est = pay;
+        if (Number.isFinite(pay) && Number.isFinite(fee)) {
+          est = pay - fee;
+        } else if (Number.isFinite(pay)) {
+          est = pay;
         } else {
-          this.currentCategory = item.name;
-          this.getGoodsList(item.name, this.sortType);
+          est = 0;
+        }
+        return {
+          id: o2.id || o2.order_id,
+          orderNo: o2.order_no || o2.orderNo || String(o2.order_id || ""),
+          status,
+          statusText: ((_c = ORDER_STATUS[status]) == null ? void 0 : _c.text) || `状态${status}`,
+          createTime: createdAt ? formatTime(new Date(createdAt).getTime() / 1e3, "HH:mm") : "",
+          customerName,
+          customerPhone,
+          address,
+          goodsList,
+          goodsAmount: o2.total_amount,
+          deliveryFee: o2.delivery_fee,
+          totalAmount: o2.pay_amount,
+          estimatedIncome: Number.isFinite(est) ? Number(est).toFixed(2) : "0.00",
+          remark: o2.remark || o2.buyer_remark || "",
+          orderType: o2.order_type || o2.orderType || "",
+          isUrgent: false,
+          rawRecordId: o2.id,
+          rawOrderId: o2.order_id,
+          rawStatus: o2.status,
+          rawDeliveryAddress: rawAddress,
+          category: o2.category || o2.merchant_category || o2.shop_category || "",
+          supermarketDeliveryPermissionSnapshot: o2.supermarket_delivery_permission_snapshot || "",
+          supermarketDeliveryMode: o2.supermarket_delivery_mode || "",
+          settlementRuleSnapshot: o2.settlement_rule_snapshot || null,
+          merchantLng: this.toCoordinateNumber(o2.merchant_lng ?? o2.merchantLng),
+          merchantLat: this.toCoordinateNumber(o2.merchant_lat ?? o2.merchantLat),
+          customerLng: this.toCoordinateNumber(o2.customer_lng ?? o2.delivery_longitude ?? o2.longitude),
+          customerLat: this.toCoordinateNumber(o2.customer_lat ?? o2.delivery_latitude ?? o2.latitude)
+        };
+      },
+      mergeSupermarketOrderDetail(order, detailRaw) {
+        var _a, _b;
+        const nextOrder = { ...order };
+        const permissionSnapshot = detailRaw == null ? void 0 : detailRaw.supermarket_delivery_permission_snapshot;
+        const deliveryMode = detailRaw == null ? void 0 : detailRaw.supermarket_delivery_mode;
+        const settlementRuleSnapshot = detailRaw == null ? void 0 : detailRaw.settlement_rule_snapshot;
+        const category = (detailRaw == null ? void 0 : detailRaw.category) || (detailRaw == null ? void 0 : detailRaw.merchant_category) || (detailRaw == null ? void 0 : detailRaw.shop_category) || ((_a = detailRaw == null ? void 0 : detailRaw.merchant) == null ? void 0 : _a.category) || ((_b = detailRaw == null ? void 0 : detailRaw.shop) == null ? void 0 : _b.category) || nextOrder.category;
+        nextOrder.category = category != null ? String(category) : nextOrder.category;
+        if (this.isSupermarketOrder(nextOrder)) {
+          if (permissionSnapshot != null) {
+            nextOrder.supermarketDeliveryPermissionSnapshot = String(permissionSnapshot);
+          }
+          if (deliveryMode != null) {
+            nextOrder.supermarketDeliveryMode = String(deliveryMode);
+          }
+          if (settlementRuleSnapshot != null) {
+            nextOrder.settlementRuleSnapshot = settlementRuleSnapshot;
+          }
+        } else {
+          nextOrder.supermarketDeliveryPermissionSnapshot = "";
+          nextOrder.supermarketDeliveryMode = "";
+          nextOrder.settlementRuleSnapshot = null;
+        }
+        if (this.toCoordinateNumber((detailRaw == null ? void 0 : detailRaw.merchant_lng) ?? (detailRaw == null ? void 0 : detailRaw.merchantLng)) != null) {
+          nextOrder.merchantLng = this.toCoordinateNumber((detailRaw == null ? void 0 : detailRaw.merchant_lng) ?? (detailRaw == null ? void 0 : detailRaw.merchantLng));
+        }
+        if (this.toCoordinateNumber((detailRaw == null ? void 0 : detailRaw.merchant_lat) ?? (detailRaw == null ? void 0 : detailRaw.merchantLat)) != null) {
+          nextOrder.merchantLat = this.toCoordinateNumber((detailRaw == null ? void 0 : detailRaw.merchant_lat) ?? (detailRaw == null ? void 0 : detailRaw.merchantLat));
+        }
+        if (this.toCoordinateNumber((detailRaw == null ? void 0 : detailRaw.customer_lng) ?? (detailRaw == null ? void 0 : detailRaw.delivery_longitude) ?? (detailRaw == null ? void 0 : detailRaw.longitude)) != null) {
+          nextOrder.customerLng = this.toCoordinateNumber((detailRaw == null ? void 0 : detailRaw.customer_lng) ?? (detailRaw == null ? void 0 : detailRaw.delivery_longitude) ?? (detailRaw == null ? void 0 : detailRaw.longitude));
+        }
+        if (this.toCoordinateNumber((detailRaw == null ? void 0 : detailRaw.customer_lat) ?? (detailRaw == null ? void 0 : detailRaw.delivery_latitude) ?? (detailRaw == null ? void 0 : detailRaw.latitude)) != null) {
+          nextOrder.customerLat = this.toCoordinateNumber((detailRaw == null ? void 0 : detailRaw.customer_lat) ?? (detailRaw == null ? void 0 : detailRaw.delivery_latitude) ?? (detailRaw == null ? void 0 : detailRaw.latitude));
+        }
+        return nextOrder;
+      },
+      toCoordinateNumber(value2) {
+        const num = Number(value2);
+        return Number.isFinite(num) ? num : null;
+      },
+      getValidCoordinatePair(longitude, latitude) {
+        const lng = this.toCoordinateNumber(longitude);
+        const lat = this.toCoordinateNumber(latitude);
+        if (lng == null || lat == null)
+          return null;
+        if (lng === 0 && lat === 0)
+          return null;
+        return { lng, lat };
+      },
+      isSupermarketCategory(category) {
+        return String(category || "").trim() === "超市";
+      },
+      isSupermarketOrder(order) {
+        if (!order)
+          return false;
+        return this.isSupermarketCategory(order.category);
+      },
+      resolveSupermarketDeliveryMode(order) {
+        if (!this.isSupermarketOrder(order))
+          return "";
+        if (order.supermarketDeliveryMode === "self_delivery" || order.supermarketDeliveryMode === "rider_delivery") {
+          return order.supermarketDeliveryMode;
+        }
+        if (order.supermarketDeliveryPermissionSnapshot === "self_only") {
+          return "self_delivery";
+        }
+        if (order.supermarketDeliveryPermissionSnapshot === "rider_only") {
+          return "rider_delivery";
+        }
+        return "pending";
+      },
+      showSupermarketHybridModeChoice(order, targetMode) {
+        return this.isSupermarketOrder(order) && order.status === 3 && order.supermarketDeliveryPermissionSnapshot === "hybrid" && this.resolveSupermarketDeliveryMode(order) === "pending" && ["self_delivery", "rider_delivery"].includes(targetMode);
+      },
+      showSupermarketSelfDeliveryStart(order) {
+        return this.isSupermarketOrder(order) && order.status === 3 && this.resolveSupermarketDeliveryMode(order) === "self_delivery";
+      },
+      showSupermarketMerchantConfirm(order) {
+        return this.isSupermarketOrder(order) && order.status === 5 && this.resolveSupermarketDeliveryMode(order) === "self_delivery";
+      },
+      showSupermarketSelfDeliveryNavigation(order) {
+        return this.isSupermarketOrder(order) && (order.status === 4 || order.status === 5) && this.resolveSupermarketDeliveryMode(order) === "self_delivery";
+      },
+      showRiderDeliveryButton(order) {
+        if (!this.isSupermarketOrder(order))
+          return false;
+        const deliveryMode = this.resolveSupermarketDeliveryMode(order);
+        return order.status === 3 && deliveryMode === "rider_delivery";
+      },
+      getDeliverButtonText(order) {
+        if (!this.isSupermarketOrder(order))
+          return "";
+        if (this.resolveSupermarketDeliveryMode(order) === "rider_delivery") {
+          return "呼叫骑手";
+        }
+        return "";
+      },
+      async enrichSupermarketOrders(orderList) {
+        const detailTargets = orderList.filter(
+          (order) => order && this.isSupermarketOrder(order) && (order.status === 3 || order.status === 4 || order.status === 5)
+        );
+        if (!detailTargets.length)
+          return orderList;
+        const detailResults = await Promise.all(
+          detailTargets.map(async (order) => {
+            try {
+              const detailRes = await getOrderDetail(order.id);
+              const detailRaw = detailRes && detailRes.data !== void 0 ? detailRes.data : detailRes;
+              return { id: order.id, detailRaw };
+            } catch (e2) {
+              return { id: order.id, detailRaw: null };
+            }
+          })
+        );
+        const detailMap = new Map(detailResults.map((item) => [item.id, item.detailRaw]));
+        return orderList.map((order) => {
+          const detailRaw = detailMap.get(order.id);
+          return detailRaw ? this.mergeSupermarketOrderDetail(order, detailRaw) : order;
+        });
+      },
+      async loadOrderList() {
+        if (!this.ensureMerchantAccess())
+          return;
+        try {
+          const statuses = this.getActiveStatuses();
+          const responses = await Promise.all(
+            statuses.map((status) => this.fetchMerchantOrders(this.buildOrderListParams({ status })))
+          );
+          const listGroup = responses.map((res) => this.extractListPayload(res));
+          const byId = /* @__PURE__ */ new Map();
+          listGroup.flat().forEach((row) => {
+            if (row && row.id != null && !byId.has(row.id)) {
+              byId.set(row.id, row);
+            }
+          });
+          const list = Array.from(byId.values()).sort((x2, y2) => {
+            const tx = new Date(x2.createdAt || x2.created_at || 0).getTime();
+            const ty = new Date(y2.createdAt || y2.created_at || 0).getTime();
+            return ty - tx;
+          });
+          const mapped = list.map((o2) => this.mapOrderRow(o2));
+          mapped.forEach((order) => {
+            formatAppLog("log", "at pages/order/list.vue:732", "order-card raw delivery_address =", order && order.rawDeliveryAddress);
+            formatAppLog("log", "at pages/order/list.vue:733", "order-card formatted address =", order && order.address);
+          });
+          if (this.hallTab === "making") {
+            mapped.forEach((order) => {
+              formatAppLog("log", "at pages/order/list.vue:737", "making-tab order =", {
+                rawStatus: order.rawStatus,
+                status: order.status,
+                id: order.id,
+                orderNo: order.orderNo
+              });
+            });
+          }
+          const enrichedOrders = this.filterOrdersByActiveStatuses(await this.enrichSupermarketOrders(mapped));
+          const mergedList = this.page > 1 ? [...this.orderList, ...enrichedOrders] : enrichedOrders;
+          this.orderList = this.filterOrdersByActiveStatuses(mergedList);
+          await this.loadStats();
+          this.noMore = listGroup.every((items) => items.length < this.pageSize);
+        } catch (e2) {
+          this.orderList = this.page > 1 ? this.orderList : [];
+          formatAppLog("error", "at pages/order/list.vue:753", "加载订单列表失败", e2);
         }
       },
-      onSortClick(sort) {
-        this.sortType = sort;
-        if (this.currentCategory) {
-          this.getGoodsList(this.currentCategory, sort);
+      // 下拉刷新
+      async onRefresh() {
+        this.refreshing = true;
+        this.page = 1;
+        await this.loadOrderList();
+        this.refreshing = false;
+      },
+      // 加载更多
+      loadMore() {
+        if (this.loadingMore || this.noMore)
+          return;
+        this.loadingMore = true;
+        this.page++;
+        this.loadOrderList().then(() => {
+          this.loadingMore = false;
+        });
+      },
+      applyLocalOrderStatus(orderId, nextStatus) {
+        const targetId = String(orderId);
+        const updatedList = this.orderList.map((item) => {
+          var _a;
+          if (String(item.id) !== targetId)
+            return item;
+          return {
+            ...item,
+            status: nextStatus,
+            rawStatus: nextStatus,
+            statusText: ((_a = ORDER_STATUS[nextStatus]) == null ? void 0 : _a.text) || `状态${nextStatus}`
+          };
+        });
+        this.orderList = this.filterOrdersByActiveStatuses(updatedList);
+      },
+      async handleAccept(order) {
+        try {
+          await acceptOrder$1(order.id, {
+            merchant_lng: 115.681123,
+            merchant_lat: 32.181234
+          });
+          this.applyLocalOrderStatus(order.id, 2);
+          uni.showToast({ title: "接单成功", icon: "success" });
+          this.page = 1;
+          await this.loadOrderList();
+          await this.loadStats();
+        } catch (e2) {
+          uni.showToast({ title: "接单失败", icon: "none" });
         }
       },
-      clearFilter() {
-        this.currentCategory = "";
-        this.getGoodsList();
+      // 拒单（状态：1 待接单）
+      rejectOrder(order) {
+        uni.showModal({
+          title: "拒单确认",
+          content: "确定要拒绝此订单吗？",
+          confirmText: "确定拒单",
+          confirmColor: "#ff4d4f",
+          success: (res) => {
+            if (res.confirm) {
+              this.doReject(order);
+            }
+          }
+        });
       },
-      onServiceCardClick(type) {
-        uni.showToast({ title: type + " 敬请期待", icon: "none" });
+      async doReject(order) {
+        try {
+          await rejectOrder(order.id, { reason: "商品已售罄" });
+          uni.showToast({ title: "已拒单", icon: "success" });
+          this.loadOrderList();
+        } catch (e2) {
+          uni.showToast({ title: String(this.extractErrorMessage(e2, "操作失败")), icon: "none" });
+        }
       },
+      // 出餐完成：POST /api/order/prepare，状态 2 -> 3
+      async finishMake(order) {
+        const payload = { order_id: order && order.id };
+        formatAppLog("log", "at pages/order/list.vue:833", "finishMake order =", order);
+        formatAppLog("log", "at pages/order/list.vue:834", "finishMake order.id =", order && order.id);
+        formatAppLog("log", "at pages/order/list.vue:835", "finishMake order.rawRecordId =", order && order.rawRecordId);
+        formatAppLog("log", "at pages/order/list.vue:836", "finishMake order.rawOrderId =", order && order.rawOrderId);
+        formatAppLog("log", "at pages/order/list.vue:837", "finishMake order.orderNo =", order && order.orderNo);
+        formatAppLog("log", "at pages/order/list.vue:838", "finishMake order.status =", order && order.status);
+        formatAppLog("log", "at pages/order/list.vue:839", "finishMake payload =", payload);
+        try {
+          try {
+            const detailRes = await getOrderDetail(order.id);
+            const detailRaw = detailRes && detailRes.data !== void 0 ? detailRes.data : detailRes;
+            formatAppLog("log", "at pages/order/list.vue:844", "finishMake detail =", detailRaw);
+            formatAppLog("log", "at pages/order/list.vue:845", "finishMake detail.status =", detailRaw && detailRaw.status);
+          } catch (detailError) {
+            formatAppLog("log", "at pages/order/list.vue:847", "finishMake detailError =", detailError);
+          }
+          await prepareOrder(order.id);
+          uni.showToast({ title: "出餐完成", icon: "success" });
+          this.page = 1;
+          await this.loadOrderList();
+          await this.loadStats();
+        } catch (e2) {
+          formatAppLog("log", "at pages/order/list.vue:855", "finishMake error =", e2);
+          formatAppLog("log", "at pages/order/list.vue:856", "finishMake error.message =", e2 && e2.message);
+          formatAppLog("log", "at pages/order/list.vue:857", "finishMake error.response =", e2 && e2.response);
+          formatAppLog("log", "at pages/order/list.vue:858", "finishMake error.response.data =", e2 && e2.response && e2.response.data);
+          const rawMessage = e2 && e2.response && e2.response.data && (e2.response.data.message || e2.response.data.msg || e2.response.data.detail) || e2 && e2.data && (e2.data.message || e2.data.msg || e2.data.detail) || e2 && (e2.message || e2.msg || e2.detail) || "操作失败";
+          uni.showToast({ title: String(rawMessage), icon: "none" });
+        }
+      },
+      // 当前页仅在已明确的配送按钮语义下调用 POST /api/order/deliver
+      extractErrorMessage(error, fallback = "操作失败") {
+        return error && error.response && error.response.data && (error.response.data.message || error.response.data.msg || error.response.data.detail) || error && error.data && (error.data.message || error.data.msg || error.data.detail) || error && (error.message || error.msg || error.detail) || fallback;
+      },
+      buildSelfDeliveryMapPayload(order, detailRaw = null) {
+        const raw = detailRaw || {};
+        const customerPair = this.getValidCoordinatePair(
+          raw.customer_lng ?? raw.delivery_longitude ?? raw.longitude ?? order.customerLng,
+          raw.customer_lat ?? raw.delivery_latitude ?? raw.latitude ?? order.customerLat
+        );
+        const merchantPair = this.getValidCoordinatePair(
+          raw.merchant_lng ?? raw.merchantLng ?? order.merchantLng,
+          raw.merchant_lat ?? raw.merchantLat ?? order.merchantLat
+        );
+        const contactPhone = String(raw.contact_phone || order.customerPhone || "").trim();
+        const address = this.formatDeliveryAddress(raw.delivery_address || order.rawDeliveryAddress || order.address || "");
+        return {
+          customerLng: customerPair ? customerPair.lng : null,
+          customerLat: customerPair ? customerPair.lat : null,
+          merchantLng: merchantPair ? merchantPair.lng : null,
+          merchantLat: merchantPair ? merchantPair.lat : null,
+          contactPhone,
+          address
+        };
+      },
+      async openSelfDeliveryMap(order) {
+        try {
+          const detailRes = await getOrderDetail(order.id);
+          const detailRaw = detailRes && detailRes.data !== void 0 ? detailRes.data : detailRes;
+          const payload = this.buildSelfDeliveryMapPayload(order, detailRaw);
+          if (payload.customerLng == null || payload.customerLat == null) {
+            uni.showToast({ title: "订单缺少收货坐标，无法打开地图", icon: "none" });
+            return;
+          }
+          const query = [
+            "orderId=" + encodeURIComponent(String(order.id || "")),
+            "customerLng=" + encodeURIComponent(String(payload.customerLng)),
+            "customerLat=" + encodeURIComponent(String(payload.customerLat)),
+            "merchantLng=" + encodeURIComponent(String(payload.merchantLng == null ? "" : payload.merchantLng)),
+            "merchantLat=" + encodeURIComponent(String(payload.merchantLat == null ? "" : payload.merchantLat)),
+            "address=" + encodeURIComponent(payload.address),
+            "phone=" + encodeURIComponent(payload.contactPhone)
+          ].join("&");
+          uni.navigateTo({ url: "/pages/order/self-delivery-nav?" + query });
+        } catch (e2) {
+          uni.showToast({ title: String(this.extractErrorMessage(e2, "打开地图失败")), icon: "none" });
+        }
+      },
+      async submitDeliver(order) {
+        try {
+          await deliverOrder(order.id);
+          const mode = this.resolveSupermarketDeliveryMode(order);
+          if (mode === "self_delivery") {
+            await this.openSelfDeliveryMap(order);
+          } else {
+            uni.showToast({ title: "已呼叫骑手", icon: "success" });
+          }
+          this.page = 1;
+          await this.loadOrderList();
+          await this.loadStats();
+        } catch (e2) {
+          uni.showToast({ title: String(this.extractErrorMessage(e2, "操作失败")), icon: "none" });
+        }
+      },
+      async selectSupermarketDeliveryMode(order, supermarketDeliveryMode) {
+        try {
+          await request({
+            url: "/order/supermarket/delivery-mode",
+            method: "POST",
+            data: {
+              order_id: order.id,
+              supermarket_delivery_mode: supermarketDeliveryMode
+            }
+          });
+          uni.showToast({ title: "配送方式已更新", icon: "success" });
+          this.page = 1;
+          await this.loadOrderList();
+          await this.loadStats();
+        } catch (e2) {
+          uni.showToast({ title: String(this.extractErrorMessage(e2, "操作失败")), icon: "none" });
+        }
+      },
+      async merchantConfirmDelivery(order) {
+        try {
+          await request({
+            url: "/order/merchant-confirm-delivery",
+            method: "POST",
+            data: {
+              order_id: order.id
+            }
+          });
+          uni.showToast({ title: "确认送达成功", icon: "success" });
+          this.page = 1;
+          await this.loadOrderList();
+          await this.loadStats();
+        } catch (e2) {
+          uni.showToast({ title: String(this.extractErrorMessage(e2, "操作失败")), icon: "none" });
+        }
+      },
+      // 拨打电话
+      callCustomer(phone) {
+        uni.makePhoneCall({ phoneNumber: phone });
+      },
+      // 查看详情
       goDetail(id) {
-        uni.navigateTo({ url: "/pages/food/detail?id=" + id });
+        uni.navigateTo({ url: `/pages/order/detail?id=${id}` });
       }
     }
   };
-  function _sfc_render$E(_ctx, _cache, $props, $setup, $data, $options) {
+  function _sfc_render$h(_ctx, _cache, $props, $setup, $data, $options) {
     return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      vue.createElementVNode("view", { class: "header" }, [
-        vue.createElementVNode("text", { class: "header-title" }, "固始县外卖")
-      ]),
-      vue.createElementVNode("view", { class: "banner" }, [
-        vue.createElementVNode("swiper", {
-          class: "swiper",
-          autoplay: "",
-          circular: "",
-          "indicator-dots": "",
-          "indicator-color": "rgba(255,255,255,0.4)",
-          "indicator-active-color": "#fff"
-        }, [
-          vue.createElementVNode("swiper-item", null, [
-            vue.createElementVNode("view", { class: "banner-card" }, [
-              vue.createElementVNode("view", { class: "banner-content" }, [
-                vue.createElementVNode("text", { class: "banner-title banner-title-lg" }, "固始外卖送到村里")
-              ]),
-              vue.createElementVNode("text", { class: "banner-emoji" }, "🛵")
-            ])
-          ]),
-          vue.createElementVNode("swiper-item", null, [
-            vue.createElementVNode("view", { class: "banner-card banner-card2" }, [
-              vue.createElementVNode("view", { class: "banner-content" }, [
-                vue.createElementVNode("text", { class: "banner-title" }, "足不出户 坐等美食"),
-                vue.createElementVNode("text", { class: "banner-sub" }, "每日精选超值好物")
-              ]),
-              vue.createElementVNode("text", { class: "banner-emoji" }, "🎉")
-            ])
-          ]),
-          vue.createElementVNode("swiper-item", null, [
-            vue.createElementVNode("view", { class: "banner-card banner-card3" }, [
-              vue.createElementVNode("view", { class: "banner-content" }, [
-                vue.createElementVNode("text", { class: "banner-title" }, "招乡镇站长免加盟费"),
-                vue.createElementVNode("text", { class: "banner-sub" }, "每个乡镇仅限一名")
-              ]),
-              vue.createElementVNode("text", { class: "banner-emoji" }, "📋")
-            ])
-          ])
-        ])
-      ]),
-      vue.createElementVNode("view", { class: "service-cards" }, [
-        vue.createElementVNode("view", {
-          class: "service-card service-card-orange",
-          onClick: _cache[0] || (_cache[0] = (...args) => $options.onCountyTakeawayClick && $options.onCountyTakeawayClick(...args))
-        }, [
-          vue.createElementVNode("view", { class: "service-card-content" }, [
-            vue.createElementVNode("text", { class: "service-card-title" }, "县城美食外卖"),
-            vue.createElementVNode("text", { class: "service-card-desc service-card-desc-lg" }, "城里好货,送到乡镇")
-          ]),
-          vue.createElementVNode("text", { class: "service-card-emoji" }, "🛵")
+      vue.createElementVNode("view", { class: "stats-card" }, [
+        vue.createElementVNode("view", { class: "stats-item" }, [
+          vue.createElementVNode(
+            "text",
+            { class: "stats-num" },
+            vue.toDisplayString($data.todayStats.orderCount),
+            1
+            /* TEXT */
+          ),
+          vue.createElementVNode("text", { class: "stats-label" }, "今日订单")
         ]),
-        vue.createElementVNode("view", {
-          class: "service-card service-card-green",
-          onClick: _cache[1] || (_cache[1] = (...args) => $options.onTownTakeawayClick && $options.onTownTakeawayClick(...args))
-        }, [
-          vue.createElementVNode("view", { class: "service-card-content" }, [
-            vue.createElementVNode("text", { class: "service-card-title" }, "镇上外卖"),
-            vue.createElementVNode("text", { class: "service-card-desc" }, "本地好物,极速送达")
-          ]),
-          vue.createElementVNode("text", { class: "service-card-emoji" }, "📦")
+        vue.createElementVNode("view", { class: "stats-item" }, [
+          vue.createElementVNode(
+            "text",
+            { class: "stats-num" },
+            "¥" + vue.toDisplayString($data.todayStats.income),
+            1
+            /* TEXT */
+          ),
+          vue.createElementVNode("text", { class: "stats-label" }, "今日收入")
+        ]),
+        vue.createElementVNode("view", { class: "stats-item" }, [
+          vue.createElementVNode(
+            "text",
+            { class: "stats-num" },
+            vue.toDisplayString($data.todayStats.pendingCount),
+            1
+            /* TEXT */
+          ),
+          vue.createElementVNode("text", { class: "stats-label" }, "待处理")
         ])
       ]),
-      vue.createElementVNode("view", { class: "category" }, [
+      vue.createElementVNode("view", { class: "search-bar" }, [
+        vue.createElementVNode("view", { class: "search-input-wrap" }, [
+          vue.createElementVNode("text", { class: "search-icon" }, "🔍"),
+          vue.withDirectives(vue.createElementVNode(
+            "input",
+            {
+              "onUpdate:modelValue": _cache[0] || (_cache[0] = ($event) => $data.searchKey = $event),
+              placeholder: "搜索订单号/手机号/顾客姓名",
+              onConfirm: _cache[1] || (_cache[1] = (...args) => $options.onSearch && $options.onSearch(...args))
+            },
+            null,
+            544
+            /* NEED_HYDRATION, NEED_PATCH */
+          ), [
+            [vue.vModelText, $data.searchKey]
+          ]),
+          $data.searchKey ? (vue.openBlock(), vue.createElementBlock("text", {
+            key: 0,
+            class: "clear-icon",
+            onClick: _cache[2] || (_cache[2] = (...args) => $options.clearSearch && $options.clearSearch(...args))
+          }, "✕")) : vue.createCommentVNode("v-if", true)
+        ])
+      ]),
+      vue.createElementVNode("view", { class: "date-filter" }, [
         (vue.openBlock(true), vue.createElementBlock(
           vue.Fragment,
           null,
-          vue.renderList($data.categoryList, (item) => {
+          vue.renderList($data.dateFilters, (item) => {
             return vue.openBlock(), vue.createElementBlock("view", {
-              class: "category-item",
-              key: item.id,
-              onClick: ($event) => $options.onCategoryClick(item)
-            }, [
-              vue.createElementVNode(
-                "view",
-                {
-                  class: vue.normalizeClass(["category-icon-wrap", { active: $data.currentCategory === item.name }]),
-                  style: vue.normalizeStyle({ backgroundColor: item.bgColor })
-                },
-                [
-                  vue.createElementVNode(
-                    "text",
-                    { class: "category-emoji" },
-                    vue.toDisplayString(item.emoji),
-                    1
-                    /* TEXT */
-                  )
-                ],
-                6
-                /* CLASS, STYLE */
-              ),
-              vue.createElementVNode(
-                "text",
-                {
-                  class: vue.normalizeClass(["category-name", { activeName: $data.currentCategory === item.name }])
-                },
-                vue.toDisplayString(item.name),
-                3
-                /* TEXT, CLASS */
-              )
-            ], 8, ["onClick"]);
+              key: item.value,
+              class: vue.normalizeClass(["date-item", { active: $data.currentDate === item.value }]),
+              onClick: ($event) => $options.switchDate(item.value)
+            }, vue.toDisplayString(item.label), 11, ["onClick"]);
           }),
           128
           /* KEYED_FRAGMENT */
         ))
       ]),
-      $data.currentCategory ? (vue.openBlock(), vue.createElementBlock("view", {
-        key: 0,
-        class: "goods-section"
+      vue.createElementVNode("view", { class: "hall-tabs" }, [
+        (vue.openBlock(true), vue.createElementBlock(
+          vue.Fragment,
+          null,
+          vue.renderList($data.hallTabs, (tab) => {
+            return vue.openBlock(), vue.createElementBlock("view", {
+              key: tab.key,
+              class: vue.normalizeClass(["hall-tab", { active: $data.hallTab === tab.key }]),
+              onClick: ($event) => $options.switchHallTab(tab.key)
+            }, [
+              vue.createElementVNode(
+                "text",
+                { class: "hall-tab-text" },
+                vue.toDisplayString(tab.label),
+                1
+                /* TEXT */
+              )
+            ], 10, ["onClick"]);
+          }),
+          128
+          /* KEYED_FRAGMENT */
+        ))
+      ]),
+      vue.createElementVNode("scroll-view", {
+        "scroll-y": "",
+        class: "order-scroll",
+        onScrolltolower: _cache[3] || (_cache[3] = (...args) => $options.loadMore && $options.loadMore(...args)),
+        "refresher-enabled": true,
+        "refresher-triggered": $data.refreshing,
+        onRefresherrefresh: _cache[4] || (_cache[4] = (...args) => $options.onRefresh && $options.onRefresh(...args))
       }, [
-        vue.createElementVNode("view", { class: "section-header" }, [
-          vue.createElementVNode(
-            "text",
-            { class: "section-title" },
-            vue.toDisplayString($data.currentCategory),
-            1
-            /* TEXT */
-          ),
-          vue.createElementVNode("text", {
-            class: "clear-filter",
-            onClick: _cache[2] || (_cache[2] = (...args) => $options.clearFilter && $options.clearFilter(...args))
-          }, "查看全部")
-        ]),
-        vue.createElementVNode("view", { class: "goods-list" }, [
+        $data.orderList.length ? (vue.openBlock(), vue.createElementBlock("view", {
+          key: 0,
+          class: "order-list"
+        }, [
           (vue.openBlock(true), vue.createElementBlock(
             vue.Fragment,
             null,
-            vue.renderList($data.goodsList, (item) => {
+            vue.renderList($data.orderList, (order) => {
               return vue.openBlock(), vue.createElementBlock("view", {
-                class: "goods-item",
-                key: item.商品ID,
-                onClick: ($event) => $options.goDetail(item.商品ID)
+                key: order.id,
+                class: vue.normalizeClass(["order-card", { urgent: order.isUrgent }]),
+                onClick: ($event) => $options.goDetail(order.id)
               }, [
-                vue.createElementVNode("view", { class: "goods-img-wrap" }, [
-                  vue.createElementVNode("text", { class: "goods-emoji" }, "🍱")
-                ]),
-                vue.createElementVNode("view", { class: "goods-info" }, [
-                  vue.createElementVNode(
-                    "text",
-                    { class: "goods-name" },
-                    vue.toDisplayString(item.商品名称),
-                    1
-                    /* TEXT */
-                  ),
-                  vue.createElementVNode(
-                    "text",
-                    { class: "goods-desc" },
-                    "月售 " + vue.toDisplayString(item.月销) + " · " + vue.toDisplayString(item.描述),
-                    1
-                    /* TEXT */
-                  ),
-                  vue.createElementVNode("view", { class: "goods-bottom" }, [
+                vue.createElementVNode("view", { class: "order-header" }, [
+                  vue.createElementVNode("view", { class: "header-left" }, [
                     vue.createElementVNode(
                       "text",
-                      { class: "goods-price" },
-                      "¥" + vue.toDisplayString(item.价格),
+                      { class: "order-no" },
+                      vue.toDisplayString(order.orderNo),
                       1
                       /* TEXT */
                     ),
-                    vue.createElementVNode("view", {
-                      class: "add-btn",
-                      onClick: vue.withModifiers(($event) => $options.handleAddToCart(item), ["stop"])
-                    }, [
-                      vue.createElementVNode("text", { class: "add-btn-text" }, "+")
-                    ], 8, ["onClick"])
+                    vue.createElementVNode(
+                      "text",
+                      { class: "order-time" },
+                      vue.toDisplayString(order.createTime),
+                      1
+                      /* TEXT */
+                    )
+                  ]),
+                  vue.createElementVNode(
+                    "view",
+                    {
+                      class: vue.normalizeClass(["status-tag", "status-" + order.status])
+                    },
+                    vue.toDisplayString(order.statusText),
+                    3
+                    /* TEXT, CLASS */
+                  )
+                ]),
+                vue.createElementVNode("view", { class: "customer-info" }, [
+                  vue.createElementVNode("view", { class: "info-row" }, [
+                    vue.createElementVNode("text", { class: "label" }, "顾客："),
+                    vue.createElementVNode(
+                      "text",
+                      { class: "value" },
+                      vue.toDisplayString(order.customerName) + " " + vue.toDisplayString(order.customerPhone),
+                      1
+                      /* TEXT */
+                    ),
+                    vue.createElementVNode("text", {
+                      class: "call-btn",
+                      onClick: vue.withModifiers(($event) => $options.callCustomer(order.customerPhone), ["stop"])
+                    }, "📞", 8, ["onClick"])
+                  ]),
+                  vue.createElementVNode("view", { class: "info-row" }, [
+                    vue.createElementVNode("text", { class: "label" }, "地址："),
+                    vue.createElementVNode(
+                      "text",
+                      { class: "value address" },
+                      vue.toDisplayString(order.address),
+                      1
+                      /* TEXT */
+                    )
                   ])
+                ]),
+                vue.createElementVNode("view", { class: "goods-list" }, [
+                  (vue.openBlock(true), vue.createElementBlock(
+                    vue.Fragment,
+                    null,
+                    vue.renderList(order.goodsList.slice(0, 3), (goods, idx) => {
+                      return vue.openBlock(), vue.createElementBlock("view", {
+                        key: idx,
+                        class: "goods-item"
+                      }, [
+                        goods.image ? (vue.openBlock(), vue.createElementBlock("image", {
+                          key: 0,
+                          src: goods.image,
+                          class: "goods-img",
+                          mode: "aspectFill"
+                        }, null, 8, ["src"])) : (vue.openBlock(), vue.createElementBlock("view", {
+                          key: 1,
+                          class: "goods-img placeholder"
+                        }, "🍱")),
+                        vue.createElementVNode("view", { class: "goods-info" }, [
+                          vue.createElementVNode(
+                            "text",
+                            { class: "goods-name" },
+                            vue.toDisplayString(goods.name),
+                            1
+                            /* TEXT */
+                          ),
+                          goods.spec ? (vue.openBlock(), vue.createElementBlock(
+                            "text",
+                            {
+                              key: 0,
+                              class: "goods-spec"
+                            },
+                            vue.toDisplayString(goods.spec),
+                            1
+                            /* TEXT */
+                          )) : vue.createCommentVNode("v-if", true)
+                        ]),
+                        vue.createElementVNode("view", { class: "goods-price" }, [
+                          vue.createElementVNode(
+                            "text",
+                            { class: "num" },
+                            "x" + vue.toDisplayString(goods.num),
+                            1
+                            /* TEXT */
+                          ),
+                          vue.createElementVNode(
+                            "text",
+                            { class: "price" },
+                            "¥" + vue.toDisplayString(goods.price),
+                            1
+                            /* TEXT */
+                          )
+                        ])
+                      ]);
+                    }),
+                    128
+                    /* KEYED_FRAGMENT */
+                  )),
+                  order.goodsList.length > 3 ? (vue.openBlock(), vue.createElementBlock(
+                    "view",
+                    {
+                      key: 0,
+                      class: "more-goods"
+                    },
+                    " 还有" + vue.toDisplayString(order.goodsList.length - 3) + "件商品... ",
+                    1
+                    /* TEXT */
+                  )) : vue.createCommentVNode("v-if", true)
+                ]),
+                vue.createElementVNode("view", { class: "order-amount" }, [
+                  vue.createElementVNode("text", { class: "amount-label" }, "预计收入"),
+                  vue.createElementVNode(
+                    "text",
+                    { class: "amount-num" },
+                    "¥" + vue.toDisplayString(order.estimatedIncome),
+                    1
+                    /* TEXT */
+                  ),
+                  vue.createElementVNode("text", { class: "amount-detail" }, [
+                    vue.createTextVNode(
+                      " 实付¥" + vue.toDisplayString(order.totalAmount),
+                      1
+                      /* TEXT */
+                    ),
+                    order.deliveryFee != null ? (vue.openBlock(), vue.createElementBlock(
+                      "text",
+                      { key: 0 },
+                      " · 配送¥" + vue.toDisplayString(order.deliveryFee),
+                      1
+                      /* TEXT */
+                    )) : vue.createCommentVNode("v-if", true)
+                  ])
+                ]),
+                order.remark ? (vue.openBlock(), vue.createElementBlock("view", {
+                  key: 0,
+                  class: "order-remark"
+                }, [
+                  vue.createElementVNode("text", { class: "remark-label" }, "买家备注："),
+                  vue.createElementVNode(
+                    "text",
+                    { class: "remark-content" },
+                    vue.toDisplayString(order.remark),
+                    1
+                    /* TEXT */
+                  )
+                ])) : vue.createCommentVNode("v-if", true),
+                vue.createElementVNode("view", { class: "order-actions" }, [
+                  order.status === 1 ? (vue.openBlock(), vue.createElementBlock("button", {
+                    key: 0,
+                    class: "btn btn-primary",
+                    onClick: vue.withModifiers(($event) => $options.handleAccept(order), ["stop"])
+                  }, " 接单 ", 8, ["onClick"])) : vue.createCommentVNode("v-if", true),
+                  order.status === 1 ? (vue.openBlock(), vue.createElementBlock("button", {
+                    key: 1,
+                    class: "btn btn-danger",
+                    onClick: vue.withModifiers(($event) => $options.rejectOrder(order), ["stop"])
+                  }, " 拒单 ", 8, ["onClick"])) : vue.createCommentVNode("v-if", true),
+                  order.status === 2 ? (vue.openBlock(), vue.createElementBlock("button", {
+                    key: 2,
+                    class: "btn btn-primary",
+                    onClick: vue.withModifiers(($event) => $options.finishMake(order), ["stop"])
+                  }, " 出餐完成 ", 8, ["onClick"])) : vue.createCommentVNode("v-if", true),
+                  $options.showRiderDeliveryButton(order) ? (vue.openBlock(), vue.createElementBlock("button", {
+                    key: 3,
+                    class: "btn btn-primary",
+                    onClick: vue.withModifiers(($event) => $options.submitDeliver(order), ["stop"])
+                  }, vue.toDisplayString($options.getDeliverButtonText(order)), 9, ["onClick"])) : vue.createCommentVNode("v-if", true),
+                  $options.showSupermarketHybridModeChoice(order, "self_delivery") ? (vue.openBlock(), vue.createElementBlock("button", {
+                    key: 4,
+                    class: "btn btn-primary",
+                    onClick: vue.withModifiers(($event) => $options.selectSupermarketDeliveryMode(order, "self_delivery"), ["stop"])
+                  }, " 老板自配 ", 8, ["onClick"])) : vue.createCommentVNode("v-if", true),
+                  $options.showSupermarketHybridModeChoice(order, "rider_delivery") ? (vue.openBlock(), vue.createElementBlock("button", {
+                    key: 5,
+                    class: "btn btn-primary",
+                    onClick: vue.withModifiers(($event) => $options.selectSupermarketDeliveryMode(order, "rider_delivery"), ["stop"])
+                  }, " 骑手配送 ", 8, ["onClick"])) : vue.createCommentVNode("v-if", true),
+                  $options.showSupermarketSelfDeliveryStart(order) ? (vue.openBlock(), vue.createElementBlock("button", {
+                    key: 6,
+                    class: "btn btn-primary",
+                    onClick: vue.withModifiers(($event) => $options.submitDeliver(order), ["stop"])
+                  }, " 开始配送 ", 8, ["onClick"])) : vue.createCommentVNode("v-if", true),
+                  $options.showSupermarketMerchantConfirm(order) ? (vue.openBlock(), vue.createElementBlock("button", {
+                    key: 7,
+                    class: "btn btn-primary",
+                    onClick: vue.withModifiers(($event) => $options.merchantConfirmDelivery(order), ["stop"])
+                  }, " 确认送达 ", 8, ["onClick"])) : vue.createCommentVNode("v-if", true),
+                  $options.showSupermarketSelfDeliveryNavigation(order) ? (vue.openBlock(), vue.createElementBlock("button", {
+                    key: 8,
+                    class: "btn btn-default",
+                    onClick: vue.withModifiers(($event) => $options.openSelfDeliveryMap(order), ["stop"])
+                  }, " 配送地图 ", 8, ["onClick"])) : vue.createCommentVNode("v-if", true),
+                  order.status === 3 && !$options.isSupermarketOrder(order) ? (vue.openBlock(), vue.createElementBlock("text", {
+                    key: 9,
+                    class: "status-hint"
+                  }, "待配送")) : vue.createCommentVNode("v-if", true),
+                  order.status === 4 && !$options.isSupermarketOrder(order) ? (vue.openBlock(), vue.createElementBlock("text", {
+                    key: 10,
+                    class: "status-hint"
+                  }, "配送中")) : vue.createCommentVNode("v-if", true),
+                  vue.createElementVNode("button", {
+                    class: "btn btn-default",
+                    onClick: vue.withModifiers(($event) => $options.goDetail(order.id), ["stop"])
+                  }, " 详情 ", 8, ["onClick"])
                 ])
-              ], 8, ["onClick"]);
+              ], 10, ["onClick"]);
+            }),
+            128
+            /* KEYED_FRAGMENT */
+          )),
+          $data.loadingMore ? (vue.openBlock(), vue.createElementBlock("view", {
+            key: 0,
+            class: "load-more"
+          }, [
+            vue.createElementVNode("text", null, "加载中...")
+          ])) : $data.noMore ? (vue.openBlock(), vue.createElementBlock("view", {
+            key: 1,
+            class: "no-more"
+          }, [
+            vue.createElementVNode("text", null, "没有更多订单了")
+          ])) : vue.createCommentVNode("v-if", true)
+        ])) : (vue.openBlock(), vue.createElementBlock("view", {
+          key: 1,
+          class: "empty-state"
+        }, [
+          vue.createElementVNode("text", { class: "empty-icon" }, "📋"),
+          vue.createElementVNode("text", { class: "empty-text" }, "暂无订单"),
+          vue.createElementVNode(
+            "text",
+            { class: "empty-tip" },
+            vue.toDisplayString($options.emptyTip),
+            1
+            /* TEXT */
+          )
+        ]))
+      ], 40, ["refresher-triggered"])
+    ]);
+  }
+  const PagesOrderList = /* @__PURE__ */ _export_sfc(_sfc_main$i, [["render", _sfc_render$h], ["__scopeId", "data-v-456ecf67"], ["__file", "E:/固始县外卖商家端/pages/order/list.vue"]]);
+  const _sfc_main$h = {
+    data() {
+      return {
+        orderId: "",
+        detail: null
+      };
+    },
+    computed: {
+      statusColor() {
+        var _a;
+        return this.detail ? ((_a = ORDER_STATUS[this.detail.status]) == null ? void 0 : _a.color) || "#999" : "#999";
+      },
+      showSelfDeliveryMapButton() {
+        return !!(this.detail && this.isSupermarketSelfDelivery(this.detail) && (this.detail.status === 4 || this.detail.status === 5));
+      }
+    },
+    onLoad(opt) {
+      this.orderId = (opt == null ? void 0 : opt.id) || "";
+      this.loadDetail();
+    },
+    methods: {
+      toCoordinateNumber(value2) {
+        const num = Number(value2);
+        return Number.isFinite(num) ? num : null;
+      },
+      getValidCoordinatePair(longitude, latitude) {
+        const lng = this.toCoordinateNumber(longitude);
+        const lat = this.toCoordinateNumber(latitude);
+        if (lng == null || lat == null)
+          return null;
+        if (lng === 0 && lat === 0)
+          return null;
+        return { lng, lat };
+      },
+      formatDeliveryAddress(rawAddress) {
+        if (!rawAddress)
+          return "";
+        if (typeof rawAddress === "string") {
+          const s2 = String(rawAddress).trim();
+          const looksJson = s2.startsWith("{") && s2.endsWith("}") || s2.startsWith("[") && s2.endsWith("]") || /"lng"|"lat"|"contact_phone"|"contact_name"/.test(s2);
+          try {
+            const parsed = JSON.parse(s2);
+            if (parsed && typeof parsed === "object") {
+              const detail = parsed.detail != null ? String(parsed.detail).trim() : "";
+              const address = parsed.address != null ? String(parsed.address).trim() : "";
+              const town = parsed.town != null ? String(parsed.town).trim() : "";
+              return detail || (town && address ? `${town}${address}` : address || town || "");
+            }
+          } catch (e2) {
+            if (!looksJson)
+              return s2;
+          }
+          return looksJson ? "" : s2;
+        }
+        if (typeof rawAddress === "object") {
+          const detail = rawAddress.detail != null ? String(rawAddress.detail).trim() : "";
+          const address = rawAddress.address != null ? String(rawAddress.address).trim() : "";
+          const town = rawAddress.town != null ? String(rawAddress.town).trim() : "";
+          return detail || (town && address ? `${town}${address}` : address || town || "");
+        }
+        return String(rawAddress);
+      },
+      isSupermarketSelfDelivery(detail) {
+        if (!detail)
+          return false;
+        const isSupermarket = String(detail.category || "").trim() === "超市";
+        return isSupermarket && detail.supermarketDeliveryMode === "self_delivery";
+      },
+      formatDetail(raw) {
+        var _a, _b, _c;
+        let goodsList = [];
+        try {
+          if (raw == null ? void 0 : raw.products_info) {
+            const parsed = typeof raw.products_info === "string" ? JSON.parse(raw.products_info) : raw.products_info;
+            goodsList = (parsed || []).map((g2) => ({
+              name: g2.name || g2.商品名称 || "",
+              num: g2.num || g2.数量 || 1,
+              price: g2.price || g2.价格 || 0
+            }));
+          } else if (Array.isArray(raw == null ? void 0 : raw.goodsList)) {
+            goodsList = raw.goodsList;
+          }
+        } catch (e2) {
+          goodsList = [];
+        }
+        const status = Number((raw == null ? void 0 : raw.status) ?? -1);
+        const customerPair = this.getValidCoordinatePair(
+          (raw == null ? void 0 : raw.customer_lng) ?? (raw == null ? void 0 : raw.delivery_longitude) ?? (raw == null ? void 0 : raw.longitude),
+          (raw == null ? void 0 : raw.customer_lat) ?? (raw == null ? void 0 : raw.delivery_latitude) ?? (raw == null ? void 0 : raw.latitude)
+        );
+        const merchantPair = this.getValidCoordinatePair(raw == null ? void 0 : raw.merchant_lng, raw == null ? void 0 : raw.merchant_lat);
+        return {
+          id: (raw == null ? void 0 : raw.id) || (raw == null ? void 0 : raw.order_id) || this.orderId,
+          status,
+          statusText: ((_a = ORDER_STATUS[status]) == null ? void 0 : _a.text) || "未知",
+          orderNo: (raw == null ? void 0 : raw.order_no) || (raw == null ? void 0 : raw.orderNo) || "",
+          createTime: (raw == null ? void 0 : raw.created_at) || (raw == null ? void 0 : raw.createTime) || "",
+          deliveryTime: (raw == null ? void 0 : raw.delivery_time) || (raw == null ? void 0 : raw.deliveryTime) || "",
+          receiver: (raw == null ? void 0 : raw.contact_name) || (raw == null ? void 0 : raw.receiver) || "",
+          phone: (raw == null ? void 0 : raw.contact_phone) || (raw == null ? void 0 : raw.phone) || "",
+          address: this.formatDeliveryAddress((raw == null ? void 0 : raw.delivery_address) || (raw == null ? void 0 : raw.address) || ""),
+          goodsList,
+          totalAmount: (raw == null ? void 0 : raw.pay_amount) || (raw == null ? void 0 : raw.total_amount) || (raw == null ? void 0 : raw.totalAmount) || 0,
+          category: (raw == null ? void 0 : raw.category) || (raw == null ? void 0 : raw.merchant_category) || (raw == null ? void 0 : raw.shop_category) || ((_b = raw == null ? void 0 : raw.merchant) == null ? void 0 : _b.category) || ((_c = raw == null ? void 0 : raw.shop) == null ? void 0 : _c.category) || "",
+          supermarketDeliveryMode: (raw == null ? void 0 : raw.supermarket_delivery_mode) || "",
+          supermarketDeliveryPermissionSnapshot: (raw == null ? void 0 : raw.supermarket_delivery_permission_snapshot) || "",
+          customerLng: customerPair ? customerPair.lng : null,
+          customerLat: customerPair ? customerPair.lat : null,
+          merchantLng: merchantPair ? merchantPair.lng : null,
+          merchantLat: merchantPair ? merchantPair.lat : null
+        };
+      },
+      async loadDetail() {
+        try {
+          const res = await getOrderDetail(this.orderId);
+          const raw = (res == null ? void 0 : res.data) || res || {};
+          this.detail = this.formatDetail(raw);
+          this.orderId = this.detail.id || this.orderId;
+        } catch (e2) {
+          this.detail = null;
+          uni.showToast({ title: "加载订单详情失败", icon: "none" });
+        }
+      },
+      async acceptOrder() {
+        var _a, _b;
+        try {
+          const realOrderId = Number(((_a = this.detail) == null ? void 0 : _a.id) || ((_b = this.detail) == null ? void 0 : _b.order_id) || this.orderId);
+          if (!realOrderId || isNaN(realOrderId)) {
+            uni.showToast({ title: "订单ID无效", icon: "none" });
+            return;
+          }
+          await acceptOrder$1(realOrderId, {
+            merchant_lng: 115.681123,
+            merchant_lat: 32.181234
+          });
+          uni.showToast({ title: "接单成功" });
+          this.loadDetail();
+        } catch (e2) {
+        }
+      },
+      rejectOrder() {
+        uni.showModal({
+          title: "拒单",
+          content: "确定拒单吗？",
+          success: async (res) => {
+            if (res.confirm) {
+              try {
+                await rejectOrder(this.orderId, { reason: "商品已售罄" });
+                uni.showToast({ title: "已拒单" });
+                uni.navigateBack();
+              } catch (e2) {
+              }
+            }
+          }
+        });
+      },
+      openSelfDeliveryMap() {
+        if (!this.detail)
+          return;
+        if (this.detail.customerLng == null || this.detail.customerLat == null) {
+          uni.showToast({ title: "订单缺少收货坐标，无法打开地图", icon: "none" });
+          return;
+        }
+        const query = [
+          "orderId=" + encodeURIComponent(String(this.detail.id || this.orderId || "")),
+          "customerLng=" + encodeURIComponent(String(this.detail.customerLng)),
+          "customerLat=" + encodeURIComponent(String(this.detail.customerLat)),
+          "merchantLng=" + encodeURIComponent(String(this.detail.merchantLng == null ? "" : this.detail.merchantLng)),
+          "merchantLat=" + encodeURIComponent(String(this.detail.merchantLat == null ? "" : this.detail.merchantLat)),
+          "address=" + encodeURIComponent(String(this.detail.address || "").trim()),
+          "phone=" + encodeURIComponent(String(this.detail.phone || "").trim())
+        ].join("&");
+        uni.navigateTo({ url: "/pages/order/self-delivery-nav?" + query });
+      }
+    }
+  };
+  function _sfc_render$g(_ctx, _cache, $props, $setup, $data, $options) {
+    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
+      $data.detail ? (vue.openBlock(), vue.createElementBlock("view", {
+        key: 0,
+        class: "card"
+      }, [
+        vue.createElementVNode("view", { class: "detail-row" }, [
+          vue.createElementVNode("text", { class: "label" }, "订单状态"),
+          vue.createElementVNode(
+            "text",
+            {
+              class: "value status-tag",
+              style: vue.normalizeStyle({ color: $options.statusColor })
+            },
+            vue.toDisplayString($data.detail.statusText),
+            5
+            /* TEXT, STYLE */
+          )
+        ]),
+        vue.createElementVNode("view", { class: "detail-row" }, [
+          vue.createElementVNode("text", { class: "label" }, "订单号"),
+          vue.createElementVNode(
+            "text",
+            { class: "value" },
+            vue.toDisplayString($data.detail.orderNo),
+            1
+            /* TEXT */
+          )
+        ]),
+        vue.createElementVNode("view", { class: "detail-row" }, [
+          vue.createElementVNode("text", { class: "label" }, "下单时间"),
+          vue.createElementVNode(
+            "text",
+            { class: "value" },
+            vue.toDisplayString($data.detail.createTime),
+            1
+            /* TEXT */
+          )
+        ]),
+        vue.createElementVNode("view", { class: "detail-row" }, [
+          vue.createElementVNode("text", { class: "label" }, "预计送达"),
+          vue.createElementVNode(
+            "text",
+            { class: "value" },
+            vue.toDisplayString($data.detail.deliveryTime),
+            1
+            /* TEXT */
+          )
+        ]),
+        vue.createElementVNode("view", { class: "divider" }),
+        vue.createElementVNode("view", { class: "detail-row" }, [
+          vue.createElementVNode("text", { class: "label" }, "收货人"),
+          vue.createElementVNode(
+            "text",
+            { class: "value" },
+            vue.toDisplayString($data.detail.receiver) + " " + vue.toDisplayString($data.detail.phone),
+            1
+            /* TEXT */
+          )
+        ]),
+        vue.createElementVNode("view", { class: "detail-row" }, [
+          vue.createElementVNode("text", { class: "label" }, "配送地址"),
+          vue.createElementVNode(
+            "text",
+            { class: "value" },
+            vue.toDisplayString($data.detail.address),
+            1
+            /* TEXT */
+          )
+        ]),
+        vue.createElementVNode("view", { class: "divider" }),
+        vue.createElementVNode("view", { class: "goods-section" }, [
+          vue.createElementVNode("view", { class: "section-title" }, "商品明细"),
+          (vue.openBlock(true), vue.createElementBlock(
+            vue.Fragment,
+            null,
+            vue.renderList($data.detail.goodsList, (g2, i2) => {
+              return vue.openBlock(), vue.createElementBlock("view", {
+                key: i2,
+                class: "goods-item flex-between"
+              }, [
+                vue.createElementVNode(
+                  "text",
+                  null,
+                  vue.toDisplayString(g2.name) + " x" + vue.toDisplayString(g2.num),
+                  1
+                  /* TEXT */
+                ),
+                vue.createElementVNode(
+                  "text",
+                  null,
+                  "¥" + vue.toDisplayString(g2.price),
+                  1
+                  /* TEXT */
+                )
+              ]);
             }),
             128
             /* KEYED_FRAGMENT */
           ))
         ]),
-        $data.goodsList.length === 0 ? (vue.openBlock(), vue.createElementBlock("view", {
+        vue.createElementVNode("view", { class: "detail-row" }, [
+          vue.createElementVNode("text", { class: "label" }, "订单金额"),
+          vue.createElementVNode(
+            "text",
+            { class: "value primary-color text-bold" },
+            "¥" + vue.toDisplayString($data.detail.totalAmount),
+            1
+            /* TEXT */
+          )
+        ]),
+        $data.detail.status === 1 ? (vue.openBlock(), vue.createElementBlock("view", {
           key: 0,
-          class: "empty-goods"
+          class: "footer-actions"
         }, [
-          vue.createElementVNode("text", { class: "empty-text" }, "该分类暂无商品")
+          vue.createElementVNode("button", {
+            class: "btn-primary",
+            onClick: _cache[0] || (_cache[0] = (...args) => $options.acceptOrder && $options.acceptOrder(...args))
+          }, "接单"),
+          vue.createElementVNode("button", {
+            class: "btn-outline",
+            onClick: _cache[1] || (_cache[1] = (...args) => $options.rejectOrder && $options.rejectOrder(...args))
+          }, "拒单")
+        ])) : vue.createCommentVNode("v-if", true),
+        $options.showSelfDeliveryMapButton ? (vue.openBlock(), vue.createElementBlock("view", {
+          key: 1,
+          class: "footer-actions"
+        }, [
+          vue.createElementVNode("button", {
+            class: "btn-primary",
+            onClick: _cache[2] || (_cache[2] = (...args) => $options.openSelfDeliveryMap && $options.openSelfDeliveryMap(...args))
+          }, "配送地图")
         ])) : vue.createCommentVNode("v-if", true)
       ])) : vue.createCommentVNode("v-if", true)
     ]);
   }
-  const PagesHomeIndex = /* @__PURE__ */ _export_sfc(_sfc_main$F, [["render", _sfc_render$E], ["__scopeId", "data-v-4978fed5"], ["__file", "E:/固始县外卖商家端/pages/home/index.vue"]]);
-  const _sfc_main$E = {
+  const PagesOrderDetail = /* @__PURE__ */ _export_sfc(_sfc_main$h, [["render", _sfc_render$g], ["__scopeId", "data-v-6b23c96c"], ["__file", "E:/固始县外卖商家端/pages/order/detail.vue"]]);
+  const toCoordinateNumber = (value2) => {
+    const num = Number(value2);
+    return Number.isFinite(num) ? num : null;
+  };
+  const getValidCoordinatePair$5 = (longitude, latitude) => {
+    const lng = toCoordinateNumber(longitude);
+    const lat = toCoordinateNumber(latitude);
+    if (lng == null || lat == null)
+      return null;
+    if (lng === 0 && lat === 0)
+      return null;
+    return { lng, lat };
+  };
+  const _sfc_main$g = {
     data() {
       return {
-        cartList: [],
-        totalPrice: 0,
-        totalCount: 0
+        webViewSrc: "",
+        webViewDebugPath: "",
+        customerLng: null,
+        customerLat: null,
+        merchantLng: null,
+        merchantLat: null,
+        addressText: "",
+        phone: "",
+        tk: ""
       };
     },
-    onShow() {
-      this.loadCart();
-    },
-    async onPullDownRefresh() {
-      try {
-        await this.loadCart();
-      } catch (e2) {
-        formatAppLog("error", "at pages/cart/index.vue:63", e2);
-      } finally {
-        uni.stopPullDownRefresh();
+    computed: {
+      isH5() {
+        try {
+          return typeof window !== "undefined" && typeof document !== "undefined";
+        } catch (e2) {
+          return false;
+        }
       }
     },
+    async onLoad(options) {
+      const customerPair = getValidCoordinatePair$5(options.customerLng, options.customerLat);
+      const merchantPair = getValidCoordinatePair$5(options.merchantLng, options.merchantLat);
+      this.customerLng = customerPair ? customerPair.lng : null;
+      this.customerLat = customerPair ? customerPair.lat : null;
+      this.merchantLng = merchantPair ? merchantPair.lng : null;
+      this.merchantLat = merchantPair ? merchantPair.lat : null;
+      this.addressText = String(options.address || "").trim();
+      this.phone = String(options.phone || "").trim();
+      this.tk = uni.getStorageSync("tianditu_tk") || TIANDITU_TK || "";
+      if (this.customerLng == null || this.customerLat == null) {
+        uni.showToast({ title: "订单缺少收货坐标，无法打开地图", icon: "none" });
+        return;
+      }
+      if (!this.tk) {
+        uni.showToast({ title: "缺少天地图TK", icon: "none" });
+        return;
+      }
+      await this.reloadRoute();
+    },
     methods: {
-      async loadCart() {
-        if (!isLoggedIn()) {
-          this.cartList = [];
-          uni.removeTabBarBadge({ index: 1 });
-          return;
-        }
+      async resolveStartPosition() {
         try {
-          const res = await getCartList();
-          this.cartList = res.购物车 || [];
-          this.totalPrice = res.总价 || 0;
-          this.totalCount = res.总数量 || 0;
-          if (this.totalCount > 0) {
-            uni.setTabBarBadge({ index: 1, text: String(this.totalCount) });
-          } else {
-            uni.removeTabBarBadge({ index: 1 });
+          const location2 = await new Promise((resolve, reject) => {
+            uni.getLocation({
+              type: "wgs84",
+              isHighAccuracy: true,
+              highAccuracyExpireTime: 3e3,
+              success: resolve,
+              fail: reject
+            });
+          });
+          const currentPair = getValidCoordinatePair$5(location2 && location2.longitude, location2 && location2.latitude);
+          if (currentPair) {
+            return currentPair;
           }
         } catch (e2) {
         }
+        const merchantPair = getValidCoordinatePair$5(this.merchantLng, this.merchantLat);
+        if (merchantPair) {
+          return merchantPair;
+        }
+        return null;
       },
-      async changeQty(item, delta) {
-        if (item.数量 + delta <= 0) {
-          try {
-            await removeFromCart(item.商品ID);
-            this.loadCart();
-          } catch (e2) {
-          }
+      async reloadRoute() {
+        const start = await this.resolveStartPosition();
+        if (!start) {
+          uni.showToast({ title: "无法获取商家定位，无法规划路线", icon: "none" });
           return;
         }
-        if (delta > 0) {
-          try {
-            await addToCart(item.商品ID, 1);
-            this.loadCart();
-          } catch (e2) {
-          }
-        } else {
-          try {
-            await removeFromCart(item.商品ID);
-            this.loadCart();
-          } catch (e2) {
-          }
-        }
+        const htmlPath = this.isH5 ? "/static/merchant_delivery_map.html" : "/hybrid/html/merchant_delivery_map.html";
+        const query = [
+          "stage=delivery",
+          "mapVersion=NEW-MAP-V1",
+          `tk=${encodeURIComponent(this.tk)}`,
+          `startLng=${encodeURIComponent(String(start.lng))}`,
+          `startLat=${encodeURIComponent(String(start.lat))}`,
+          `destLng=${encodeURIComponent(String(this.customerLng))}`,
+          `destLat=${encodeURIComponent(String(this.customerLat))}`,
+          `t=${Date.now()}`
+        ].join("&");
+        this.webViewSrc = `${htmlPath}?${query}`;
+        this.webViewDebugPath = this.webViewSrc;
+        formatAppLog("log", "at pages/order/self-delivery-nav.vue:121", "[merchant-map-src]", this.webViewSrc);
       },
-      goCheckout() {
-        if (this.cartList.length === 0)
+      callCustomer() {
+        if (!this.phone) {
+          uni.showToast({ title: "顾客电话缺失", icon: "none" });
           return;
-        uni.navigateTo({ url: "/pages/cart/checkout" });
+        }
+        uni.makePhoneCall({ phoneNumber: this.phone });
       }
     }
   };
-  function _sfc_render$D(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      $data.cartList.length > 0 ? (vue.openBlock(), vue.createElementBlock("view", { key: 0 }, [
-        (vue.openBlock(true), vue.createElementBlock(
-          vue.Fragment,
-          null,
-          vue.renderList($data.cartList, (item, index) => {
-            return vue.openBlock(), vue.createElementBlock("view", {
-              class: "cart-item",
-              key: index
-            }, [
-              vue.createElementVNode("view", { class: "item-left" }, [
-                vue.createElementVNode("text", { class: "item-emoji" }, "🍱")
-              ]),
-              vue.createElementVNode("view", { class: "item-center" }, [
-                vue.createElementVNode(
-                  "text",
-                  { class: "item-name" },
-                  vue.toDisplayString(item.商品名称),
-                  1
-                  /* TEXT */
-                ),
-                vue.createElementVNode(
-                  "text",
-                  { class: "item-price" },
-                  "¥" + vue.toDisplayString(item.价格),
-                  1
-                  /* TEXT */
-                )
-              ]),
-              vue.createElementVNode("view", { class: "item-right" }, [
-                vue.createElementVNode("view", {
-                  class: "qty-btn",
-                  onClick: ($event) => $options.changeQty(item, -1)
-                }, [
-                  vue.createElementVNode("text", { class: "qty-btn-text" }, "-")
-                ], 8, ["onClick"]),
-                vue.createElementVNode(
-                  "text",
-                  { class: "qty-num" },
-                  vue.toDisplayString(item.数量),
-                  1
-                  /* TEXT */
-                ),
-                vue.createElementVNode("view", {
-                  class: "qty-btn",
-                  onClick: ($event) => $options.changeQty(item, 1)
-                }, [
-                  vue.createElementVNode("text", { class: "qty-btn-text" }, "+")
-                ], 8, ["onClick"])
-              ])
-            ]);
-          }),
-          128
-          /* KEYED_FRAGMENT */
-        )),
-        vue.createElementVNode("view", { class: "checkout-bar" }, [
-          vue.createElementVNode("view", { class: "checkout-left" }, [
-            vue.createElementVNode("text", { class: "total-label" }, "合计："),
-            vue.createElementVNode(
-              "text",
-              { class: "total-price" },
-              "¥" + vue.toDisplayString($data.totalPrice),
-              1
-              /* TEXT */
-            )
-          ]),
-          vue.createElementVNode("view", {
-            class: "checkout-btn",
-            onClick: _cache[0] || (_cache[0] = (...args) => $options.goCheckout && $options.goCheckout(...args))
-          }, [
-            vue.createElementVNode(
-              "text",
-              { class: "checkout-btn-text" },
-              "去结算(" + vue.toDisplayString($data.totalCount) + ")",
-              1
-              /* TEXT */
-            )
-          ])
-        ]),
-        vue.createElementVNode("view", { style: { "height": "130rpx" } })
-      ])) : (vue.openBlock(), vue.createElementBlock("view", {
+  function _sfc_render$f(_ctx, _cache, $props, $setup, $data, $options) {
+    return vue.openBlock(), vue.createElementBlock("view", { class: "page" }, [
+      $options.isH5 && $data.webViewSrc ? (vue.openBlock(), vue.createElementBlock("iframe", {
+        key: 0,
+        src: $data.webViewSrc,
+        class: "map-frame"
+      }, null, 8, ["src"])) : $data.webViewSrc ? (vue.openBlock(), vue.createElementBlock("web-view", {
         key: 1,
-        class: "empty"
+        src: $data.webViewSrc,
+        class: "map-webview"
+      }, null, 8, ["src"])) : (vue.openBlock(), vue.createElementBlock("view", {
+        key: 2,
+        class: "loading-box"
       }, [
-        vue.createElementVNode("text", { class: "empty-icon" }, "🛒"),
-        vue.createElementVNode("text", { class: "empty-text" }, "购物车空空如也"),
-        vue.createElementVNode("text", { class: "empty-tip" }, "快去首页挑选美食吧~")
-      ]))
+        vue.createElementVNode("text", { class: "loading-text" }, "正在加载天地图路线...")
+      ])),
+      vue.createElementVNode("view", { class: "info-bar" }, [
+        vue.createElementVNode("view", { class: "info-main" }, [
+          vue.createElementVNode("text", { class: "info-title" }, "老板自配送导航"),
+          vue.createElementVNode(
+            "text",
+            { class: "info-address" },
+            vue.toDisplayString($data.addressText),
+            1
+            /* TEXT */
+          )
+        ]),
+        vue.createElementVNode("button", {
+          class: "info-btn",
+          onClick: _cache[0] || (_cache[0] = (...args) => $options.reloadRoute && $options.reloadRoute(...args))
+        }, "重新定位"),
+        $data.phone ? (vue.openBlock(), vue.createElementBlock("button", {
+          key: 0,
+          class: "info-btn info-btn-call",
+          onClick: _cache[1] || (_cache[1] = (...args) => $options.callCustomer && $options.callCustomer(...args))
+        }, "联系顾客")) : vue.createCommentVNode("v-if", true)
+      ])
     ]);
   }
-  const PagesCartIndex = /* @__PURE__ */ _export_sfc(_sfc_main$E, [["render", _sfc_render$D], ["__scopeId", "data-v-8039fbf1"], ["__file", "E:/固始县外卖商家端/pages/cart/index.vue"]]);
-  function createOrder(data) {
-    return request({ url: "/order/create", method: "POST", data });
+  const PagesOrderSelfDeliveryNav = /* @__PURE__ */ _export_sfc(_sfc_main$g, [["render", _sfc_render$f], ["__scopeId", "data-v-f454f9b5"], ["__file", "E:/固始县外卖商家端/pages/order/self-delivery-nav.vue"]]);
+  const _sfc_main$f = {
+    data() {
+      return {
+        userInfo: null
+      };
+    },
+    onLoad() {
+      this.userInfo = uni.getStorageSync("userInfo") || null;
+    },
+    computed: {
+      userName() {
+        var _a;
+        return ((_a = this.userInfo) == null ? void 0 : _a.name) || "商家用户";
+      },
+      phone() {
+        var _a;
+        return ((_a = this.userInfo) == null ? void 0 : _a.phone) || "未绑定手机";
+      }
+    },
+    methods: {
+      logout() {
+        uni.showModal({
+          title: "提示",
+          content: "确定退出登录吗？",
+          success: (res) => {
+            if (res.confirm) {
+              offAllListeners();
+              disconnectSocket();
+              clearAuth();
+              this.userInfo = null;
+              uni.showToast({ title: "已退出", icon: "none" });
+              setTimeout(() => {
+                uni.reLaunch({ url: "/pages/login/index" });
+              }, 500);
+            }
+          }
+        });
+      }
+    }
+  };
+  function _sfc_render$e(_ctx, _cache, $props, $setup, $data, $options) {
+    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
+      vue.createElementVNode("view", { class: "card user-card" }, [
+        vue.createElementVNode(
+          "view",
+          { class: "user-avatar" },
+          vue.toDisplayString(($options.userName || "商").charAt(0)),
+          1
+          /* TEXT */
+        ),
+        vue.createElementVNode("view", { class: "user-info" }, [
+          vue.createElementVNode(
+            "text",
+            { class: "user-name" },
+            vue.toDisplayString($options.userName || "商家用户"),
+            1
+            /* TEXT */
+          ),
+          vue.createElementVNode(
+            "text",
+            { class: "user-phone text-gray" },
+            vue.toDisplayString($options.phone || "未绑定手机"),
+            1
+            /* TEXT */
+          )
+        ])
+      ]),
+      vue.createElementVNode("view", { class: "card" }, [
+        vue.createElementVNode("button", {
+          class: "logout-btn",
+          onClick: _cache[0] || (_cache[0] = (...args) => $options.logout && $options.logout(...args))
+        }, "退出登录")
+      ])
+    ]);
   }
-  function payOrder(orderId, payMethod) {
-    return request({ url: "/order/pay", method: "POST", data: { order_id: orderId, pay_method: payMethod } });
+  const PagesMineIndex = /* @__PURE__ */ _export_sfc(_sfc_main$f, [["render", _sfc_render$e], ["__scopeId", "data-v-569e925a"], ["__file", "E:/固始县外卖商家端/pages/mine/index.vue"]]);
+  function getTownServiceAreas() {
+    return request({
+      url: "/common/service-areas",
+      method: "GET",
+      data: {
+        area_type: "town"
+      }
+    });
   }
-  function getOrderList(params = {}) {
-    return request({ url: "/order/my", method: "GET", data: params });
+  function getMerchantPrimaryCategories() {
+    return request({
+      url: "/common/merchant-primary-categories",
+      method: "GET"
+    });
   }
-  function acceptOrder(orderId, data = {}) {
-    return request({ url: "/order/accept", method: "POST", data: { order_id: orderId, ...data } });
+  function normalizeCoordinateValue$4(value2) {
+    if (value2 == null)
+      return null;
+    const raw = typeof value2 === "string" ? value2.trim() : value2;
+    if (raw === "")
+      return null;
+    const num = Number(raw);
+    return Number.isFinite(num) ? num : null;
   }
-  function deliverOrder(orderId) {
-    return request({ url: "/order/deliver", method: "POST", data: { order_id: orderId } });
+  function getValidCoordinatePair$4(latitude, longitude) {
+    const lat = normalizeCoordinateValue$4(latitude);
+    const lng = normalizeCoordinateValue$4(longitude);
+    if (lat == null || lng == null)
+      return null;
+    if (lat === 0 && lng === 0)
+      return null;
+    return {
+      latitude: lat,
+      longitude: lng
+    };
   }
-  function cancelOrder(orderId) {
-    return request({ url: "/order/cancel", method: "POST", data: { order_id: orderId } });
+  function registerMerchant(data) {
+    const coordinatePair = getValidCoordinatePair$4(data.latitude, data.longitude);
+    if (!coordinatePair) {
+      throw new Error("地图坐标无效，请重新选点后再提交");
+    }
+    const body = {
+      phone: data.phone,
+      password: data.password,
+      store_name: data.store_name,
+      address: data.address,
+      latitude: coordinatePair.latitude,
+      longitude: coordinatePair.longitude,
+      category: data.category,
+      business_scope: data.business_scope,
+      business_license: data.business_license
+    };
+    if (data.category === "超市" && data.supermarket_delivery_permission) {
+      body.supermarket_delivery_permission = data.supermarket_delivery_permission;
+    }
+    if (data.category === "超市" && data.channel_tags) {
+      body.channel_tags = data.channel_tags;
+    }
+    if (data.business_scope === "town_food" && data.town_code) {
+      body.town_code = data.town_code;
+    }
+    formatAppLog("log", "at api/user.js:55", "[merchant-register][request-body]", body);
+    return request({
+      url: "/auth/register/merchant",
+      method: "POST",
+      data: body
+    });
   }
-  function confirmOrder(orderId) {
-    return request({ url: "/order/confirm", method: "POST", data: { order_id: orderId } });
+  function login(data) {
+    return request({
+      url: "/auth/login",
+      method: "POST",
+      data: {
+        phone: data.phone,
+        password: data.password
+      }
+    });
   }
   var isVue2 = false;
   function set(target, key, val) {
@@ -6328,1341 +8048,6 @@ This will fail in production.`);
       }
     }
   });
-  const _sfc_main$D = {
-    data() {
-      return {
-        orderList: [],
-        _newOrderHandler: null
-      };
-    },
-    computed: {
-      isLogin() {
-        return useUserStore().isLoggedIn;
-      },
-      userRole() {
-        return useUserStore().role;
-      }
-    },
-    onLoad() {
-      const token = getToken();
-      const userInfo = getUser();
-      const userId = (userInfo == null ? void 0 : userInfo.id) || (userInfo == null ? void 0 : userInfo.userId) || "";
-      if (token && !getSocket()) {
-        initSocket(token, userId);
-      }
-      this._newOrderHandler = (data) => {
-        formatAppLog("log", "at pages/order/index.vue:88", "收到新订单推送：", data);
-        if (this.isLogin) {
-          this.loadOrders();
-        }
-      };
-      onNewOrder(this._newOrderHandler);
-    },
-    onUnload() {
-      if (this._newOrderHandler) {
-        offNewOrder(this._newOrderHandler);
-        this._newOrderHandler = null;
-      }
-    },
-    onShow() {
-      if (this.isLogin) {
-        this.loadOrders();
-      }
-    },
-    async onPullDownRefresh() {
-      try {
-        if (this.isLogin) {
-          await this.loadOrders();
-        }
-      } catch (e2) {
-        formatAppLog("error", "at pages/order/index.vue:112", e2);
-      } finally {
-        uni.stopPullDownRefresh();
-      }
-    },
-    methods: {
-      async loadOrders() {
-        var _a, _b;
-        try {
-          const res = await getOrderList();
-          this.orderList = ((_a = res == null ? void 0 : res.data) == null ? void 0 : _a.订单列表) || ((_b = res == null ? void 0 : res.data) == null ? void 0 : _b.data) || (res == null ? void 0 : res.订单列表) || (res == null ? void 0 : res.data) || [];
-        } catch (e2) {
-        }
-      },
-      statusClass(status) {
-        return ORDER_STATUS_CLASS[status] || "";
-      },
-      goPay(order) {
-        uni.navigateTo({
-          url: "/pages/pay/index?orderId=" + order.订单ID + "&totalPrice=" + order.总价
-        });
-      },
-      handleCancel(orderId) {
-        uni.showModal({
-          title: "取消订单",
-          content: "确定要取消这个订单吗？",
-          success: async (res) => {
-            if (res.confirm) {
-              try {
-                await cancelOrder(orderId);
-                uni.showToast({ title: "订单已取消", icon: "success" });
-                this.loadOrders();
-              } catch (e2) {
-              }
-            }
-          }
-        });
-      },
-      async handleConfirm(orderId) {
-        try {
-          await confirmOrder(orderId);
-          uni.showToast({ title: "已确认收货", icon: "success" });
-          this.loadOrders();
-        } catch (e2) {
-        }
-      },
-      async handleAccept(orderId) {
-        try {
-          await acceptOrder(orderId, {
-            merchant_lng: 115.681123,
-            merchant_lat: 32.181234
-          });
-          uni.showToast({ title: "已接单", icon: "success" });
-          this.loadOrders();
-        } catch (e2) {
-        }
-      },
-      async handleDeliver(orderId) {
-        try {
-          await deliverOrder(orderId);
-          uni.showToast({ title: "开始配送", icon: "success" });
-          this.loadOrders();
-        } catch (e2) {
-        }
-      },
-      goLogin() {
-        uni.navigateTo({ url: "/pages/login/index" });
-      },
-      goDetail(orderId) {
-        uni.navigateTo({ url: "/pages/order/detail?orderId=" + orderId });
-      }
-    }
-  };
-  function _sfc_render$C(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      !$options.isLogin ? (vue.openBlock(), vue.createElementBlock("view", {
-        key: 0,
-        class: "empty"
-      }, [
-        vue.createElementVNode("text", { class: "empty-icon" }, "🔐"),
-        vue.createElementVNode("text", { class: "empty-text" }, "请先登录查看订单"),
-        vue.createElementVNode("view", {
-          class: "login-btn",
-          onClick: _cache[0] || (_cache[0] = (...args) => $options.goLogin && $options.goLogin(...args))
-        }, [
-          vue.createElementVNode("text", { class: "login-btn-text" }, "去登录")
-        ])
-      ])) : $data.orderList.length > 0 ? (vue.openBlock(), vue.createElementBlock("view", { key: 1 }, [
-        (vue.openBlock(true), vue.createElementBlock(
-          vue.Fragment,
-          null,
-          vue.renderList($data.orderList, (order) => {
-            return vue.openBlock(), vue.createElementBlock("view", {
-              class: "order-card",
-              key: order.订单ID,
-              onClick: ($event) => $options.goDetail(order.订单ID)
-            }, [
-              vue.createElementVNode("view", { class: "order-header" }, [
-                vue.createElementVNode(
-                  "text",
-                  { class: "order-id" },
-                  "订单号：" + vue.toDisplayString(order.订单ID),
-                  1
-                  /* TEXT */
-                ),
-                vue.createElementVNode(
-                  "text",
-                  {
-                    class: vue.normalizeClass(["order-status", $options.statusClass(order.状态)])
-                  },
-                  vue.toDisplayString(order.状态),
-                  3
-                  /* TEXT, CLASS */
-                )
-              ]),
-              vue.createElementVNode("view", { class: "order-foods" }, [
-                (vue.openBlock(true), vue.createElementBlock(
-                  vue.Fragment,
-                  null,
-                  vue.renderList(order.商品列表, (food, i2) => {
-                    return vue.openBlock(), vue.createElementBlock("view", {
-                      class: "food-row",
-                      key: i2
-                    }, [
-                      vue.createElementVNode(
-                        "text",
-                        { class: "food-name" },
-                        vue.toDisplayString(food.商品名称) + " x" + vue.toDisplayString(food.数量),
-                        1
-                        /* TEXT */
-                      ),
-                      vue.createElementVNode(
-                        "text",
-                        { class: "food-price" },
-                        "¥" + vue.toDisplayString((food.价格 * food.数量).toFixed(2)),
-                        1
-                        /* TEXT */
-                      )
-                    ]);
-                  }),
-                  128
-                  /* KEYED_FRAGMENT */
-                ))
-              ]),
-              vue.createElementVNode("view", { class: "order-footer" }, [
-                vue.createElementVNode(
-                  "text",
-                  { class: "order-time" },
-                  vue.toDisplayString(order.创建时间),
-                  1
-                  /* TEXT */
-                ),
-                vue.createElementVNode("view", { class: "order-footer-right" }, [
-                  vue.createElementVNode(
-                    "text",
-                    { class: "order-total" },
-                    "合计：¥" + vue.toDisplayString(order.总价),
-                    1
-                    /* TEXT */
-                  ),
-                  order.状态 === "待付款" && $options.userRole === "user" ? (vue.openBlock(), vue.createElementBlock("view", {
-                    key: 0,
-                    class: "action-btn pay-action",
-                    onClick: vue.withModifiers(($event) => $options.goPay(order), ["stop"])
-                  }, [
-                    vue.createElementVNode("text", { class: "action-btn-text" }, "去支付")
-                  ], 8, ["onClick"])) : vue.createCommentVNode("v-if", true),
-                  (order.状态 === "待付款" || order.状态 === "待接单") && $options.userRole === "user" ? (vue.openBlock(), vue.createElementBlock("view", {
-                    key: 1,
-                    class: "action-btn cancel-action",
-                    onClick: vue.withModifiers(($event) => $options.handleCancel(order.订单ID), ["stop"])
-                  }, [
-                    vue.createElementVNode("text", { class: "action-btn-text" }, "取消订单")
-                  ], 8, ["onClick"])) : vue.createCommentVNode("v-if", true),
-                  order.状态 === "配送中" && $options.userRole === "user" ? (vue.openBlock(), vue.createElementBlock("view", {
-                    key: 2,
-                    class: "action-btn",
-                    onClick: vue.withModifiers(($event) => $options.handleConfirm(order.订单ID), ["stop"])
-                  }, [
-                    vue.createElementVNode("text", { class: "action-btn-text" }, "确认收货")
-                  ], 8, ["onClick"])) : vue.createCommentVNode("v-if", true),
-                  order.状态 === "待接单" && $options.userRole === "shop" ? (vue.openBlock(), vue.createElementBlock("view", {
-                    key: 3,
-                    class: "action-btn",
-                    onClick: vue.withModifiers(($event) => $options.handleAccept(order.订单ID), ["stop"])
-                  }, [
-                    vue.createElementVNode("text", { class: "action-btn-text" }, "接单")
-                  ], 8, ["onClick"])) : vue.createCommentVNode("v-if", true),
-                  order.状态 === "备餐中" && $options.userRole === "rider" ? (vue.openBlock(), vue.createElementBlock("view", {
-                    key: 4,
-                    class: "action-btn",
-                    onClick: vue.withModifiers(($event) => $options.handleDeliver(order.订单ID), ["stop"])
-                  }, [
-                    vue.createElementVNode("text", { class: "action-btn-text" }, "去配送")
-                  ], 8, ["onClick"])) : vue.createCommentVNode("v-if", true)
-                ])
-              ])
-            ], 8, ["onClick"]);
-          }),
-          128
-          /* KEYED_FRAGMENT */
-        ))
-      ])) : (vue.openBlock(), vue.createElementBlock("view", {
-        key: 2,
-        class: "empty"
-      }, [
-        vue.createElementVNode("text", { class: "empty-icon" }, "📋"),
-        vue.createElementVNode("text", { class: "empty-text" }, "暂无订单"),
-        vue.createElementVNode("text", { class: "empty-tip" }, "快去首页下单吧~")
-      ]))
-    ]);
-  }
-  const PagesOrderIndex = /* @__PURE__ */ _export_sfc(_sfc_main$D, [["render", _sfc_render$C], ["__scopeId", "data-v-17a44f9d"], ["__file", "E:/固始县外卖商家端/pages/order/index.vue"]]);
-  function formatMoney(num) {
-    if (num === void 0 || num === null)
-      return "0.00";
-    return Number(num).toFixed(2);
-  }
-  function formatTime(timestamp, format = "YYYY-MM-DD HH:mm") {
-    if (!timestamp)
-      return "";
-    const date = new Date(timestamp * 1e3);
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    const hour = String(date.getHours()).padStart(2, "0");
-    const minute = String(date.getMinutes()).padStart(2, "0");
-    const second = String(date.getSeconds()).padStart(2, "0");
-    return format.replace("YYYY", year).replace("MM", month).replace("DD", day).replace("HH", hour).replace("mm", minute).replace("ss", second);
-  }
-  const ORDER_STATUS = {
-    1: { text: "待接单", color: "#FF6B35" },
-    2: { text: "备餐中", color: "#1890ff" },
-    3: { text: "待配送", color: "#faad14" },
-    4: { text: "配送中", color: "#1890ff" },
-    5: { text: "已完成", color: "#52c41a" },
-    6: { text: "已取消", color: "#999" }
-  };
-  const _sfc_main$C = {
-    data() {
-      return {
-        // 统计数据
-        todayStats: {
-          orderCount: 0,
-          income: "0.00",
-          pendingCount: 0
-        },
-        // 搜索
-        searchKey: "",
-        // 日期筛选
-        currentDate: "today",
-        dateFilters: [
-          { label: "今日", value: "today" },
-          { label: "昨日", value: "yesterday" },
-          { label: "近7天", value: "week" },
-          { label: "近30天", value: "month" }
-        ],
-        // 订单大厅：新订单(1) / 制作中(2) / 待配送(3与4)
-        hallTab: "1",
-        hallTabs: [
-          { key: "1", label: "新订单(1)" },
-          { key: "2", label: "制作中(2)" },
-          { key: "34", label: "待配送(3/4)" }
-        ],
-        // 订单列表（已适配后端字段）
-        orderList: [],
-        page: 1,
-        pageSize: 10,
-        refreshing: false,
-        loadingMore: false,
-        noMore: false,
-        _newOrderHandler: null
-      };
-    },
-    computed: {
-      emptyTip() {
-        if (this.searchKey) {
-          return "未找到匹配的订单";
-        }
-        return "当前阶段暂无订单";
-      }
-    },
-    onLoad() {
-      this.loadStats();
-      this.loadOrderList();
-      const token = getToken();
-      const userInfo = getUser();
-      const userId = (userInfo == null ? void 0 : userInfo.id) || (userInfo == null ? void 0 : userInfo.userId) || "";
-      if (token && !getSocket()) {
-        initSocket(token, userId);
-      }
-      this._newOrderHandler = () => {
-        this.page = 1;
-        this.loadOrderList();
-        this.loadStats();
-      };
-      onNewOrder(this._newOrderHandler);
-    },
-    onUnload() {
-      if (this._newOrderHandler) {
-        offNewOrder(this._newOrderHandler);
-        this._newOrderHandler = null;
-      }
-    },
-    onShow() {
-      this.loadStats();
-      this.loadOrderList();
-    },
-    async onPullDownRefresh() {
-      try {
-        this.page = 1;
-        this.refreshing = true;
-        await Promise.all([this.loadOrderList(), this.loadStats()]);
-      } catch (e2) {
-        formatAppLog("error", "at pages/order/list.vue:307", e2);
-      } finally {
-        this.refreshing = false;
-        uni.stopPullDownRefresh();
-      }
-    },
-    methods: {
-      // 加载统计数据
-      async loadStats() {
-        try {
-          const res = await getDashboard();
-          const data = (res == null ? void 0 : res.data) || res || {};
-          this.todayStats = {
-            orderCount: Number(data.todayOrders || data.orderCount || 0),
-            income: Number(data.todayRevenue || data.income || 0).toFixed(2),
-            pendingCount: Number(data.pendingOrders || data.pendingCount || 0)
-          };
-        } catch (e2) {
-          this.todayStats = {
-            orderCount: 0,
-            income: "0.00",
-            pendingCount: 0
-          };
-        }
-      },
-      // 搜索
-      onSearch() {
-        this.page = 1;
-        this.loadOrderList();
-      },
-      clearSearch() {
-        this.searchKey = "";
-        this.page = 1;
-        this.loadOrderList();
-      },
-      // 切换日期
-      switchDate(date) {
-        this.currentDate = date;
-        this.page = 1;
-        this.loadOrderList();
-      },
-      switchHallTab(key) {
-        this.hallTab = key;
-        this.page = 1;
-        this.loadOrderList();
-      },
-      extractListPayload(res) {
-        var _a, _b;
-        return ((_a = res == null ? void 0 : res.data) == null ? void 0 : _a.订单列表) || ((_b = res == null ? void 0 : res.data) == null ? void 0 : _b.data) || (res == null ? void 0 : res.订单列表) || (res == null ? void 0 : res.data) || [];
-      },
-      mapOrderRow(o2) {
-        var _a, _b, _c;
-        let goodsList = [];
-        try {
-          let raw = o2.products_info ?? o2.items;
-          if (typeof raw === "string") {
-            raw = JSON.parse(raw);
-          }
-          const arr = Array.isArray(raw) ? raw : raw ? [raw] : [];
-          goodsList = arr.map((g2) => ({
-            name: g2.name || g2.商品名称 || g2.title || "",
-            num: g2.num || g2.数量 || g2.count || 1,
-            price: g2.price || g2.价格 || g2.amount || 0,
-            spec: g2.spec || g2.规格 || "",
-            image: g2.image || g2.img || ""
-          }));
-        } catch (e2) {
-          goodsList = [];
-        }
-        const createdAt = o2.createdAt || o2.created_at;
-        const customerName = ((_a = o2.user) == null ? void 0 : _a.nickname) || o2.contact_name || "顾客";
-        const customerPhone = o2.contact_phone || ((_b = o2.user) == null ? void 0 : _b.phone) || "";
-        const rawAddress = o2.delivery_address;
-        const address = typeof rawAddress === "string" ? rawAddress : rawAddress ? JSON.stringify(rawAddress) : "";
-        const pay = Number(o2.pay_amount);
-        const fee = Number(o2.delivery_fee);
-        let est = pay;
-        if (Number.isFinite(pay) && Number.isFinite(fee)) {
-          est = pay - fee;
-        } else if (Number.isFinite(pay)) {
-          est = pay;
-        } else {
-          est = 0;
-        }
-        return {
-          id: o2.id,
-          orderNo: o2.order_no || o2.orderNo,
-          status: o2.status,
-          statusText: ((_c = ORDER_STATUS[o2.status]) == null ? void 0 : _c.text) || "未知状态",
-          createTime: createdAt ? formatTime(new Date(createdAt).getTime() / 1e3, "HH:mm") : "",
-          customerName,
-          customerPhone,
-          address,
-          goodsList,
-          goodsAmount: o2.total_amount,
-          deliveryFee: o2.delivery_fee,
-          totalAmount: o2.pay_amount,
-          estimatedIncome: Number.isFinite(est) ? Number(est).toFixed(2) : "0.00",
-          remark: o2.remark || o2.buyer_remark || "",
-          orderType: o2.order_type || o2.orderType || "",
-          isUrgent: false
-        };
-      },
-      async loadOrderList() {
-        try {
-          const params = {
-            page: this.page,
-            page_size: this.pageSize
-          };
-          if (this.searchKey) {
-            params.keyword = this.searchKey;
-          }
-          if (this.currentDate) {
-            params.date_range = this.currentDate;
-          }
-          let list = [];
-          if (this.hallTab === "34") {
-            const [r3, r4] = await Promise.all([
-              getOrderList$1({ ...params, status: 3 }),
-              getOrderList$1({ ...params, status: 4 })
-            ]);
-            const a2 = this.extractListPayload(r3);
-            const b2 = this.extractListPayload(r4);
-            const byId = /* @__PURE__ */ new Map();
-            [...a2, ...b2].forEach((row) => {
-              if (row && row.id != null && !byId.has(row.id)) {
-                byId.set(row.id, row);
-              }
-            });
-            list = Array.from(byId.values());
-            list.sort((x2, y2) => {
-              const tx = new Date(x2.createdAt || x2.created_at || 0).getTime();
-              const ty = new Date(y2.createdAt || y2.created_at || 0).getTime();
-              return ty - tx;
-            });
-          } else {
-            params.status = Number(this.hallTab);
-            const res = await getOrderList$1(params);
-            list = this.extractListPayload(res);
-          }
-          const mapped = list.map((o2) => this.mapOrderRow(o2));
-          this.orderList = this.page > 1 ? [...this.orderList, ...mapped] : mapped;
-          await this.loadStats();
-          this.noMore = mapped.length < this.pageSize;
-        } catch (e2) {
-          formatAppLog("error", "at pages/order/list.vue:469", "加载订单列表失败", e2);
-        }
-      },
-      // 下拉刷新
-      async onRefresh() {
-        this.refreshing = true;
-        this.page = 1;
-        await this.loadOrderList();
-        this.refreshing = false;
-      },
-      // 加载更多
-      loadMore() {
-        if (this.loadingMore || this.noMore)
-          return;
-        this.loadingMore = true;
-        this.page++;
-        this.loadOrderList().then(() => {
-          this.loadingMore = false;
-        });
-      },
-      async handleAccept(order) {
-        try {
-          await acceptOrder$1(order.id, {
-            merchant_lng: 115.681123,
-            merchant_lat: 32.181234
-          });
-          uni.showToast({ title: "接单成功", icon: "success" });
-          this.page = 1;
-          await this.loadOrderList();
-          await this.loadStats();
-        } catch (e2) {
-          uni.showToast({ title: "接单失败", icon: "none" });
-        }
-      },
-      // 拒单（状态：1 待接单）
-      rejectOrder(order) {
-        uni.showModal({
-          title: "拒单确认",
-          content: "确定要拒绝此订单吗？",
-          confirmText: "确定拒单",
-          confirmColor: "#ff4d4f",
-          success: (res) => {
-            if (res.confirm) {
-              this.doReject(order);
-            }
-          }
-        });
-      },
-      async doReject(order) {
-        try {
-          await rejectOrder(order.id, { reason: "商品已售罄" });
-          uni.showToast({ title: "已拒单", icon: "success" });
-          this.loadOrderList();
-        } catch (e2) {
-          uni.showToast({ title: "操作失败", icon: "none" });
-        }
-      },
-      // 出餐完成：POST /api/order/prepare，状态 2 -> 3
-      async finishMake(order) {
-        try {
-          await prepareOrder(order.id);
-          uni.showToast({ title: "出餐完成", icon: "success" });
-          this.page = 1;
-          await this.loadOrderList();
-          await this.loadStats();
-        } catch (e2) {
-          uni.showToast({ title: "操作失败", icon: "none" });
-        }
-      },
-      // 县城订单：POST /api/order/deliver（状态 3 或 4）
-      async submitDeliver(order) {
-        try {
-          await deliverOrder$1(order.id);
-          uni.showToast({ title: "已提交", icon: "success" });
-          this.page = 1;
-          await this.loadOrderList();
-          await this.loadStats();
-        } catch (e2) {
-          uni.showToast({ title: "操作失败", icon: "none" });
-        }
-      },
-      // 打印订单
-      printOrder(order) {
-        uni.showToast({ title: "打印指令已发送", icon: "none" });
-      },
-      // 拨打电话
-      callCustomer(phone) {
-        uni.makePhoneCall({ phoneNumber: phone });
-      },
-      // 查看详情
-      goDetail(id) {
-        uni.navigateTo({ url: `/pages/order/detail?id=${id}` });
-      }
-    }
-  };
-  function _sfc_render$B(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      vue.createElementVNode("view", { class: "stats-card" }, [
-        vue.createElementVNode("view", { class: "stats-item" }, [
-          vue.createElementVNode(
-            "text",
-            { class: "stats-num" },
-            vue.toDisplayString($data.todayStats.orderCount),
-            1
-            /* TEXT */
-          ),
-          vue.createElementVNode("text", { class: "stats-label" }, "今日订单")
-        ]),
-        vue.createElementVNode("view", { class: "stats-item" }, [
-          vue.createElementVNode(
-            "text",
-            { class: "stats-num" },
-            "¥" + vue.toDisplayString($data.todayStats.income),
-            1
-            /* TEXT */
-          ),
-          vue.createElementVNode("text", { class: "stats-label" }, "今日收入")
-        ]),
-        vue.createElementVNode("view", { class: "stats-item" }, [
-          vue.createElementVNode(
-            "text",
-            { class: "stats-num" },
-            vue.toDisplayString($data.todayStats.pendingCount),
-            1
-            /* TEXT */
-          ),
-          vue.createElementVNode("text", { class: "stats-label" }, "待处理")
-        ])
-      ]),
-      vue.createElementVNode("view", { class: "search-bar" }, [
-        vue.createElementVNode("view", { class: "search-input-wrap" }, [
-          vue.createElementVNode("text", { class: "search-icon" }, "🔍"),
-          vue.withDirectives(vue.createElementVNode(
-            "input",
-            {
-              "onUpdate:modelValue": _cache[0] || (_cache[0] = ($event) => $data.searchKey = $event),
-              placeholder: "搜索订单号/手机号/顾客姓名",
-              onConfirm: _cache[1] || (_cache[1] = (...args) => $options.onSearch && $options.onSearch(...args))
-            },
-            null,
-            544
-            /* NEED_HYDRATION, NEED_PATCH */
-          ), [
-            [vue.vModelText, $data.searchKey]
-          ]),
-          $data.searchKey ? (vue.openBlock(), vue.createElementBlock("text", {
-            key: 0,
-            class: "clear-icon",
-            onClick: _cache[2] || (_cache[2] = (...args) => $options.clearSearch && $options.clearSearch(...args))
-          }, "✕")) : vue.createCommentVNode("v-if", true)
-        ])
-      ]),
-      vue.createElementVNode("view", { class: "date-filter" }, [
-        (vue.openBlock(true), vue.createElementBlock(
-          vue.Fragment,
-          null,
-          vue.renderList($data.dateFilters, (item) => {
-            return vue.openBlock(), vue.createElementBlock("view", {
-              key: item.value,
-              class: vue.normalizeClass(["date-item", { active: $data.currentDate === item.value }]),
-              onClick: ($event) => $options.switchDate(item.value)
-            }, vue.toDisplayString(item.label), 11, ["onClick"]);
-          }),
-          128
-          /* KEYED_FRAGMENT */
-        ))
-      ]),
-      vue.createElementVNode("view", { class: "hall-tabs" }, [
-        (vue.openBlock(true), vue.createElementBlock(
-          vue.Fragment,
-          null,
-          vue.renderList($data.hallTabs, (tab) => {
-            return vue.openBlock(), vue.createElementBlock("view", {
-              key: tab.key,
-              class: vue.normalizeClass(["hall-tab", { active: $data.hallTab === tab.key }]),
-              onClick: ($event) => $options.switchHallTab(tab.key)
-            }, [
-              vue.createElementVNode(
-                "text",
-                { class: "hall-tab-text" },
-                vue.toDisplayString(tab.label),
-                1
-                /* TEXT */
-              )
-            ], 10, ["onClick"]);
-          }),
-          128
-          /* KEYED_FRAGMENT */
-        ))
-      ]),
-      vue.createElementVNode("scroll-view", {
-        "scroll-y": "",
-        class: "order-scroll",
-        onScrolltolower: _cache[3] || (_cache[3] = (...args) => $options.loadMore && $options.loadMore(...args)),
-        "refresher-enabled": true,
-        "refresher-triggered": $data.refreshing,
-        onRefresherrefresh: _cache[4] || (_cache[4] = (...args) => $options.onRefresh && $options.onRefresh(...args))
-      }, [
-        $data.orderList.length ? (vue.openBlock(), vue.createElementBlock("view", {
-          key: 0,
-          class: "order-list"
-        }, [
-          (vue.openBlock(true), vue.createElementBlock(
-            vue.Fragment,
-            null,
-            vue.renderList($data.orderList, (order) => {
-              return vue.openBlock(), vue.createElementBlock("view", {
-                key: order.id,
-                class: vue.normalizeClass(["order-card", { urgent: order.isUrgent }]),
-                onClick: ($event) => $options.goDetail(order.id)
-              }, [
-                vue.createElementVNode("view", { class: "order-header" }, [
-                  vue.createElementVNode("view", { class: "header-left" }, [
-                    vue.createElementVNode(
-                      "text",
-                      { class: "order-no" },
-                      vue.toDisplayString(order.orderNo),
-                      1
-                      /* TEXT */
-                    ),
-                    vue.createElementVNode(
-                      "text",
-                      { class: "order-time" },
-                      vue.toDisplayString(order.createTime),
-                      1
-                      /* TEXT */
-                    )
-                  ]),
-                  vue.createElementVNode(
-                    "view",
-                    {
-                      class: vue.normalizeClass(["status-tag", "status-" + order.status])
-                    },
-                    vue.toDisplayString(order.statusText),
-                    3
-                    /* TEXT, CLASS */
-                  )
-                ]),
-                vue.createElementVNode("view", { class: "customer-info" }, [
-                  vue.createElementVNode("view", { class: "info-row" }, [
-                    vue.createElementVNode("text", { class: "label" }, "顾客："),
-                    vue.createElementVNode(
-                      "text",
-                      { class: "value" },
-                      vue.toDisplayString(order.customerName) + " " + vue.toDisplayString(order.customerPhone),
-                      1
-                      /* TEXT */
-                    ),
-                    vue.createElementVNode("text", {
-                      class: "call-btn",
-                      onClick: vue.withModifiers(($event) => $options.callCustomer(order.customerPhone), ["stop"])
-                    }, "📞", 8, ["onClick"])
-                  ]),
-                  vue.createElementVNode("view", { class: "info-row" }, [
-                    vue.createElementVNode("text", { class: "label" }, "地址："),
-                    vue.createElementVNode(
-                      "text",
-                      { class: "value address" },
-                      vue.toDisplayString(order.address),
-                      1
-                      /* TEXT */
-                    )
-                  ])
-                ]),
-                vue.createElementVNode("view", { class: "goods-list" }, [
-                  (vue.openBlock(true), vue.createElementBlock(
-                    vue.Fragment,
-                    null,
-                    vue.renderList(order.goodsList.slice(0, 3), (goods, idx) => {
-                      return vue.openBlock(), vue.createElementBlock("view", {
-                        key: idx,
-                        class: "goods-item"
-                      }, [
-                        goods.image ? (vue.openBlock(), vue.createElementBlock("image", {
-                          key: 0,
-                          src: goods.image,
-                          class: "goods-img",
-                          mode: "aspectFill"
-                        }, null, 8, ["src"])) : (vue.openBlock(), vue.createElementBlock("view", {
-                          key: 1,
-                          class: "goods-img placeholder"
-                        }, "🍱")),
-                        vue.createElementVNode("view", { class: "goods-info" }, [
-                          vue.createElementVNode(
-                            "text",
-                            { class: "goods-name" },
-                            vue.toDisplayString(goods.name),
-                            1
-                            /* TEXT */
-                          ),
-                          goods.spec ? (vue.openBlock(), vue.createElementBlock(
-                            "text",
-                            {
-                              key: 0,
-                              class: "goods-spec"
-                            },
-                            vue.toDisplayString(goods.spec),
-                            1
-                            /* TEXT */
-                          )) : vue.createCommentVNode("v-if", true)
-                        ]),
-                        vue.createElementVNode("view", { class: "goods-price" }, [
-                          vue.createElementVNode(
-                            "text",
-                            { class: "num" },
-                            "x" + vue.toDisplayString(goods.num),
-                            1
-                            /* TEXT */
-                          ),
-                          vue.createElementVNode(
-                            "text",
-                            { class: "price" },
-                            "¥" + vue.toDisplayString(goods.price),
-                            1
-                            /* TEXT */
-                          )
-                        ])
-                      ]);
-                    }),
-                    128
-                    /* KEYED_FRAGMENT */
-                  )),
-                  order.goodsList.length > 3 ? (vue.openBlock(), vue.createElementBlock(
-                    "view",
-                    {
-                      key: 0,
-                      class: "more-goods"
-                    },
-                    " 还有" + vue.toDisplayString(order.goodsList.length - 3) + "件商品... ",
-                    1
-                    /* TEXT */
-                  )) : vue.createCommentVNode("v-if", true)
-                ]),
-                vue.createElementVNode("view", { class: "order-amount" }, [
-                  vue.createElementVNode("text", { class: "amount-label" }, "预计收入"),
-                  vue.createElementVNode(
-                    "text",
-                    { class: "amount-num" },
-                    "¥" + vue.toDisplayString(order.estimatedIncome),
-                    1
-                    /* TEXT */
-                  ),
-                  vue.createElementVNode("text", { class: "amount-detail" }, [
-                    vue.createTextVNode(
-                      " 实付¥" + vue.toDisplayString(order.totalAmount),
-                      1
-                      /* TEXT */
-                    ),
-                    order.deliveryFee != null ? (vue.openBlock(), vue.createElementBlock(
-                      "text",
-                      { key: 0 },
-                      " · 配送¥" + vue.toDisplayString(order.deliveryFee),
-                      1
-                      /* TEXT */
-                    )) : vue.createCommentVNode("v-if", true)
-                  ])
-                ]),
-                order.remark ? (vue.openBlock(), vue.createElementBlock("view", {
-                  key: 0,
-                  class: "order-remark"
-                }, [
-                  vue.createElementVNode("text", { class: "remark-label" }, "买家备注："),
-                  vue.createElementVNode(
-                    "text",
-                    { class: "remark-content" },
-                    vue.toDisplayString(order.remark),
-                    1
-                    /* TEXT */
-                  )
-                ])) : vue.createCommentVNode("v-if", true),
-                vue.createElementVNode("view", { class: "order-actions" }, [
-                  order.status === 1 ? (vue.openBlock(), vue.createElementBlock("button", {
-                    key: 0,
-                    class: "btn btn-primary",
-                    onClick: vue.withModifiers(($event) => $options.handleAccept(order), ["stop"])
-                  }, " 接单 ", 8, ["onClick"])) : vue.createCommentVNode("v-if", true),
-                  order.status === 1 ? (vue.openBlock(), vue.createElementBlock("button", {
-                    key: 1,
-                    class: "btn btn-danger",
-                    onClick: vue.withModifiers(($event) => $options.rejectOrder(order), ["stop"])
-                  }, " 拒单 ", 8, ["onClick"])) : vue.createCommentVNode("v-if", true),
-                  order.status === 2 ? (vue.openBlock(), vue.createElementBlock("button", {
-                    key: 2,
-                    class: "btn btn-primary",
-                    onClick: vue.withModifiers(($event) => $options.finishMake(order), ["stop"])
-                  }, " 出餐完成 ", 8, ["onClick"])) : vue.createCommentVNode("v-if", true),
-                  (order.status === 3 || order.status === 4) && order.orderType === "county" ? (vue.openBlock(), vue.createElementBlock("button", {
-                    key: 3,
-                    class: "btn btn-primary",
-                    onClick: vue.withModifiers(($event) => $options.submitDeliver(order), ["stop"])
-                  }, vue.toDisplayString(order.status === 3 ? "呼叫骑手" : "提交调度"), 9, ["onClick"])) : vue.createCommentVNode("v-if", true),
-                  order.status === 3 && order.orderType !== "county" ? (vue.openBlock(), vue.createElementBlock("text", {
-                    key: 4,
-                    class: "status-hint"
-                  }, "待配送")) : vue.createCommentVNode("v-if", true),
-                  order.status === 4 && order.orderType !== "county" ? (vue.openBlock(), vue.createElementBlock("text", {
-                    key: 5,
-                    class: "status-hint"
-                  }, "配送中")) : vue.createCommentVNode("v-if", true),
-                  vue.createElementVNode("button", {
-                    class: "btn btn-default",
-                    onClick: vue.withModifiers(($event) => $options.printOrder(order), ["stop"])
-                  }, " 打印 ", 8, ["onClick"]),
-                  vue.createElementVNode("button", {
-                    class: "btn btn-default",
-                    onClick: vue.withModifiers(($event) => $options.goDetail(order.id), ["stop"])
-                  }, " 详情 ", 8, ["onClick"])
-                ])
-              ], 10, ["onClick"]);
-            }),
-            128
-            /* KEYED_FRAGMENT */
-          )),
-          $data.loadingMore ? (vue.openBlock(), vue.createElementBlock("view", {
-            key: 0,
-            class: "load-more"
-          }, [
-            vue.createElementVNode("text", null, "加载中...")
-          ])) : $data.noMore ? (vue.openBlock(), vue.createElementBlock("view", {
-            key: 1,
-            class: "no-more"
-          }, [
-            vue.createElementVNode("text", null, "没有更多订单了")
-          ])) : vue.createCommentVNode("v-if", true)
-        ])) : (vue.openBlock(), vue.createElementBlock("view", {
-          key: 1,
-          class: "empty-state"
-        }, [
-          vue.createElementVNode("text", { class: "empty-icon" }, "📋"),
-          vue.createElementVNode("text", { class: "empty-text" }, "暂无订单"),
-          vue.createElementVNode(
-            "text",
-            { class: "empty-tip" },
-            vue.toDisplayString($options.emptyTip),
-            1
-            /* TEXT */
-          )
-        ]))
-      ], 40, ["refresher-triggered"])
-    ]);
-  }
-  const PagesOrderList = /* @__PURE__ */ _export_sfc(_sfc_main$C, [["render", _sfc_render$B], ["__scopeId", "data-v-456ecf67"], ["__file", "E:/固始县外卖商家端/pages/order/list.vue"]]);
-  const _sfc_main$B = {
-    data() {
-      return {
-        orderId: "",
-        detail: null
-      };
-    },
-    computed: {
-      statusColor() {
-        var _a;
-        return this.detail ? ((_a = ORDER_STATUS[this.detail.status]) == null ? void 0 : _a.color) || "#999" : "#999";
-      }
-    },
-    onLoad(opt) {
-      this.orderId = (opt == null ? void 0 : opt.id) || "";
-      this.loadDetail();
-    },
-    methods: {
-      formatDetail(raw) {
-        var _a;
-        let goodsList = [];
-        try {
-          if (raw == null ? void 0 : raw.products_info) {
-            const parsed = typeof raw.products_info === "string" ? JSON.parse(raw.products_info) : raw.products_info;
-            goodsList = (parsed || []).map((g2) => ({
-              name: g2.name || g2.商品名称 || "",
-              num: g2.num || g2.数量 || 1,
-              price: g2.price || g2.价格 || 0
-            }));
-          } else if (Array.isArray(raw == null ? void 0 : raw.goodsList)) {
-            goodsList = raw.goodsList;
-          }
-        } catch (e2) {
-          goodsList = [];
-        }
-        const status = Number((raw == null ? void 0 : raw.status) ?? -1);
-        return {
-          id: (raw == null ? void 0 : raw.id) || (raw == null ? void 0 : raw.order_id) || this.orderId,
-          status,
-          statusText: ((_a = ORDER_STATUS[status]) == null ? void 0 : _a.text) || "未知",
-          orderNo: (raw == null ? void 0 : raw.order_no) || (raw == null ? void 0 : raw.orderNo) || "",
-          createTime: (raw == null ? void 0 : raw.created_at) || (raw == null ? void 0 : raw.createTime) || "",
-          deliveryTime: (raw == null ? void 0 : raw.delivery_time) || (raw == null ? void 0 : raw.deliveryTime) || "",
-          receiver: (raw == null ? void 0 : raw.contact_name) || (raw == null ? void 0 : raw.receiver) || "",
-          phone: (raw == null ? void 0 : raw.contact_phone) || (raw == null ? void 0 : raw.phone) || "",
-          address: (raw == null ? void 0 : raw.delivery_address) || (raw == null ? void 0 : raw.address) || "",
-          goodsList,
-          totalAmount: (raw == null ? void 0 : raw.pay_amount) || (raw == null ? void 0 : raw.total_amount) || (raw == null ? void 0 : raw.totalAmount) || 0
-        };
-      },
-      async loadDetail() {
-        try {
-          const res = await getOrderDetail(this.orderId);
-          const raw = (res == null ? void 0 : res.data) || res || {};
-          this.detail = this.formatDetail(raw);
-          this.orderId = this.detail.id || this.orderId;
-        } catch (e2) {
-          this.detail = null;
-          uni.showToast({ title: "加载订单详情失败", icon: "none" });
-        }
-      },
-      async acceptOrder() {
-        var _a, _b;
-        try {
-          const realOrderId = Number(((_a = this.detail) == null ? void 0 : _a.id) || ((_b = this.detail) == null ? void 0 : _b.order_id) || this.orderId);
-          if (!realOrderId || isNaN(realOrderId)) {
-            uni.showToast({ title: "订单ID无效", icon: "none" });
-            return;
-          }
-          await acceptOrder$1(realOrderId, {
-            merchant_lng: 115.681123,
-            merchant_lat: 32.181234
-          });
-          uni.showToast({ title: "接单成功" });
-          this.loadDetail();
-        } catch (e2) {
-        }
-      },
-      rejectOrder() {
-        uni.showModal({
-          title: "拒单",
-          content: "确定拒单吗？",
-          success: async (res) => {
-            if (res.confirm) {
-              try {
-                await rejectOrder(this.orderId, { reason: "商品已售罄" });
-                uni.showToast({ title: "已拒单" });
-                uni.navigateBack();
-              } catch (e2) {
-              }
-            }
-          }
-        });
-      }
-    }
-  };
-  function _sfc_render$A(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      $data.detail ? (vue.openBlock(), vue.createElementBlock("view", {
-        key: 0,
-        class: "card"
-      }, [
-        vue.createElementVNode("view", { class: "detail-row" }, [
-          vue.createElementVNode("text", { class: "label" }, "订单状态"),
-          vue.createElementVNode(
-            "text",
-            {
-              class: "value status-tag",
-              style: vue.normalizeStyle({ color: $options.statusColor })
-            },
-            vue.toDisplayString($data.detail.statusText),
-            5
-            /* TEXT, STYLE */
-          )
-        ]),
-        vue.createElementVNode("view", { class: "detail-row" }, [
-          vue.createElementVNode("text", { class: "label" }, "订单号"),
-          vue.createElementVNode(
-            "text",
-            { class: "value" },
-            vue.toDisplayString($data.detail.orderNo),
-            1
-            /* TEXT */
-          )
-        ]),
-        vue.createElementVNode("view", { class: "detail-row" }, [
-          vue.createElementVNode("text", { class: "label" }, "下单时间"),
-          vue.createElementVNode(
-            "text",
-            { class: "value" },
-            vue.toDisplayString($data.detail.createTime),
-            1
-            /* TEXT */
-          )
-        ]),
-        vue.createElementVNode("view", { class: "detail-row" }, [
-          vue.createElementVNode("text", { class: "label" }, "预计送达"),
-          vue.createElementVNode(
-            "text",
-            { class: "value" },
-            vue.toDisplayString($data.detail.deliveryTime),
-            1
-            /* TEXT */
-          )
-        ]),
-        vue.createElementVNode("view", { class: "divider" }),
-        vue.createElementVNode("view", { class: "detail-row" }, [
-          vue.createElementVNode("text", { class: "label" }, "收货人"),
-          vue.createElementVNode(
-            "text",
-            { class: "value" },
-            vue.toDisplayString($data.detail.receiver) + " " + vue.toDisplayString($data.detail.phone),
-            1
-            /* TEXT */
-          )
-        ]),
-        vue.createElementVNode("view", { class: "detail-row" }, [
-          vue.createElementVNode("text", { class: "label" }, "配送地址"),
-          vue.createElementVNode(
-            "text",
-            { class: "value" },
-            vue.toDisplayString($data.detail.address),
-            1
-            /* TEXT */
-          )
-        ]),
-        vue.createElementVNode("view", { class: "divider" }),
-        vue.createElementVNode("view", { class: "goods-section" }, [
-          vue.createElementVNode("view", { class: "section-title" }, "商品明细"),
-          (vue.openBlock(true), vue.createElementBlock(
-            vue.Fragment,
-            null,
-            vue.renderList($data.detail.goodsList, (g2, i2) => {
-              return vue.openBlock(), vue.createElementBlock("view", {
-                key: i2,
-                class: "goods-item flex-between"
-              }, [
-                vue.createElementVNode(
-                  "text",
-                  null,
-                  vue.toDisplayString(g2.name) + " x" + vue.toDisplayString(g2.num),
-                  1
-                  /* TEXT */
-                ),
-                vue.createElementVNode(
-                  "text",
-                  null,
-                  "¥" + vue.toDisplayString(g2.price),
-                  1
-                  /* TEXT */
-                )
-              ]);
-            }),
-            128
-            /* KEYED_FRAGMENT */
-          ))
-        ]),
-        vue.createElementVNode("view", { class: "detail-row" }, [
-          vue.createElementVNode("text", { class: "label" }, "订单金额"),
-          vue.createElementVNode(
-            "text",
-            { class: "value primary-color text-bold" },
-            "¥" + vue.toDisplayString($data.detail.totalAmount),
-            1
-            /* TEXT */
-          )
-        ]),
-        $data.detail.status === 0 ? (vue.openBlock(), vue.createElementBlock("view", {
-          key: 0,
-          class: "footer-actions"
-        }, [
-          vue.createElementVNode("button", {
-            class: "btn-primary",
-            onClick: _cache[0] || (_cache[0] = (...args) => $options.acceptOrder && $options.acceptOrder(...args))
-          }, "接单"),
-          vue.createElementVNode("button", {
-            class: "btn-outline",
-            onClick: _cache[1] || (_cache[1] = (...args) => $options.rejectOrder && $options.rejectOrder(...args))
-          }, "拒单")
-        ])) : vue.createCommentVNode("v-if", true)
-      ])) : vue.createCommentVNode("v-if", true)
-    ]);
-  }
-  const PagesOrderDetail = /* @__PURE__ */ _export_sfc(_sfc_main$B, [["render", _sfc_render$A], ["__scopeId", "data-v-6b23c96c"], ["__file", "E:/固始县外卖商家端/pages/order/detail.vue"]]);
-  const _sfc_main$A = {
-    data() {
-      return {
-        userInfo: null
-      };
-    },
-    onLoad() {
-      this.userInfo = uni.getStorageSync("userInfo") || null;
-    },
-    computed: {
-      userName() {
-        var _a;
-        return ((_a = this.userInfo) == null ? void 0 : _a.name) || "商家用户";
-      },
-      phone() {
-        var _a;
-        return ((_a = this.userInfo) == null ? void 0 : _a.phone) || "未绑定手机";
-      }
-    },
-    methods: {
-      goShop() {
-        uni.navigateTo({ url: "/pages/shop/index" });
-      },
-      goProducts() {
-        uni.navigateTo({ url: "/pages/product/list" });
-      },
-      goFinance() {
-        uni.navigateTo({ url: "/pages/finance/index" });
-      },
-      goStats() {
-        uni.navigateTo({ url: "/pages/stats/index" });
-      },
-      goReview() {
-        uni.navigateTo({ url: "/pages/review/list" });
-      },
-      logout() {
-        uni.showModal({
-          title: "提示",
-          content: "确定退出登录吗？",
-          success: (res) => {
-            if (res.confirm) {
-              disconnectSocket();
-              uni.removeStorageSync("token");
-              uni.removeStorageSync("userInfo");
-              this.userInfo = null;
-              uni.showToast({ title: "已退出", icon: "none" });
-              setTimeout(() => {
-                uni.reLaunch({ url: "/pages/login/index" });
-              }, 500);
-            }
-          }
-        });
-      }
-    }
-  };
-  function _sfc_render$z(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      vue.createElementVNode("view", { class: "card user-card" }, [
-        vue.createElementVNode(
-          "view",
-          { class: "user-avatar" },
-          vue.toDisplayString(($options.userName || "商").charAt(0)),
-          1
-          /* TEXT */
-        ),
-        vue.createElementVNode("view", { class: "user-info" }, [
-          vue.createElementVNode(
-            "text",
-            { class: "user-name" },
-            vue.toDisplayString($options.userName || "商家用户"),
-            1
-            /* TEXT */
-          ),
-          vue.createElementVNode(
-            "text",
-            { class: "user-phone text-gray" },
-            vue.toDisplayString($options.phone || "未绑定手机"),
-            1
-            /* TEXT */
-          )
-        ])
-      ]),
-      vue.createElementVNode("view", { class: "card menu-list" }, [
-        vue.createElementVNode("view", {
-          class: "menu-item",
-          onClick: _cache[0] || (_cache[0] = (...args) => $options.goShop && $options.goShop(...args))
-        }, [
-          vue.createElementVNode("text", null, "🏪 店铺管理"),
-          vue.createElementVNode("text", { class: "arrow" }, "›")
-        ]),
-        vue.createElementVNode("view", {
-          class: "menu-item",
-          onClick: _cache[1] || (_cache[1] = (...args) => $options.goProducts && $options.goProducts(...args))
-        }, [
-          vue.createElementVNode("text", null, "🍱 商品管理"),
-          vue.createElementVNode("text", { class: "arrow" }, "›")
-        ]),
-        vue.createElementVNode("view", {
-          class: "menu-item",
-          onClick: _cache[2] || (_cache[2] = (...args) => $options.goFinance && $options.goFinance(...args))
-        }, [
-          vue.createElementVNode("text", null, "💰 财务管理"),
-          vue.createElementVNode("text", { class: "arrow" }, "›")
-        ]),
-        vue.createElementVNode("view", {
-          class: "menu-item",
-          onClick: _cache[3] || (_cache[3] = (...args) => $options.goStats && $options.goStats(...args))
-        }, [
-          vue.createElementVNode("text", null, "📊 数据统计"),
-          vue.createElementVNode("text", { class: "arrow" }, "›")
-        ]),
-        vue.createElementVNode("view", {
-          class: "menu-item",
-          onClick: _cache[4] || (_cache[4] = (...args) => $options.goReview && $options.goReview(...args))
-        }, [
-          vue.createElementVNode("text", null, "⭐ 顾客评价"),
-          vue.createElementVNode("text", { class: "arrow" }, "›")
-        ])
-      ]),
-      vue.createElementVNode("view", { class: "card" }, [
-        vue.createElementVNode("button", {
-          class: "logout-btn",
-          onClick: _cache[5] || (_cache[5] = (...args) => $options.logout && $options.logout(...args))
-        }, "退出登录")
-      ])
-    ]);
-  }
-  const PagesMineIndex = /* @__PURE__ */ _export_sfc(_sfc_main$A, [["render", _sfc_render$z], ["__scopeId", "data-v-569e925a"], ["__file", "E:/固始县外卖商家端/pages/mine/index.vue"]]);
-  function register(data) {
-    return request({
-      url: "/auth/register",
-      method: "POST",
-      data: {
-        phone: data.phone,
-        password: data.password,
-        nickname: data.nickname,
-        role: "merchant"
-      }
-    });
-  }
-  function login(data) {
-    return request({
-      url: "/auth/login",
-      method: "POST",
-      data: {
-        phone: data.phone,
-        password: data.password
-      }
-    });
-  }
-  function getUserInfo() {
-    return request({ url: "/auth/me", method: "GET" });
-  }
-  function updateUserInfo(data) {
-    return request({
-      url: "/auth/profile",
-      method: "PUT",
-      data: {
-        nickname: data.nickname,
-        avatar: data.avatar
-      }
-    });
-  }
   function isValidPhone(phone) {
     return /^1[3-9]\d{9}$/.test(phone);
   }
@@ -7672,17 +8057,343 @@ This will fail in production.`);
   function isNotEmpty(str) {
     return typeof str === "string" && str.trim().length > 0;
   }
-  const _sfc_main$z = {
+  const normalizeCoordinateValue$3 = (value2) => {
+    if (value2 == null)
+      return null;
+    const raw = typeof value2 === "string" ? value2.trim() : value2;
+    if (raw === "")
+      return null;
+    const num = Number(raw);
+    return Number.isFinite(num) ? num : null;
+  };
+  const getValidCoordinatePair$3 = (latitude, longitude) => {
+    const lat = normalizeCoordinateValue$3(latitude);
+    const lng = normalizeCoordinateValue$3(longitude);
+    if (lat == null || lng == null)
+      return null;
+    if (lat === 0 && lng === 0)
+      return null;
+    return {
+      latitude: lat,
+      longitude: lng
+    };
+  };
+  const _sfc_main$e = {
     data() {
       return {
         isRegister: false,
         phone: "",
+        verifyCode: "",
         password: "",
-        nickname: "",
+        confirmPassword: "",
+        store_name: "",
+        address: "",
+        latitude: null,
+        longitude: null,
+        category: "",
+        supermarket_channel_direction: "普通超市",
+        supermarket_delivery_permission: "",
+        business_scope: "county_food",
+        business_license: "",
+        businessScopeOptions: [
+          { value: "county_food", label: "固始县城县域商家" },
+          { value: "town_food", label: "乡镇商家" }
+        ],
+        supermarketDeliveryOptions: [
+          { value: "self_only", label: "自己配送" },
+          { value: "rider_only", label: "骑手配送" },
+          { value: "hybrid", label: "两个都支持" }
+        ],
+        supermarketChannelOptions: [
+          { value: "普通超市", label: "普通超市" },
+          { value: "冷饮雪糕批发", label: "冷饮雪糕批发" }
+        ],
+        categoryOptions: [],
+        categoryPickerIndex: 0,
+        categoryLoading: false,
+        categoryLoadFailed: false,
+        townOptions: [],
+        townPickerIndex: 0,
+        townLoading: false,
+        uploadingLicense: false,
         loading: false
       };
     },
+    computed: {
+      scopePickerIndex() {
+        const i2 = this.businessScopeOptions.findIndex((o2) => o2.value === this.business_scope);
+        return i2 >= 0 ? i2 : 0;
+      },
+      currentBusinessScopeLabel() {
+        const o2 = this.businessScopeOptions[this.scopePickerIndex];
+        return o2 ? o2.label : "请选择所属经营区域";
+      },
+      hasLocationCoords() {
+        return !!getValidCoordinatePair$3(this.latitude, this.longitude);
+      },
+      currentCategoryLabel() {
+        if (this.category)
+          return this.category;
+        return this.categoryLoading ? "主营类目加载中..." : "请选择主营类目";
+      },
+      currentTownLabel() {
+        const o2 = this.townOptions[this.townPickerIndex];
+        if (o2)
+          return o2.label;
+        return this.townLoading ? "乡镇加载中..." : "请选择所属乡镇";
+      },
+      businessLicensePreviewUrl() {
+        if (!this.business_license)
+          return "";
+        if (this.business_license.startsWith("http://") || this.business_license.startsWith("https://") || this.business_license.startsWith("data:image") || this.business_license.startsWith("blob:")) {
+          return this.business_license;
+        }
+        return this.business_license.startsWith("/") ? BASE_URL + this.business_license : BASE_URL + "/" + this.business_license;
+      }
+    },
     methods: {
+      resetRegisterForm() {
+        this.password = "";
+        this.confirmPassword = "";
+        this.verifyCode = "";
+        this.store_name = "";
+        this.address = "";
+        this.latitude = null;
+        this.longitude = null;
+        this.category = "";
+        this.supermarket_channel_direction = "普通超市";
+        this.supermarket_delivery_permission = "";
+        this.business_scope = "county_food";
+        this.business_license = "";
+        this.categoryPickerIndex = 0;
+        this.townPickerIndex = 0;
+      },
+      switchAuthMode(isRegister) {
+        this.isRegister = isRegister;
+        if (isRegister) {
+          this.ensureCategoryOptions();
+        }
+        if (isRegister && this.business_scope === "town_food") {
+          this.ensureTownOptions();
+        }
+      },
+      onBusinessScopeChange(e2) {
+        const i2 = Number(e2.detail.value);
+        const o2 = this.businessScopeOptions[i2];
+        if (!o2)
+          return;
+        this.business_scope = o2.value;
+        if (o2.value === "town_food") {
+          this.ensureTownOptions();
+        }
+      },
+      onTownChange(e2) {
+        this.townPickerIndex = Number(e2.detail.value);
+      },
+      onCategoryChange(e2) {
+        if (!this.categoryOptions.length)
+          return;
+        const previousCategory = this.category;
+        const index = Number(e2.detail.value);
+        this.categoryPickerIndex = index;
+        this.category = this.categoryOptions[index] || "";
+        if (this.category === "超市" && previousCategory !== "超市") {
+          this.supermarket_channel_direction = "普通超市";
+          return;
+        }
+        if (this.category !== "超市" && previousCategory === "超市") {
+          this.supermarket_channel_direction = "普通超市";
+          this.supermarket_delivery_permission = "";
+        }
+      },
+      onSupermarketChannelDirectionChange(e2) {
+        var _a;
+        const value2 = ((_a = e2 == null ? void 0 : e2.detail) == null ? void 0 : _a.value) || "普通超市";
+        this.supermarket_channel_direction = value2 === "冷饮雪糕批发" ? "冷饮雪糕批发" : "普通超市";
+        formatAppLog("log", "at pages/login/index.vue:338", "[merchant-register][supermarket-direction-change]", {
+          category: this.category,
+          supermarket_channel_direction: this.supermarket_channel_direction
+        });
+      },
+      onSupermarketDeliveryPermissionChange(e2) {
+        var _a;
+        this.supermarket_delivery_permission = ((_a = e2 == null ? void 0 : e2.detail) == null ? void 0 : _a.value) || "";
+      },
+      formatCoord(v2) {
+        if (v2 == null || v2 === "")
+          return "-";
+        const n2 = Number(v2);
+        return Number.isFinite(n2) ? n2.toFixed(6) : String(v2);
+      },
+      openTiandituPicker() {
+        const lat = this.latitude != null ? String(this.latitude) : "";
+        const lng = this.longitude != null ? String(this.longitude) : "";
+        const address = this.address != null ? String(this.address) : "";
+        uni.navigateTo({
+          url: `/pages/shop/tianditu-picker?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}&address=${encodeURIComponent(address)}`,
+          events: {
+            picked: (data) => {
+              if (!data)
+                return;
+              const coordinatePair = getValidCoordinatePair$3(data.latitude, data.longitude);
+              if (!coordinatePair) {
+                this.latitude = null;
+                this.longitude = null;
+                uni.showToast({ title: "地图选点无效，请重新选点", icon: "none" });
+                return;
+              }
+              this.latitude = coordinatePair.latitude;
+              this.longitude = coordinatePair.longitude;
+              if (data.address) {
+                this.address = data.address;
+              } else if (data.town) {
+                this.address = data.town;
+              }
+            }
+          }
+        });
+      },
+      async ensureCategoryOptions() {
+        if (this.categoryLoading || this.categoryOptions.length)
+          return;
+        this.categoryLoading = true;
+        this.categoryLoadFailed = false;
+        try {
+          const res = await getMerchantPrimaryCategories();
+          const list = Array.isArray(res) ? res : Array.isArray(res == null ? void 0 : res.data) ? res.data : [];
+          const categoryOptions = list.map((item) => String(item || "").trim()).filter(Boolean);
+          if (!categoryOptions.length) {
+            uni.showToast({ title: "未获取到主营类目，请稍后重试", icon: "none" });
+            return;
+          }
+          this.categoryOptions = categoryOptions;
+          const currentIndex = this.categoryOptions.findIndex((item) => item === this.category);
+          this.categoryPickerIndex = currentIndex >= 0 ? currentIndex : 0;
+        } catch (e2) {
+          this.categoryOptions = [];
+          this.categoryLoadFailed = true;
+        } finally {
+          this.categoryLoading = false;
+        }
+      },
+      async ensureTownOptions() {
+        if (this.townLoading || this.townOptions.length)
+          return;
+        this.townLoading = true;
+        try {
+          const res = await getTownServiceAreas();
+          const list = Array.isArray(res) ? res : Array.isArray(res == null ? void 0 : res.data) ? res.data : [];
+          const townOptions = list.filter((item) => (item == null ? void 0 : item.area_code) && (item == null ? void 0 : item.area_name)).map((item) => ({
+            town_code: item.area_code,
+            label: item.area_name
+          }));
+          if (!townOptions.length) {
+            uni.showToast({ title: "未获取到乡镇数据，请稍后重试", icon: "none" });
+            return;
+          }
+          this.townOptions = townOptions;
+          this.townPickerIndex = 0;
+        } catch (e2) {
+          this.townOptions = [];
+        } finally {
+          this.townLoading = false;
+        }
+      },
+      chooseAndUploadLicense() {
+        if (this.uploadingLicense)
+          return;
+        uni.chooseImage({
+          count: 1,
+          sizeType: ["compressed"],
+          sourceType: ["album", "camera"],
+          success: (chooseRes) => {
+            const filePath = chooseRes.tempFilePaths && chooseRes.tempFilePaths[0];
+            if (!filePath)
+              return;
+            this.uploadingLicense = true;
+            const token = uni.getStorageSync("token") || "";
+            const header = token ? { Authorization: "Bearer " + token } : {};
+            uni.uploadFile({
+              url: BASE_URL + "/api/upload/image",
+              filePath,
+              name: "file",
+              header,
+              success: (uploadRes) => {
+                const url2 = this.parseUploadResponse(uploadRes.data);
+                if (!url2) {
+                  uni.showToast({ title: "营业执照上传失败", icon: "none" });
+                  return;
+                }
+                this.business_license = url2;
+                uni.showToast({ title: "营业执照上传成功", icon: "success" });
+              },
+              fail: () => {
+                uni.showToast({ title: "营业执照上传失败", icon: "none" });
+              },
+              complete: () => {
+                this.uploadingLicense = false;
+              }
+            });
+          },
+          fail: (err) => {
+            const msg = err && err.errMsg || "选择图片失败";
+            uni.showToast({ title: msg, icon: "none" });
+          }
+        });
+      },
+      parseUploadResponse(rawData) {
+        let parsed = rawData;
+        if (typeof rawData === "string") {
+          try {
+            parsed = JSON.parse(rawData);
+          } catch (e2) {
+            parsed = null;
+          }
+        }
+        const data = parsed && parsed.data && typeof parsed.data === "object" ? parsed.data : parsed;
+        const url2 = data && data.url ? data.url : "";
+        return url2 ? String(url2) : "";
+      },
+      previewBusinessLicense() {
+        if (!this.businessLicensePreviewUrl)
+          return;
+        uni.previewImage({ urls: [this.businessLicensePreviewUrl], current: this.businessLicensePreviewUrl });
+      },
+      extractMerchantAuditState(loginRes, userInfo) {
+        var _a, _b, _c;
+        const candidates = [
+          (_b = (_a = loginRes == null ? void 0 : loginRes.data) == null ? void 0 : _a.user) == null ? void 0 : _b.audit_status,
+          (_c = loginRes == null ? void 0 : loginRes.data) == null ? void 0 : _c.audit_status,
+          userInfo == null ? void 0 : userInfo.audit_status
+        ];
+        for (const value2 of candidates) {
+          const auditStatus = Number(value2);
+          if ([0, 1, 2].includes(auditStatus))
+            return auditStatus;
+        }
+        return null;
+      },
+      handleBlockedAuditState(auditState) {
+        const blockedMap = {
+          0: {
+            title: "待平台审核",
+            content: "入驻申请已提交，请等待平台审核"
+          },
+          2: {
+            title: "审核未通过",
+            content: "入驻审核未通过，请联系平台后重新提交"
+          }
+        };
+        const modal = blockedMap[auditState];
+        if (!modal)
+          return false;
+        uni.showModal({
+          title: modal.title,
+          content: modal.content,
+          showCancel: false
+        });
+        return true;
+      },
       async handleSubmit() {
         var _a, _b, _c, _d;
         if (!isValidPhone(this.phone)) {
@@ -7693,20 +8404,96 @@ This will fail in production.`);
           uni.showToast({ title: "密码至少6位", icon: "none" });
           return;
         }
-        if (this.isRegister && !isNotEmpty(this.nickname)) {
-          uni.showToast({ title: "请填写店铺老板昵称", icon: "none" });
+        if (this.isRegister && this.password !== this.confirmPassword) {
+          uni.showToast({ title: "两次输入的密码不一致", icon: "none" });
+          return;
+        }
+        if (this.isRegister && !isNotEmpty(this.store_name)) {
+          uni.showToast({ title: "请填写店铺名称", icon: "none" });
+          return;
+        }
+        if (this.isRegister && !isNotEmpty(this.address)) {
+          uni.showToast({ title: "请先选择店铺位置", icon: "none" });
+          return;
+        }
+        if (this.isRegister && !this.hasLocationCoords) {
+          uni.showToast({ title: "请在地图上完成店铺选点", icon: "none" });
+          return;
+        }
+        if (this.isRegister && this.categoryLoading) {
+          uni.showToast({ title: "主营类目加载中，请稍后", icon: "none" });
+          return;
+        }
+        if (this.isRegister && !this.categoryOptions.length) {
+          uni.showToast({ title: "主营类目暂不可用，请稍后重试", icon: "none" });
+          return;
+        }
+        if (this.isRegister && !isNotEmpty(this.category)) {
+          uni.showToast({ title: "请选择主营类目", icon: "none" });
+          return;
+        }
+        if (this.isRegister && !this.categoryOptions.includes(this.category)) {
+          uni.showToast({ title: "请选择有效的主营类目", icon: "none" });
+          return;
+        }
+        if (this.isRegister && this.category === "超市" && !isNotEmpty(this.supermarket_delivery_permission)) {
+          uni.showToast({ title: "请选择超市配送方式", icon: "none" });
+          return;
+        }
+        if (this.isRegister && this.business_scope === "town_food") {
+          const t2 = this.townOptions[this.townPickerIndex];
+          if (!t2 || !t2.town_code) {
+            uni.showToast({ title: "请选择所属乡镇", icon: "none" });
+            return;
+          }
+        }
+        if (this.isRegister && !isNotEmpty(this.business_license)) {
+          uni.showToast({ title: "请先上传营业执照", icon: "none" });
+          return;
+        }
+        const coordinatePair = this.isRegister ? getValidCoordinatePair$3(this.latitude, this.longitude) : null;
+        if (this.isRegister && !coordinatePair) {
+          uni.showToast({ title: "地图坐标无效，请重新选点", icon: "none" });
           return;
         }
         this.loading = true;
         try {
           if (this.isRegister) {
-            await register({
+            const normalizedCategory = String(this.category || "").trim();
+            const normalizedSupermarketChannelDirection = String(this.supermarket_channel_direction || "").trim();
+            const payload = {
               phone: this.phone,
               password: this.password,
-              nickname: this.nickname.trim()
+              store_name: this.store_name.trim(),
+              address: this.address.trim(),
+              latitude: coordinatePair.latitude,
+              longitude: coordinatePair.longitude,
+              category: normalizedCategory,
+              business_scope: this.business_scope,
+              business_license: this.business_license.trim()
+            };
+            if (normalizedCategory === "超市") {
+              payload.supermarket_delivery_permission = this.supermarket_delivery_permission;
+              if (normalizedSupermarketChannelDirection === "冷饮雪糕批发") {
+                payload.channel_tags = "冷饮雪糕批发";
+              }
+            }
+            if (this.business_scope === "town_food") {
+              payload.town_code = this.townOptions[this.townPickerIndex].town_code;
+            }
+            formatAppLog("log", "at pages/login/index.vue:611", "[merchant-register][submit-before]", {
+              category: normalizedCategory,
+              supermarket_channel_direction: normalizedSupermarketChannelDirection,
+              payload
             });
-            uni.showToast({ title: "注册成功，请登录", icon: "success" });
-            this.isRegister = false;
+            await registerMerchant(payload);
+            this.switchAuthMode(false);
+            this.resetRegisterForm();
+            uni.showModal({
+              title: "入驻申请已提交",
+              content: "请等待平台审核，审核通过后即可正式经营。",
+              showCancel: false
+            });
           } else {
             const res = await login({
               phone: this.phone,
@@ -7714,32 +8501,36 @@ This will fail in production.`);
             });
             const userStore = useUserStore();
             const token = ((_a = res.data) == null ? void 0 : _a.token) || res.token || res.access_token || ((_b = res.data) == null ? void 0 : _b.access_token) || "";
-            const userInfo = ((_c = res.data) == null ? void 0 : _c.userInfo) || ((_d = res.data) == null ? void 0 : _d.user) || res.userInfo || res.user || {
-              name: "商家",
-              phone: this.phone,
-              role: "merchant"
-            };
-            if (!token) {
+            const userInfo = ((_c = res.data) == null ? void 0 : _c.userInfo) || ((_d = res.data) == null ? void 0 : _d.user) || res.userInfo || res.user || null;
+            if (!token || !userInfo || !isMerchantUser(userInfo) || !getUserId(userInfo)) {
+              clearAuth();
               uni.showToast({ title: "登录返回数据异常，未获取到 Token", icon: "none" });
               return;
             }
-            uni.setStorageSync("token", token);
+            const auditState = this.extractMerchantAuditState(res, userInfo);
+            if (this.handleBlockedAuditState(auditState)) {
+              return;
+            }
             userStore.login(token, userInfo);
-            const userId = (userInfo == null ? void 0 : userInfo.id) || (userInfo == null ? void 0 : userInfo.userId) || "";
+            const userId = getUserId(userInfo);
             initSocket(token, userId);
+            ensureMerchantNotifyReady();
             uni.showToast({ title: "登录成功", icon: "success" });
             setTimeout(() => {
-              uni.reLaunch({ url: "/pages/shop/shop-apply" });
-            }, 800);
+              uni.reLaunch({ url: `/pages/shop/shop-apply?token=${token}` });
+            }, 50);
           }
         } catch (e2) {
         } finally {
           this.loading = false;
         }
       }
+    },
+    onLoad() {
+      this.ensureCategoryOptions();
     }
   };
-  function _sfc_render$y(_ctx, _cache, $props, $setup, $data, $options) {
+  function _sfc_render$d(_ctx, _cache, $props, $setup, $data, $options) {
     return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
       vue.createElementVNode("view", { class: "logo-area" }, [
         vue.createElementVNode("text", { class: "logo-emoji" }, "🏪"),
@@ -7752,7 +8543,7 @@ This will fail in production.`);
             "text",
             {
               class: vue.normalizeClass(["tab-item", !$data.isRegister && "tab-active"]),
-              onClick: _cache[0] || (_cache[0] = ($event) => $data.isRegister = false)
+              onClick: _cache[0] || (_cache[0] = ($event) => $options.switchAuthMode(false))
             },
             "登录",
             2
@@ -7762,7 +8553,7 @@ This will fail in production.`);
             "text",
             {
               class: vue.normalizeClass(["tab-item", $data.isRegister && "tab-active"]),
-              onClick: _cache[1] || (_cache[1] = ($event) => $data.isRegister = true)
+              onClick: _cache[1] || (_cache[1] = ($event) => $options.switchAuthMode(true))
             },
             "注册",
             2
@@ -7787,13 +8578,38 @@ This will fail in production.`);
             [vue.vModelText, $data.phone]
           ])
         ]),
+        $data.isRegister ? (vue.openBlock(), vue.createElementBlock("view", {
+          key: 0,
+          class: "input-group verify-row"
+        }, [
+          vue.createElementVNode("text", { class: "input-icon" }, "🔢"),
+          vue.withDirectives(vue.createElementVNode(
+            "input",
+            {
+              class: "input",
+              "onUpdate:modelValue": _cache[3] || (_cache[3] = ($event) => $data.verifyCode = $event),
+              placeholder: "请输入短信验证码（预留）",
+              maxlength: "6"
+            },
+            null,
+            512
+            /* NEED_PATCH */
+          ), [
+            [vue.vModelText, $data.verifyCode]
+          ]),
+          vue.createElementVNode("button", {
+            class: "verify-btn",
+            type: "default",
+            disabled: ""
+          }, "发送验证码")
+        ])) : vue.createCommentVNode("v-if", true),
         vue.createElementVNode("view", { class: "input-group" }, [
           vue.createElementVNode("text", { class: "input-icon" }, "🔒"),
           vue.withDirectives(vue.createElementVNode(
             "input",
             {
               class: "input",
-              "onUpdate:modelValue": _cache[3] || (_cache[3] = ($event) => $data.password = $event),
+              "onUpdate:modelValue": _cache[4] || (_cache[4] = ($event) => $data.password = $event),
               placeholder: "请输入密码",
               password: ""
             },
@@ -7805,3975 +8621,293 @@ This will fail in production.`);
           ])
         ]),
         $data.isRegister ? (vue.openBlock(), vue.createElementBlock("view", {
-          key: 0,
+          key: 1,
           class: "input-group"
         }, [
-          vue.createElementVNode("text", { class: "input-icon" }, "😊"),
+          vue.createElementVNode("text", { class: "input-icon" }, "✅"),
           vue.withDirectives(vue.createElementVNode(
             "input",
             {
               class: "input",
-              "onUpdate:modelValue": _cache[4] || (_cache[4] = ($event) => $data.nickname = $event),
-              placeholder: "店铺老板昵称"
+              "onUpdate:modelValue": _cache[5] || (_cache[5] = ($event) => $data.confirmPassword = $event),
+              placeholder: "请再次输入密码",
+              password: ""
             },
             null,
             512
             /* NEED_PATCH */
           ), [
-            [vue.vModelText, $data.nickname]
+            [vue.vModelText, $data.confirmPassword]
+          ])
+        ])) : vue.createCommentVNode("v-if", true),
+        $data.isRegister ? (vue.openBlock(), vue.createElementBlock("view", {
+          key: 2,
+          class: "input-group"
+        }, [
+          vue.createElementVNode("text", { class: "input-icon" }, "🏪"),
+          vue.withDirectives(vue.createElementVNode(
+            "input",
+            {
+              class: "input",
+              "onUpdate:modelValue": _cache[6] || (_cache[6] = ($event) => $data.store_name = $event),
+              placeholder: "店铺名称（必填）"
+            },
+            null,
+            512
+            /* NEED_PATCH */
+          ), [
+            [vue.vModelText, $data.store_name]
+          ])
+        ])) : vue.createCommentVNode("v-if", true),
+        $data.isRegister ? (vue.openBlock(), vue.createElementBlock("view", {
+          key: 3,
+          class: "input-group picker-row"
+        }, [
+          vue.createElementVNode("text", { class: "input-icon" }, "🗺️"),
+          vue.createElementVNode("view", { class: "picker-block" }, [
+            vue.createElementVNode("text", { class: "picker-label" }, "店铺位置（必填）"),
+            $options.hasLocationCoords ? (vue.openBlock(), vue.createElementBlock(
+              "view",
+              {
+                key: 0,
+                class: "picker-value coord-text"
+              },
+              " 纬度 " + vue.toDisplayString($options.formatCoord($data.latitude)) + "，经度 " + vue.toDisplayString($options.formatCoord($data.longitude)),
+              1
+              /* TEXT */
+            )) : (vue.openBlock(), vue.createElementBlock(
+              "view",
+              {
+                key: 1,
+                class: "picker-value"
+              },
+              vue.toDisplayString($data.address ? $data.address : "请先在地图上选择店铺位置"),
+              1
+              /* TEXT */
+            )),
+            $data.address ? (vue.openBlock(), vue.createElementBlock(
+              "text",
+              {
+                key: 2,
+                class: "picker-tip"
+              },
+              vue.toDisplayString($data.address),
+              1
+              /* TEXT */
+            )) : vue.createCommentVNode("v-if", true),
+            vue.createElementVNode("button", {
+              class: "location-btn",
+              type: "default",
+              onClick: _cache[7] || (_cache[7] = (...args) => $options.openTiandituPicker && $options.openTiandituPicker(...args))
+            }, "在地图上选择店铺位置")
+          ])
+        ])) : vue.createCommentVNode("v-if", true),
+        $data.isRegister ? (vue.openBlock(), vue.createElementBlock("view", {
+          key: 4,
+          class: "input-group picker-row"
+        }, [
+          vue.createElementVNode("text", { class: "input-icon" }, "📍"),
+          vue.createElementVNode("view", { class: "picker-block" }, [
+            vue.createElementVNode("text", { class: "picker-label" }, "所属经营区域（必选）"),
+            vue.createElementVNode("picker", {
+              mode: "selector",
+              range: $data.businessScopeOptions,
+              "range-key": "label",
+              value: $options.scopePickerIndex,
+              onChange: _cache[8] || (_cache[8] = (...args) => $options.onBusinessScopeChange && $options.onBusinessScopeChange(...args))
+            }, [
+              vue.createElementVNode(
+                "view",
+                { class: "picker-value" },
+                vue.toDisplayString($options.currentBusinessScopeLabel),
+                1
+                /* TEXT */
+              )
+            ], 40, ["range", "value"]),
+            vue.createElementVNode("text", { class: "picker-tip" }, "用于区分商家所属区域线，不用于区分美食、超市等主营类目")
+          ])
+        ])) : vue.createCommentVNode("v-if", true),
+        $data.isRegister ? (vue.openBlock(), vue.createElementBlock("view", {
+          key: 5,
+          class: "input-group picker-row"
+        }, [
+          vue.createElementVNode("text", { class: "input-icon" }, "🏷️"),
+          vue.createElementVNode("view", { class: "picker-block" }, [
+            vue.createElementVNode("text", { class: "picker-label" }, "主营类目（必填）"),
+            vue.createElementVNode("picker", {
+              mode: "selector",
+              range: $data.categoryOptions,
+              value: $data.categoryPickerIndex,
+              disabled: !$data.categoryOptions.length,
+              onChange: _cache[9] || (_cache[9] = (...args) => $options.onCategoryChange && $options.onCategoryChange(...args))
+            }, [
+              vue.createElementVNode(
+                "view",
+                { class: "picker-value" },
+                vue.toDisplayString($options.currentCategoryLabel),
+                1
+                /* TEXT */
+              )
+            ], 40, ["range", "value", "disabled"]),
+            $data.categoryLoading ? (vue.openBlock(), vue.createElementBlock("text", {
+              key: 0,
+              class: "picker-tip"
+            }, "主营类目加载中...")) : $data.categoryLoadFailed ? (vue.openBlock(), vue.createElementBlock("text", {
+              key: 1,
+              class: "picker-tip error"
+            }, "主营类目加载失败，请稍后重试")) : !$data.categoryOptions.length ? (vue.openBlock(), vue.createElementBlock("text", {
+              key: 2,
+              class: "picker-tip error"
+            }, "暂无可选主营类目")) : vue.createCommentVNode("v-if", true)
+          ])
+        ])) : vue.createCommentVNode("v-if", true),
+        $data.isRegister && $data.category === "超市" ? (vue.openBlock(), vue.createElementBlock("view", {
+          key: 6,
+          class: "input-group delivery-row"
+        }, [
+          vue.createElementVNode("text", { class: "input-icon" }, "🚚"),
+          vue.createElementVNode("view", { class: "picker-block" }, [
+            vue.createElementVNode("text", { class: "picker-label" }, "经营方向"),
+            vue.createElementVNode(
+              "radio-group",
+              {
+                class: "delivery-group",
+                onChange: _cache[10] || (_cache[10] = (...args) => $options.onSupermarketChannelDirectionChange && $options.onSupermarketChannelDirectionChange(...args))
+              },
+              [
+                (vue.openBlock(true), vue.createElementBlock(
+                  vue.Fragment,
+                  null,
+                  vue.renderList($data.supermarketChannelOptions, (item) => {
+                    return vue.openBlock(), vue.createElementBlock("label", {
+                      key: item.value,
+                      class: "delivery-option"
+                    }, [
+                      vue.createElementVNode("radio", {
+                        value: item.value,
+                        checked: $data.supermarket_channel_direction === item.value,
+                        color: "#FF6B35"
+                      }, null, 8, ["value", "checked"]),
+                      vue.createElementVNode(
+                        "text",
+                        { class: "delivery-text" },
+                        vue.toDisplayString(item.label),
+                        1
+                        /* TEXT */
+                      )
+                    ]);
+                  }),
+                  128
+                  /* KEYED_FRAGMENT */
+                ))
+              ],
+              32
+              /* NEED_HYDRATION */
+            )
+          ])
+        ])) : vue.createCommentVNode("v-if", true),
+        $data.isRegister && $data.category === "超市" ? (vue.openBlock(), vue.createElementBlock("view", {
+          key: 7,
+          class: "input-group delivery-row"
+        }, [
+          vue.createElementVNode("text", { class: "input-icon" }, "🚚"),
+          vue.createElementVNode("view", { class: "picker-block" }, [
+            vue.createElementVNode("text", { class: "picker-label" }, "配送方式（超市必填）"),
+            vue.createElementVNode(
+              "radio-group",
+              {
+                class: "delivery-group",
+                onChange: _cache[11] || (_cache[11] = (...args) => $options.onSupermarketDeliveryPermissionChange && $options.onSupermarketDeliveryPermissionChange(...args))
+              },
+              [
+                (vue.openBlock(true), vue.createElementBlock(
+                  vue.Fragment,
+                  null,
+                  vue.renderList($data.supermarketDeliveryOptions, (item) => {
+                    return vue.openBlock(), vue.createElementBlock("label", {
+                      key: item.value,
+                      class: "delivery-option"
+                    }, [
+                      vue.createElementVNode("radio", {
+                        value: item.value,
+                        checked: $data.supermarket_delivery_permission === item.value,
+                        color: "#FF6B35"
+                      }, null, 8, ["value", "checked"]),
+                      vue.createElementVNode(
+                        "text",
+                        { class: "delivery-text" },
+                        vue.toDisplayString(item.label),
+                        1
+                        /* TEXT */
+                      )
+                    ]);
+                  }),
+                  128
+                  /* KEYED_FRAGMENT */
+                ))
+              ],
+              32
+              /* NEED_HYDRATION */
+            )
+          ])
+        ])) : vue.createCommentVNode("v-if", true),
+        $data.isRegister && $data.business_scope === "town_food" ? (vue.openBlock(), vue.createElementBlock("view", {
+          key: 8,
+          class: "input-group picker-row"
+        }, [
+          vue.createElementVNode("text", { class: "input-icon" }, "🏘️"),
+          vue.createElementVNode("view", { class: "picker-block" }, [
+            vue.createElementVNode("text", { class: "picker-label" }, "所属乡镇（乡镇商家必选）"),
+            vue.createElementVNode("picker", {
+              mode: "selector",
+              range: $data.townOptions,
+              "range-key": "label",
+              value: $data.townPickerIndex,
+              onChange: _cache[12] || (_cache[12] = (...args) => $options.onTownChange && $options.onTownChange(...args))
+            }, [
+              vue.createElementVNode(
+                "view",
+                { class: "picker-value" },
+                vue.toDisplayString($options.currentTownLabel),
+                1
+                /* TEXT */
+              )
+            ], 40, ["range", "value"])
+          ])
+        ])) : vue.createCommentVNode("v-if", true),
+        $data.isRegister ? (vue.openBlock(), vue.createElementBlock("view", {
+          key: 9,
+          class: "input-group license-row"
+        }, [
+          vue.createElementVNode("text", { class: "input-icon" }, "📄"),
+          vue.createElementVNode("view", { class: "picker-block" }, [
+            vue.createElementVNode("text", { class: "picker-label" }, "营业执照（必填）"),
+            vue.createElementVNode("button", {
+              class: "upload-btn",
+              type: "default",
+              disabled: $data.uploadingLicense,
+              loading: $data.uploadingLicense,
+              onClick: _cache[13] || (_cache[13] = (...args) => $options.chooseAndUploadLicense && $options.chooseAndUploadLicense(...args))
+            }, vue.toDisplayString($data.business_license ? "重新上传营业执照" : "上传营业执照"), 9, ["disabled", "loading"]),
+            $options.businessLicensePreviewUrl ? (vue.openBlock(), vue.createElementBlock("image", {
+              key: 0,
+              class: "license-preview",
+              src: $options.businessLicensePreviewUrl,
+              mode: "widthFix",
+              onClick: _cache[14] || (_cache[14] = (...args) => $options.previewBusinessLicense && $options.previewBusinessLicense(...args))
+            }, null, 8, ["src"])) : vue.createCommentVNode("v-if", true)
           ])
         ])) : vue.createCommentVNode("v-if", true),
         vue.createElementVNode("button", {
           class: "submit-btn",
-          onClick: _cache[5] || (_cache[5] = (...args) => $options.handleSubmit && $options.handleSubmit(...args)),
+          onClick: _cache[15] || (_cache[15] = (...args) => $options.handleSubmit && $options.handleSubmit(...args)),
           loading: $data.loading
         }, vue.toDisplayString($data.isRegister ? "注册成为商家" : "登 录"), 9, ["loading"])
       ])
     ]);
   }
-  const PagesLoginIndex = /* @__PURE__ */ _export_sfc(_sfc_main$z, [["render", _sfc_render$y], ["__scopeId", "data-v-d08ef7d4"], ["__file", "E:/固始县外卖商家端/pages/login/index.vue"]]);
-  function getAddressList() {
-    return request({ url: "/address/list", method: "GET" });
-  }
-  function addAddress(data) {
-    return request({
-      url: "/address/add",
-      method: "POST",
-      data: {
-        name: data.name,
-        phone: data.phone,
-        address: data.address,
-        isDefault: data.isDefault ? 1 : 0
-      }
-    });
-  }
-  function updateAddress(id, data) {
-    return request({
-      url: "/address/update",
-      method: "POST",
-      data: {
-        id,
-        name: data.name,
-        phone: data.phone,
-        address: data.address,
-        isDefault: data.isDefault ? 1 : 0
-      }
-    });
-  }
-  function deleteAddress(id) {
-    return request({
-      url: "/address/delete",
-      method: "POST",
-      data: { id }
-    });
-  }
-  function setDefaultAddress(id) {
-    return request({
-      url: "/address/setDefault",
-      method: "POST",
-      data: { id }
-    });
-  }
-  const _sfc_main$y = {
-    data() {
-      return {
-        cartList: [],
-        totalPrice: 0,
-        selectedAddress: null,
-        remark: ""
-      };
-    },
-    onLoad() {
-      this.loadCart();
-      this.loadDefaultAddress();
-    },
-    methods: {
-      async loadCart() {
-        try {
-          const res = await getCartList();
-          this.cartList = res.购物车 || [];
-          this.totalPrice = res.总价 || 0;
-        } catch (e2) {
-        }
-      },
-      async loadDefaultAddress() {
-        try {
-          const res = await getAddressList();
-          const list = res.地址列表 || [];
-          if (list.length > 0) {
-            const defaultAddr = list.find((a2) => a2.是否默认 === 1);
-            this.selectedAddress = defaultAddr || list[0];
-          }
-        } catch (e2) {
-        }
-      },
-      chooseAddress() {
-        uni.navigateTo({ url: "/pages/address/index?select=1" });
-      },
-      async submitOrder() {
-        if (!this.selectedAddress) {
-          uni.showToast({ title: "请选择收货地址", icon: "none" });
-          return;
-        }
-        try {
-          const res = await createOrder({
-            address: this.selectedAddress.详细地址,
-            phone: this.selectedAddress.联系电话,
-            remark: this.remark
-          });
-          const order = res.订单 || {};
-          uni.removeTabBarBadge({ index: 1 });
-          uni.navigateTo({
-            url: "/pages/pay/index?orderId=" + order.订单ID + "&totalPrice=" + order.总价
-          });
-        } catch (e2) {
-        }
-      }
-    }
-  };
-  function _sfc_render$x(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      vue.createElementVNode("view", {
-        class: "section addr-section",
-        onClick: _cache[0] || (_cache[0] = (...args) => $options.chooseAddress && $options.chooseAddress(...args))
-      }, [
-        $data.selectedAddress ? (vue.openBlock(), vue.createElementBlock("view", {
-          key: 0,
-          class: "addr-info"
-        }, [
-          vue.createElementVNode("view", { class: "addr-top-row" }, [
-            vue.createElementVNode(
-              "text",
-              { class: "addr-name" },
-              vue.toDisplayString($data.selectedAddress.收货人),
-              1
-              /* TEXT */
-            ),
-            vue.createElementVNode(
-              "text",
-              { class: "addr-phone" },
-              vue.toDisplayString($data.selectedAddress.联系电话),
-              1
-              /* TEXT */
-            )
-          ]),
-          vue.createElementVNode(
-            "text",
-            { class: "addr-detail" },
-            vue.toDisplayString($data.selectedAddress.详细地址),
-            1
-            /* TEXT */
-          )
-        ])) : (vue.openBlock(), vue.createElementBlock("view", {
-          key: 1,
-          class: "addr-empty"
-        }, [
-          vue.createElementVNode("text", { class: "addr-empty-icon" }, "📍"),
-          vue.createElementVNode("text", { class: "addr-empty-text" }, "请选择收货地址")
-        ])),
-        vue.createElementVNode("text", { class: "addr-arrow" }, "›")
-      ]),
-      vue.createElementVNode("view", { class: "section" }, [
-        vue.createElementVNode("view", { class: "input-group" }, [
-          vue.createElementVNode("text", { class: "label" }, "备注"),
-          vue.withDirectives(vue.createElementVNode(
-            "input",
-            {
-              class: "input",
-              "onUpdate:modelValue": _cache[1] || (_cache[1] = ($event) => $data.remark = $event),
-              placeholder: "如：少放辣、不要葱（选填）"
-            },
-            null,
-            512
-            /* NEED_PATCH */
-          ), [
-            [vue.vModelText, $data.remark]
-          ])
-        ])
-      ]),
-      vue.createElementVNode("view", { class: "section" }, [
-        vue.createElementVNode("view", { class: "section-title" }, "商品清单"),
-        (vue.openBlock(true), vue.createElementBlock(
-          vue.Fragment,
-          null,
-          vue.renderList($data.cartList, (item, index) => {
-            return vue.openBlock(), vue.createElementBlock("view", {
-              class: "food-item",
-              key: index
-            }, [
-              vue.createElementVNode(
-                "text",
-                { class: "food-name" },
-                vue.toDisplayString(item.商品名称) + " x" + vue.toDisplayString(item.数量),
-                1
-                /* TEXT */
-              ),
-              vue.createElementVNode(
-                "text",
-                { class: "food-price" },
-                "¥" + vue.toDisplayString((item.价格 * item.数量).toFixed(2)),
-                1
-                /* TEXT */
-              )
-            ]);
-          }),
-          128
-          /* KEYED_FRAGMENT */
-        ))
-      ]),
-      vue.createElementVNode("view", { class: "submit-bar" }, [
-        vue.createElementVNode("view", { class: "submit-left" }, [
-          vue.createElementVNode("text", { class: "total-label" }, "合计："),
-          vue.createElementVNode(
-            "text",
-            { class: "total-price" },
-            "¥" + vue.toDisplayString($data.totalPrice),
-            1
-            /* TEXT */
-          )
-        ]),
-        vue.createElementVNode("view", {
-          class: "submit-btn",
-          onClick: _cache[2] || (_cache[2] = (...args) => $options.submitOrder && $options.submitOrder(...args))
-        }, [
-          vue.createElementVNode("text", { class: "submit-btn-text" }, "提交订单")
-        ])
-      ])
-    ]);
-  }
-  const PagesCartCheckout = /* @__PURE__ */ _export_sfc(_sfc_main$y, [["render", _sfc_render$x], ["__scopeId", "data-v-0d7381c5"], ["__file", "E:/固始县外卖商家端/pages/cart/checkout.vue"]]);
-  const _sfc_main$x = {
-    data() {
-      return {
-        addressList: [],
-        selectMode: false
-      };
-    },
-    onLoad(options) {
-      if (options.select === "1") {
-        this.selectMode = true;
-      }
-    },
-    onShow() {
-      this.loadAddress();
-    },
-    methods: {
-      async loadAddress() {
-        try {
-          const res = await getAddressList();
-          this.addressList = res.地址列表 || [];
-        } catch (e2) {
-        }
-      },
-      onSelectAddr(item) {
-        if (this.selectMode) {
-          const pages2 = getCurrentPages();
-          const prevPage = pages2[pages2.length - 2];
-          if (prevPage) {
-            prevPage.$vm.selectedAddress = item;
-          }
-          uni.navigateBack();
-        }
-      },
-      addAddr() {
-        uni.navigateTo({ url: "/pages/address/edit" });
-      },
-      editAddr(item) {
-        uni.navigateTo({ url: "/pages/address/edit?id=" + item.地址ID + "&data=" + encodeURIComponent(JSON.stringify(item)) });
-      },
-      async handleDelete(item) {
-        uni.showModal({
-          title: "确认删除",
-          content: "确定要删除这个地址吗？",
-          success: async (res) => {
-            if (res.confirm) {
-              try {
-                await deleteAddress(item.地址ID);
-                uni.showToast({ title: "已删除", icon: "success" });
-                this.loadAddress();
-              } catch (e2) {
-              }
-            }
-          }
-        });
-      },
-      async handleSetDefault(item) {
-        try {
-          await setDefaultAddress(item.地址ID);
-          uni.showToast({ title: "已设为默认", icon: "success" });
-          this.loadAddress();
-        } catch (e2) {
-        }
-      }
-    }
-  };
-  function _sfc_render$w(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      $data.addressList.length > 0 ? (vue.openBlock(), vue.createElementBlock("view", {
-        key: 0,
-        class: "addr-list"
-      }, [
-        (vue.openBlock(true), vue.createElementBlock(
-          vue.Fragment,
-          null,
-          vue.renderList($data.addressList, (item) => {
-            return vue.openBlock(), vue.createElementBlock("view", {
-              class: "addr-item",
-              key: item.地址ID,
-              onClick: ($event) => $options.onSelectAddr(item)
-            }, [
-              vue.createElementVNode("view", { class: "addr-main" }, [
-                vue.createElementVNode("view", { class: "addr-top" }, [
-                  vue.createElementVNode(
-                    "text",
-                    { class: "addr-name" },
-                    vue.toDisplayString(item.收货人),
-                    1
-                    /* TEXT */
-                  ),
-                  vue.createElementVNode(
-                    "text",
-                    { class: "addr-phone" },
-                    vue.toDisplayString(item.联系电话),
-                    1
-                    /* TEXT */
-                  ),
-                  item.是否默认 === 1 ? (vue.openBlock(), vue.createElementBlock("text", {
-                    key: 0,
-                    class: "default-tag"
-                  }, "默认")) : vue.createCommentVNode("v-if", true)
-                ]),
-                vue.createElementVNode(
-                  "text",
-                  { class: "addr-detail" },
-                  vue.toDisplayString(item.详细地址),
-                  1
-                  /* TEXT */
-                )
-              ]),
-              vue.createElementVNode("view", { class: "addr-actions" }, [
-                item.是否默认 !== 1 ? (vue.openBlock(), vue.createElementBlock("text", {
-                  key: 0,
-                  class: "action-btn",
-                  onClick: vue.withModifiers(($event) => $options.handleSetDefault(item), ["stop"])
-                }, "设为默认", 8, ["onClick"])) : vue.createCommentVNode("v-if", true),
-                vue.createElementVNode("text", {
-                  class: "action-btn",
-                  onClick: vue.withModifiers(($event) => $options.editAddr(item), ["stop"])
-                }, "编辑", 8, ["onClick"]),
-                vue.createElementVNode("text", {
-                  class: "action-btn delete-btn",
-                  onClick: vue.withModifiers(($event) => $options.handleDelete(item), ["stop"])
-                }, "删除", 8, ["onClick"])
-              ])
-            ], 8, ["onClick"]);
-          }),
-          128
-          /* KEYED_FRAGMENT */
-        ))
-      ])) : (vue.openBlock(), vue.createElementBlock("view", {
-        key: 1,
-        class: "empty"
-      }, [
-        vue.createElementVNode("text", { class: "empty-icon" }, "📍"),
-        vue.createElementVNode("text", { class: "empty-text" }, "暂无收货地址"),
-        vue.createElementVNode("text", { class: "empty-tip" }, "点击下方按钮添加")
-      ])),
-      vue.createElementVNode("view", { class: "add-bar" }, [
-        vue.createElementVNode("view", {
-          class: "add-btn",
-          onClick: _cache[0] || (_cache[0] = (...args) => $options.addAddr && $options.addAddr(...args))
-        }, [
-          vue.createElementVNode("text", { class: "add-btn-text" }, "+ 新增收货地址")
-        ])
-      ])
-    ]);
-  }
-  const PagesAddressIndex = /* @__PURE__ */ _export_sfc(_sfc_main$x, [["render", _sfc_render$w], ["__scopeId", "data-v-c47feaaa"], ["__file", "E:/固始县外卖商家端/pages/address/index.vue"]]);
-  const _sfc_main$w = {
-    data() {
-      return {
-        addrId: 0,
-        name: "",
-        phone: "",
-        address: "",
-        isDefault: false,
-        isEdit: false
-      };
-    },
-    onLoad(options) {
-      if (options.id && options.data) {
-        this.isEdit = true;
-        this.addrId = parseInt(options.id);
-        const data = JSON.parse(decodeURIComponent(options.data));
-        this.name = data.收货人;
-        this.phone = data.联系电话;
-        this.address = data.详细地址;
-        this.isDefault = data.是否默认 === 1;
-        uni.setNavigationBarTitle({ title: "编辑地址" });
-      } else {
-        uni.setNavigationBarTitle({ title: "新增地址" });
-      }
-    },
-    methods: {
-      onSwitchChange(e2) {
-        this.isDefault = e2.detail.value;
-      },
-      async save() {
-        if (!isNotEmpty(this.name)) {
-          uni.showToast({ title: "请输入收货人姓名", icon: "none" });
-          return;
-        }
-        if (!isValidPhone(this.phone)) {
-          uni.showToast({ title: "请输入正确的手机号", icon: "none" });
-          return;
-        }
-        if (!isNotEmpty(this.address)) {
-          uni.showToast({ title: "请输入详细地址", icon: "none" });
-          return;
-        }
-        const data = {
-          name: this.name.trim(),
-          phone: this.phone,
-          address: this.address.trim(),
-          isDefault: this.isDefault
-        };
-        try {
-          if (this.isEdit) {
-            await updateAddress(this.addrId, data);
-            uni.showToast({ title: "修改成功", icon: "success" });
-          } else {
-            await addAddress(data);
-            uni.showToast({ title: "添加成功", icon: "success" });
-          }
-          setTimeout(() => {
-            uni.navigateBack();
-          }, 1e3);
-        } catch (e2) {
-        }
-      }
-    }
-  };
-  function _sfc_render$v(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      vue.createElementVNode("view", { class: "form-section" }, [
-        vue.createElementVNode("view", { class: "form-item" }, [
-          vue.createElementVNode("text", { class: "form-label" }, "收货人"),
-          vue.withDirectives(vue.createElementVNode(
-            "input",
-            {
-              class: "form-input",
-              "onUpdate:modelValue": _cache[0] || (_cache[0] = ($event) => $data.name = $event),
-              placeholder: "请输入收货人姓名"
-            },
-            null,
-            512
-            /* NEED_PATCH */
-          ), [
-            [vue.vModelText, $data.name]
-          ])
-        ]),
-        vue.createElementVNode("view", { class: "form-item" }, [
-          vue.createElementVNode("text", { class: "form-label" }, "联系电话"),
-          vue.withDirectives(vue.createElementVNode(
-            "input",
-            {
-              class: "form-input",
-              "onUpdate:modelValue": _cache[1] || (_cache[1] = ($event) => $data.phone = $event),
-              placeholder: "请输入手机号",
-              type: "number",
-              maxlength: "11"
-            },
-            null,
-            512
-            /* NEED_PATCH */
-          ), [
-            [vue.vModelText, $data.phone]
-          ])
-        ]),
-        vue.createElementVNode("view", { class: "form-item" }, [
-          vue.createElementVNode("text", { class: "form-label" }, "详细地址"),
-          vue.withDirectives(vue.createElementVNode(
-            "input",
-            {
-              class: "form-input",
-              "onUpdate:modelValue": _cache[2] || (_cache[2] = ($event) => $data.address = $event),
-              placeholder: "如：城关镇中山大街1号"
-            },
-            null,
-            512
-            /* NEED_PATCH */
-          ), [
-            [vue.vModelText, $data.address]
-          ])
-        ]),
-        vue.createElementVNode("view", { class: "form-item switch-item" }, [
-          vue.createElementVNode("text", { class: "form-label" }, "设为默认地址"),
-          vue.createElementVNode("switch", {
-            checked: $data.isDefault,
-            onChange: _cache[3] || (_cache[3] = (...args) => $options.onSwitchChange && $options.onSwitchChange(...args)),
-            color: "#FF6B35"
-          }, null, 40, ["checked"])
-        ])
-      ]),
-      vue.createElementVNode("view", { class: "save-bar" }, [
-        vue.createElementVNode("view", {
-          class: "save-btn",
-          onClick: _cache[4] || (_cache[4] = (...args) => $options.save && $options.save(...args))
-        }, [
-          vue.createElementVNode(
-            "text",
-            { class: "save-btn-text" },
-            vue.toDisplayString($data.isEdit ? "保存修改" : "保存地址"),
-            1
-            /* TEXT */
-          )
-        ])
-      ])
-    ]);
-  }
-  const PagesAddressEdit = /* @__PURE__ */ _export_sfc(_sfc_main$w, [["render", _sfc_render$v], ["__scopeId", "data-v-dcb1f0d8"], ["__file", "E:/固始县外卖商家端/pages/address/edit.vue"]]);
-  const _sfc_main$v = {
-    data() {
-      return {
-        keyword: "",
-        hasSearched: false,
-        resultList: [],
-        historyList: [],
-        hotList: HOT_SEARCH
-      };
-    },
-    onLoad() {
-      this.loadHistory();
-    },
-    methods: {
-      loadHistory() {
-        this.historyList = uni.getStorageSync("searchHistory") || [];
-      },
-      saveHistory(keyword) {
-        let history = uni.getStorageSync("searchHistory") || [];
-        history = history.filter((h2) => h2 !== keyword);
-        history.unshift(keyword);
-        if (history.length > 10)
-          history = history.slice(0, 10);
-        uni.setStorageSync("searchHistory", history);
-        this.historyList = history;
-      },
-      clearHistory() {
-        uni.removeStorageSync("searchHistory");
-        this.historyList = [];
-      },
-      async doSearch() {
-        const kw = this.keyword.trim();
-        if (!kw) {
-          uni.showToast({ title: "请输入搜索内容", icon: "none" });
-          return;
-        }
-        this.saveHistory(kw);
-        try {
-          const res = await searchFood(kw);
-          this.resultList = res.商品列表 || [];
-          this.hasSearched = true;
-        } catch (e2) {
-        }
-      },
-      searchByHistory(kw) {
-        this.keyword = kw;
-        this.doSearch();
-      },
-      clearKeyword() {
-        this.keyword = "";
-        this.hasSearched = false;
-        this.resultList = [];
-      },
-      goBack() {
-        uni.navigateBack();
-      },
-      async handleAddToCart(item) {
-        if (!requireLogin())
-          return;
-        try {
-          const res = await addToCart(item.商品ID);
-          uni.showToast({ title: res.消息, icon: "success" });
-        } catch (e2) {
-        }
-      },
-      goDetail(id) {
-        uni.navigateTo({ url: "/pages/food/detail?id=" + id });
-      }
-    }
-  };
-  function _sfc_render$u(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      vue.createElementVNode("view", { class: "search-bar" }, [
-        vue.createElementVNode("view", { class: "search-input-wrap" }, [
-          vue.createElementVNode("text", { class: "search-icon" }, "🔍"),
-          vue.withDirectives(vue.createElementVNode(
-            "input",
-            {
-              class: "search-input",
-              "onUpdate:modelValue": _cache[0] || (_cache[0] = ($event) => $data.keyword = $event),
-              placeholder: "搜索美食、商品",
-              focus: "",
-              "confirm-type": "search",
-              onConfirm: _cache[1] || (_cache[1] = (...args) => $options.doSearch && $options.doSearch(...args))
-            },
-            null,
-            544
-            /* NEED_HYDRATION, NEED_PATCH */
-          ), [
-            [vue.vModelText, $data.keyword]
-          ]),
-          $data.keyword ? (vue.openBlock(), vue.createElementBlock("text", {
-            key: 0,
-            class: "clear-btn",
-            onClick: _cache[2] || (_cache[2] = (...args) => $options.clearKeyword && $options.clearKeyword(...args))
-          }, "✕")) : vue.createCommentVNode("v-if", true)
-        ]),
-        vue.createElementVNode("text", {
-          class: "cancel-btn",
-          onClick: _cache[3] || (_cache[3] = (...args) => $options.goBack && $options.goBack(...args))
-        }, "取消")
-      ]),
-      !$data.hasSearched && $data.historyList.length > 0 ? (vue.openBlock(), vue.createElementBlock("view", {
-        key: 0,
-        class: "history-section"
-      }, [
-        vue.createElementVNode("view", { class: "history-header" }, [
-          vue.createElementVNode("text", { class: "history-title" }, "搜索历史"),
-          vue.createElementVNode("text", {
-            class: "history-clear",
-            onClick: _cache[4] || (_cache[4] = (...args) => $options.clearHistory && $options.clearHistory(...args))
-          }, "清空")
-        ]),
-        vue.createElementVNode("view", { class: "history-tags" }, [
-          (vue.openBlock(true), vue.createElementBlock(
-            vue.Fragment,
-            null,
-            vue.renderList($data.historyList, (item, index) => {
-              return vue.openBlock(), vue.createElementBlock("text", {
-                class: "history-tag",
-                key: index,
-                onClick: ($event) => $options.searchByHistory(item)
-              }, vue.toDisplayString(item), 9, ["onClick"]);
-            }),
-            128
-            /* KEYED_FRAGMENT */
-          ))
-        ])
-      ])) : vue.createCommentVNode("v-if", true),
-      !$data.hasSearched ? (vue.openBlock(), vue.createElementBlock("view", {
-        key: 1,
-        class: "hot-section"
-      }, [
-        vue.createElementVNode("text", { class: "hot-title" }, "热门搜索"),
-        vue.createElementVNode("view", { class: "hot-tags" }, [
-          (vue.openBlock(true), vue.createElementBlock(
-            vue.Fragment,
-            null,
-            vue.renderList($data.hotList, (item, index) => {
-              return vue.openBlock(), vue.createElementBlock("text", {
-                class: "hot-tag",
-                key: index,
-                onClick: ($event) => $options.searchByHistory(item)
-              }, vue.toDisplayString(item), 9, ["onClick"]);
-            }),
-            128
-            /* KEYED_FRAGMENT */
-          ))
-        ])
-      ])) : vue.createCommentVNode("v-if", true),
-      $data.hasSearched ? (vue.openBlock(), vue.createElementBlock("view", {
-        key: 2,
-        class: "result-section"
-      }, [
-        vue.createElementVNode("view", { class: "result-header" }, [
-          vue.createElementVNode(
-            "text",
-            { class: "result-count" },
-            "找到 " + vue.toDisplayString($data.resultList.length) + " 个商品",
-            1
-            /* TEXT */
-          )
-        ]),
-        $data.resultList.length > 0 ? (vue.openBlock(), vue.createElementBlock("view", {
-          key: 0,
-          class: "goods-list"
-        }, [
-          (vue.openBlock(true), vue.createElementBlock(
-            vue.Fragment,
-            null,
-            vue.renderList($data.resultList, (item) => {
-              return vue.openBlock(), vue.createElementBlock("view", {
-                class: "goods-item",
-                key: item.商品ID,
-                onClick: ($event) => $options.goDetail(item.商品ID)
-              }, [
-                vue.createElementVNode("view", { class: "goods-img-wrap" }, [
-                  vue.createElementVNode("text", { class: "goods-emoji" }, "🍱")
-                ]),
-                vue.createElementVNode("view", { class: "goods-info" }, [
-                  vue.createElementVNode(
-                    "text",
-                    { class: "goods-name" },
-                    vue.toDisplayString(item.商品名称),
-                    1
-                    /* TEXT */
-                  ),
-                  vue.createElementVNode(
-                    "text",
-                    { class: "goods-desc" },
-                    vue.toDisplayString(item.分类) + " · 月售" + vue.toDisplayString(item.月销),
-                    1
-                    /* TEXT */
-                  ),
-                  vue.createElementVNode("view", { class: "goods-bottom" }, [
-                    vue.createElementVNode(
-                      "text",
-                      { class: "goods-price" },
-                      "¥" + vue.toDisplayString(item.价格),
-                      1
-                      /* TEXT */
-                    ),
-                    vue.createElementVNode("view", {
-                      class: "add-btn",
-                      onClick: vue.withModifiers(($event) => $options.handleAddToCart(item), ["stop"])
-                    }, [
-                      vue.createElementVNode("text", { class: "add-btn-text" }, "+")
-                    ], 8, ["onClick"])
-                  ])
-                ])
-              ], 8, ["onClick"]);
-            }),
-            128
-            /* KEYED_FRAGMENT */
-          ))
-        ])) : (vue.openBlock(), vue.createElementBlock("view", {
-          key: 1,
-          class: "empty-result"
-        }, [
-          vue.createElementVNode("text", { class: "empty-icon" }, "😔"),
-          vue.createElementVNode("text", { class: "empty-text" }, "没有找到相关商品"),
-          vue.createElementVNode("text", { class: "empty-tip" }, "换个关键词试试")
-        ]))
-      ])) : vue.createCommentVNode("v-if", true)
-    ]);
-  }
-  const PagesSearchIndex = /* @__PURE__ */ _export_sfc(_sfc_main$v, [["render", _sfc_render$u], ["__scopeId", "data-v-2dab939d"], ["__file", "E:/固始县外卖商家端/pages/search/index.vue"]]);
-  const _sfc_main$u = {
-    data() {
-      return {
-        orderId: "",
-        totalPrice: "0.00",
-        selectedMethod: "wechat",
-        payMethods: PAY_METHODS
-      };
-    },
-    onLoad(options) {
-      this.orderId = options.orderId || "";
-      this.totalPrice = options.totalPrice || "0.00";
-    },
-    methods: {
-      selectMethod(id) {
-        this.selectedMethod = id;
-      },
-      async confirmPay() {
-        const methodName = PAY_METHOD_NAMES[this.selectedMethod];
-        uni.showLoading({ title: "支付处理中..." });
-        setTimeout(async () => {
-          try {
-            await payOrder(this.orderId, methodName);
-            uni.hideLoading();
-            uni.showToast({ title: "支付成功", icon: "success" });
-            setTimeout(() => {
-              uni.switchTab({ url: "/pages/order/index" });
-            }, 1500);
-          } catch (e2) {
-            uni.hideLoading();
-          }
-        }, 1500);
-      },
-      handleCancel() {
-        uni.showModal({
-          title: "取消订单",
-          content: "确定要取消这个订单吗？",
-          success: async (res) => {
-            if (res.confirm) {
-              try {
-                await cancelOrder(this.orderId);
-                uni.showToast({ title: "订单已取消", icon: "none" });
-                setTimeout(() => {
-                  uni.switchTab({ url: "/pages/order/index" });
-                }, 1e3);
-              } catch (e2) {
-              }
-            }
-          }
-        });
-      }
-    }
-  };
-  function _sfc_render$t(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      vue.createElementVNode("view", { class: "amount-section" }, [
-        vue.createElementVNode("text", { class: "amount-label" }, "支付金额"),
-        vue.createElementVNode(
-          "text",
-          { class: "amount-value" },
-          "¥" + vue.toDisplayString($data.totalPrice),
-          1
-          /* TEXT */
-        ),
-        vue.createElementVNode(
-          "text",
-          { class: "order-no" },
-          "订单号：" + vue.toDisplayString($data.orderId),
-          1
-          /* TEXT */
-        )
-      ]),
-      vue.createElementVNode("view", { class: "pay-section" }, [
-        vue.createElementVNode("text", { class: "section-title" }, "选择支付方式"),
-        (vue.openBlock(true), vue.createElementBlock(
-          vue.Fragment,
-          null,
-          vue.renderList($data.payMethods, (item) => {
-            return vue.openBlock(), vue.createElementBlock("view", {
-              class: "pay-item",
-              key: item.id,
-              onClick: ($event) => $options.selectMethod(item.id)
-            }, [
-              vue.createElementVNode("view", { class: "pay-item-left" }, [
-                vue.createElementVNode(
-                  "text",
-                  { class: "pay-icon" },
-                  vue.toDisplayString(item.icon),
-                  1
-                  /* TEXT */
-                ),
-                vue.createElementVNode("view", { class: "pay-info" }, [
-                  vue.createElementVNode(
-                    "text",
-                    { class: "pay-name" },
-                    vue.toDisplayString(item.name),
-                    1
-                    /* TEXT */
-                  ),
-                  vue.createElementVNode(
-                    "text",
-                    { class: "pay-desc" },
-                    vue.toDisplayString(item.desc),
-                    1
-                    /* TEXT */
-                  )
-                ])
-              ]),
-              vue.createElementVNode(
-                "view",
-                {
-                  class: vue.normalizeClass(["radio", { checked: $data.selectedMethod === item.id }])
-                },
-                [
-                  $data.selectedMethod === item.id ? (vue.openBlock(), vue.createElementBlock("text", {
-                    key: 0,
-                    class: "radio-dot"
-                  }, "✓")) : vue.createCommentVNode("v-if", true)
-                ],
-                2
-                /* CLASS */
-              )
-            ], 8, ["onClick"]);
-          }),
-          128
-          /* KEYED_FRAGMENT */
-        ))
-      ]),
-      vue.createElementVNode("view", { class: "pay-bar" }, [
-        vue.createElementVNode("view", {
-          class: "cancel-btn",
-          onClick: _cache[0] || (_cache[0] = (...args) => $options.handleCancel && $options.handleCancel(...args))
-        }, [
-          vue.createElementVNode("text", { class: "cancel-btn-text" }, "取消订单")
-        ]),
-        vue.createElementVNode("view", {
-          class: "pay-btn",
-          onClick: _cache[1] || (_cache[1] = (...args) => $options.confirmPay && $options.confirmPay(...args))
-        }, [
-          vue.createElementVNode(
-            "text",
-            { class: "pay-btn-text" },
-            "确认支付 ¥" + vue.toDisplayString($data.totalPrice),
-            1
-            /* TEXT */
-          )
-        ])
-      ])
-    ]);
-  }
-  const PagesPayIndex = /* @__PURE__ */ _export_sfc(_sfc_main$u, [["render", _sfc_render$t], ["__scopeId", "data-v-d7fd7b38"], ["__file", "E:/固始县外卖商家端/pages/pay/index.vue"]]);
-  const _sfc_main$t = {
-    data() {
-      return {
-        nickname: "",
-        phone: "",
-        role: "",
-        userId: "",
-        showEditModal: false,
-        newNickname: ""
-      };
-    },
-    computed: {
-      roleText() {
-        return ROLE_MAP[this.role] || "用户";
-      },
-      roleEmoji() {
-        return ROLE_EMOJI[this.role] || "👤";
-      }
-    },
-    onShow() {
-      this.loadInfo();
-    },
-    methods: {
-      async loadInfo() {
-        try {
-          const res = await getUserInfo();
-          const info = res.用户信息;
-          this.nickname = info.昵称;
-          this.phone = info.手机号;
-          this.role = info.角色;
-          this.userId = info.用户ID;
-        } catch (e2) {
-        }
-      },
-      editNickname() {
-        this.newNickname = this.nickname;
-        this.showEditModal = true;
-      },
-      async saveNickname() {
-        const name = this.newNickname.trim();
-        if (!name) {
-          uni.showToast({ title: "昵称不能为空", icon: "none" });
-          return;
-        }
-        try {
-          const res = await updateUserInfo({ nickname: name });
-          this.nickname = name;
-          this.showEditModal = false;
-          uni.showToast({ title: "修改成功", icon: "success" });
-          const userStore = useUserStore();
-          const newInfo = { ...userStore.userInfo, "昵称": name };
-          userStore.login(userStore.token, newInfo);
-        } catch (e2) {
-        }
-      },
-      goAddress() {
-        uni.navigateTo({ url: "/pages/address/index" });
-      },
-      goOrders() {
-        uni.switchTab({ url: "/pages/order/index" });
-      }
-    }
-  };
-  function _sfc_render$s(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      vue.createElementVNode("view", { class: "avatar-section" }, [
-        vue.createElementVNode("view", { class: "avatar-wrap" }, [
-          vue.createElementVNode(
-            "text",
-            { class: "avatar-emoji" },
-            vue.toDisplayString($options.roleEmoji),
-            1
-            /* TEXT */
-          )
-        ]),
-        vue.createElementVNode("text", { class: "avatar-tip" }, "点击更换头像（开发中）")
-      ]),
-      vue.createElementVNode("view", { class: "info-section" }, [
-        vue.createElementVNode("view", {
-          class: "info-item",
-          onClick: _cache[0] || (_cache[0] = (...args) => $options.editNickname && $options.editNickname(...args))
-        }, [
-          vue.createElementVNode("text", { class: "info-label" }, "昵称"),
-          vue.createElementVNode("view", { class: "info-right" }, [
-            vue.createElementVNode(
-              "text",
-              { class: "info-value" },
-              vue.toDisplayString($data.nickname),
-              1
-              /* TEXT */
-            ),
-            vue.createElementVNode("text", { class: "info-arrow" }, "›")
-          ])
-        ]),
-        vue.createElementVNode("view", { class: "info-item" }, [
-          vue.createElementVNode("text", { class: "info-label" }, "手机号"),
-          vue.createElementVNode("view", { class: "info-right" }, [
-            vue.createElementVNode(
-              "text",
-              { class: "info-value" },
-              vue.toDisplayString($data.phone),
-              1
-              /* TEXT */
-            )
-          ])
-        ]),
-        vue.createElementVNode("view", { class: "info-item" }, [
-          vue.createElementVNode("text", { class: "info-label" }, "身份"),
-          vue.createElementVNode("view", { class: "info-right" }, [
-            vue.createElementVNode(
-              "text",
-              { class: "role-badge" },
-              vue.toDisplayString($options.roleText),
-              1
-              /* TEXT */
-            )
-          ])
-        ]),
-        vue.createElementVNode("view", { class: "info-item" }, [
-          vue.createElementVNode("text", { class: "info-label" }, "用户ID"),
-          vue.createElementVNode("view", { class: "info-right" }, [
-            vue.createElementVNode(
-              "text",
-              { class: "info-value" },
-              vue.toDisplayString($data.userId),
-              1
-              /* TEXT */
-            )
-          ])
-        ])
-      ]),
-      vue.createElementVNode("view", { class: "info-section" }, [
-        vue.createElementVNode("view", {
-          class: "info-item",
-          onClick: _cache[1] || (_cache[1] = (...args) => $options.goAddress && $options.goAddress(...args))
-        }, [
-          vue.createElementVNode("text", { class: "info-label" }, "收货地址"),
-          vue.createElementVNode("view", { class: "info-right" }, [
-            vue.createElementVNode("text", { class: "info-value" }, "管理"),
-            vue.createElementVNode("text", { class: "info-arrow" }, "›")
-          ])
-        ]),
-        vue.createElementVNode("view", {
-          class: "info-item",
-          onClick: _cache[2] || (_cache[2] = (...args) => $options.goOrders && $options.goOrders(...args))
-        }, [
-          vue.createElementVNode("text", { class: "info-label" }, "我的订单"),
-          vue.createElementVNode("view", { class: "info-right" }, [
-            vue.createElementVNode("text", { class: "info-value" }, "查看"),
-            vue.createElementVNode("text", { class: "info-arrow" }, "›")
-          ])
-        ])
-      ]),
-      $data.showEditModal ? (vue.openBlock(), vue.createElementBlock("view", {
-        key: 0,
-        class: "modal-mask",
-        onClick: _cache[7] || (_cache[7] = ($event) => $data.showEditModal = false)
-      }, [
-        vue.createElementVNode("view", {
-          class: "modal-content",
-          onClick: _cache[6] || (_cache[6] = vue.withModifiers(() => {
-          }, ["stop"]))
-        }, [
-          vue.createElementVNode("text", { class: "modal-title" }, "修改昵称"),
-          vue.withDirectives(vue.createElementVNode(
-            "input",
-            {
-              class: "modal-input",
-              "onUpdate:modelValue": _cache[3] || (_cache[3] = ($event) => $data.newNickname = $event),
-              placeholder: "请输入新昵称",
-              maxlength: "20",
-              focus: ""
-            },
-            null,
-            512
-            /* NEED_PATCH */
-          ), [
-            [vue.vModelText, $data.newNickname]
-          ]),
-          vue.createElementVNode("view", { class: "modal-actions" }, [
-            vue.createElementVNode("view", {
-              class: "modal-btn cancel",
-              onClick: _cache[4] || (_cache[4] = ($event) => $data.showEditModal = false)
-            }, [
-              vue.createElementVNode("text", { class: "modal-btn-text cancel-text" }, "取消")
-            ]),
-            vue.createElementVNode("view", {
-              class: "modal-btn confirm",
-              onClick: _cache[5] || (_cache[5] = (...args) => $options.saveNickname && $options.saveNickname(...args))
-            }, [
-              vue.createElementVNode("text", { class: "modal-btn-text confirm-text" }, "确定")
-            ])
-          ])
-        ])
-      ])) : vue.createCommentVNode("v-if", true)
-    ]);
-  }
-  const PagesProfileIndex = /* @__PURE__ */ _export_sfc(_sfc_main$t, [["render", _sfc_render$s], ["__scopeId", "data-v-201c0da5"], ["__file", "E:/固始县外卖商家端/pages/profile/index.vue"]]);
-  function publishErrand(data) {
-    return request({
-      url: "/errand/publish",
-      method: "POST",
-      data: {
-        pickupAddress: data.pickupAddress,
-        deliveryAddress: data.deliveryAddress,
-        itemType: data.itemType,
-        expectedTime: data.expectedTime,
-        reward: data.reward
-      }
-    });
-  }
-  function getErrandList() {
-    return request({ url: "/errand/list", method: "GET" });
-  }
-  const _sfc_main$s = {
-    data() {
-      return {
-        currentTab: 0,
-        form: {
-          pickupAddress: "",
-          deliveryAddress: "",
-          itemType: "",
-          expectedTime: "",
-          reward: ""
-        },
-        errandList: [],
-        itemTypes: ["文件资料", "食品饮料", "生活用品", "药品", "鲜花", "数码产品", "其他"],
-        typeIndex: 0,
-        timeOptions: ["30分钟内", "1小时内", "2小时内", "今天内", "不急"],
-        timeIndex: 0
-      };
-    },
-    methods: {
-      onTypeChange(e2) {
-        this.typeIndex = e2.detail.value;
-        this.form.itemType = this.itemTypes[this.typeIndex];
-      },
-      onTimeChange(e2) {
-        this.timeIndex = e2.detail.value;
-        this.form.expectedTime = this.timeOptions[this.timeIndex];
-      },
-      async handlePublish() {
-        if (!requireLogin())
-          return;
-        if (!this.form.pickupAddress.trim()) {
-          uni.showToast({ title: "请输入取件地址", icon: "none" });
-          return;
-        }
-        if (!this.form.deliveryAddress.trim()) {
-          uni.showToast({ title: "请输入收件地址", icon: "none" });
-          return;
-        }
-        if (!this.form.itemType) {
-          uni.showToast({ title: "请选择物品类型", icon: "none" });
-          return;
-        }
-        if (!this.form.expectedTime) {
-          uni.showToast({ title: "请选择期望送达时间", icon: "none" });
-          return;
-        }
-        const reward = parseFloat(this.form.reward);
-        if (!reward || reward <= 0) {
-          uni.showToast({ title: "请输入跑腿费", icon: "none" });
-          return;
-        }
-        try {
-          await publishErrand({
-            pickupAddress: this.form.pickupAddress.trim(),
-            deliveryAddress: this.form.deliveryAddress.trim(),
-            itemType: this.form.itemType,
-            expectedTime: this.form.expectedTime,
-            reward
-          });
-          uni.showToast({ title: "发布成功", icon: "success" });
-          this.form = { pickupAddress: "", deliveryAddress: "", itemType: "", expectedTime: "", reward: "" };
-          this.currentTab = 1;
-          this.loadList();
-        } catch (e2) {
-        }
-      },
-      async loadList() {
-        if (!requireLogin())
-          return;
-        try {
-          const res = await getErrandList();
-          this.errandList = res.跑腿列表 || [];
-        } catch (e2) {
-        }
-      },
-      errandStatusClass(status) {
-        const map = { "待接单": "status-waiting", "配送中": "status-delivering", "已完成": "status-done" };
-        return map[status] || "";
-      }
-    }
-  };
-  function _sfc_render$r(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      vue.createElementVNode("view", { class: "errand-header" }, [
-        vue.createElementVNode("text", { class: "errand-title" }, "跑腿代购"),
-        vue.createElementVNode("text", { class: "errand-desc" }, "同城取送 · 代购代办 · 快速送达")
-      ]),
-      vue.createElementVNode("view", { class: "tab-bar" }, [
-        vue.createElementVNode(
-          "text",
-          {
-            class: vue.normalizeClass(["tab-item", $data.currentTab === 0 && "tab-active"]),
-            onClick: _cache[0] || (_cache[0] = ($event) => $data.currentTab = 0)
-          },
-          "发布跑腿",
-          2
-          /* CLASS */
-        ),
-        vue.createElementVNode(
-          "text",
-          {
-            class: vue.normalizeClass(["tab-item", $data.currentTab === 1 && "tab-active"]),
-            onClick: _cache[1] || (_cache[1] = ($event) => {
-              $data.currentTab = 1;
-              $options.loadList();
-            })
-          },
-          "我的跑腿",
-          2
-          /* CLASS */
-        )
-      ]),
-      $data.currentTab === 0 ? (vue.openBlock(), vue.createElementBlock("view", {
-        key: 0,
-        class: "publish-form"
-      }, [
-        vue.createElementVNode("view", { class: "form-section" }, [
-          vue.createElementVNode("view", { class: "form-item" }, [
-            vue.createElementVNode("text", { class: "form-icon" }, "📦"),
-            vue.createElementVNode("text", { class: "form-label" }, "取件地址"),
-            vue.withDirectives(vue.createElementVNode(
-              "input",
-              {
-                class: "form-input",
-                "onUpdate:modelValue": _cache[2] || (_cache[2] = ($event) => $data.form.pickupAddress = $event),
-                placeholder: "如：城关镇中山大街XX号"
-              },
-              null,
-              512
-              /* NEED_PATCH */
-            ), [
-              [vue.vModelText, $data.form.pickupAddress]
-            ])
-          ]),
-          vue.createElementVNode("view", { class: "form-item" }, [
-            vue.createElementVNode("text", { class: "form-icon" }, "📍"),
-            vue.createElementVNode("text", { class: "form-label" }, "收件地址"),
-            vue.withDirectives(vue.createElementVNode(
-              "input",
-              {
-                class: "form-input",
-                "onUpdate:modelValue": _cache[3] || (_cache[3] = ($event) => $data.form.deliveryAddress = $event),
-                placeholder: "如：秀水街道XX小区"
-              },
-              null,
-              512
-              /* NEED_PATCH */
-            ), [
-              [vue.vModelText, $data.form.deliveryAddress]
-            ])
-          ]),
-          vue.createElementVNode("view", { class: "form-item" }, [
-            vue.createElementVNode("text", { class: "form-icon" }, "📋"),
-            vue.createElementVNode("text", { class: "form-label" }, "物品类型"),
-            vue.createElementVNode("picker", {
-              range: $data.itemTypes,
-              onChange: _cache[4] || (_cache[4] = (...args) => $options.onTypeChange && $options.onTypeChange(...args)),
-              value: $data.typeIndex
-            }, [
-              vue.createElementVNode("view", { class: "picker-value" }, [
-                vue.createElementVNode(
-                  "text",
-                  {
-                    class: vue.normalizeClass($data.form.itemType ? "picker-text" : "picker-placeholder")
-                  },
-                  vue.toDisplayString($data.form.itemType || "请选择"),
-                  3
-                  /* TEXT, CLASS */
-                ),
-                vue.createElementVNode("text", { class: "picker-arrow" }, "›")
-              ])
-            ], 40, ["range", "value"])
-          ]),
-          vue.createElementVNode("view", { class: "form-item" }, [
-            vue.createElementVNode("text", { class: "form-icon" }, "⏰"),
-            vue.createElementVNode("text", { class: "form-label" }, "期望送达"),
-            vue.createElementVNode("picker", {
-              range: $data.timeOptions,
-              onChange: _cache[5] || (_cache[5] = (...args) => $options.onTimeChange && $options.onTimeChange(...args)),
-              value: $data.timeIndex
-            }, [
-              vue.createElementVNode("view", { class: "picker-value" }, [
-                vue.createElementVNode(
-                  "text",
-                  {
-                    class: vue.normalizeClass($data.form.expectedTime ? "picker-text" : "picker-placeholder")
-                  },
-                  vue.toDisplayString($data.form.expectedTime || "请选择"),
-                  3
-                  /* TEXT, CLASS */
-                ),
-                vue.createElementVNode("text", { class: "picker-arrow" }, "›")
-              ])
-            ], 40, ["range", "value"])
-          ]),
-          vue.createElementVNode("view", { class: "form-item" }, [
-            vue.createElementVNode("text", { class: "form-icon" }, "💰"),
-            vue.createElementVNode("text", { class: "form-label" }, "跑腿费"),
-            vue.withDirectives(vue.createElementVNode(
-              "input",
-              {
-                class: "form-input",
-                "onUpdate:modelValue": _cache[6] || (_cache[6] = ($event) => $data.form.reward = $event),
-                placeholder: "悬赏金额（元）",
-                type: "digit"
-              },
-              null,
-              512
-              /* NEED_PATCH */
-            ), [
-              [vue.vModelText, $data.form.reward]
-            ])
-          ])
-        ]),
-        vue.createElementVNode("view", { class: "tip-section" }, [
-          vue.createElementVNode("text", { class: "tip-title" }, "💡 温馨提示"),
-          vue.createElementVNode("text", { class: "tip-text" }, "· 跑腿费越高，骑手接单越快"),
-          vue.createElementVNode("text", { class: "tip-text" }, "· 请确保取件地址有人等候"),
-          vue.createElementVNode("text", { class: "tip-text" }, "· 贵重物品请当面交接")
-        ]),
-        vue.createElementVNode("view", { class: "submit-bar" }, [
-          vue.createElementVNode("view", {
-            class: "submit-btn",
-            onClick: _cache[7] || (_cache[7] = (...args) => $options.handlePublish && $options.handlePublish(...args))
-          }, [
-            vue.createElementVNode("text", { class: "submit-btn-text" }, "发布跑腿订单")
-          ])
-        ])
-      ])) : vue.createCommentVNode("v-if", true),
-      $data.currentTab === 1 ? (vue.openBlock(), vue.createElementBlock("view", {
-        key: 1,
-        class: "list-section"
-      }, [
-        $data.errandList.length > 0 ? (vue.openBlock(), vue.createElementBlock("view", { key: 0 }, [
-          (vue.openBlock(true), vue.createElementBlock(
-            vue.Fragment,
-            null,
-            vue.renderList($data.errandList, (item) => {
-              return vue.openBlock(), vue.createElementBlock("view", {
-                class: "errand-card",
-                key: item.订单ID
-              }, [
-                vue.createElementVNode("view", { class: "errand-header" }, [
-                  vue.createElementVNode(
-                    "text",
-                    { class: "errand-id" },
-                    vue.toDisplayString(item.订单ID),
-                    1
-                    /* TEXT */
-                  ),
-                  vue.createElementVNode(
-                    "text",
-                    {
-                      class: vue.normalizeClass(["errand-status", $options.errandStatusClass(item.状态)])
-                    },
-                    vue.toDisplayString(item.状态),
-                    3
-                    /* TEXT, CLASS */
-                  )
-                ]),
-                vue.createElementVNode("view", { class: "errand-body" }, [
-                  vue.createElementVNode("view", { class: "addr-row" }, [
-                    vue.createElementVNode("view", { class: "addr-dot from" }),
-                    vue.createElementVNode("text", { class: "addr-label" }, "取"),
-                    vue.createElementVNode(
-                      "text",
-                      { class: "addr-value" },
-                      vue.toDisplayString(item.取件地址),
-                      1
-                      /* TEXT */
-                    )
-                  ]),
-                  vue.createElementVNode("view", { class: "addr-row" }, [
-                    vue.createElementVNode("view", { class: "addr-dot to" }),
-                    vue.createElementVNode("text", { class: "addr-label" }, "送"),
-                    vue.createElementVNode(
-                      "text",
-                      { class: "addr-value" },
-                      vue.toDisplayString(item.收件地址),
-                      1
-                      /* TEXT */
-                    )
-                  ])
-                ]),
-                vue.createElementVNode("view", { class: "errand-meta" }, [
-                  vue.createElementVNode(
-                    "text",
-                    { class: "meta-item" },
-                    "📋 " + vue.toDisplayString(item.物品类型),
-                    1
-                    /* TEXT */
-                  ),
-                  vue.createElementVNode(
-                    "text",
-                    { class: "meta-item" },
-                    "⏰ " + vue.toDisplayString(item.期望送达时间),
-                    1
-                    /* TEXT */
-                  ),
-                  vue.createElementVNode(
-                    "text",
-                    { class: "meta-price" },
-                    "💰 ¥" + vue.toDisplayString(item.悬赏金额),
-                    1
-                    /* TEXT */
-                  )
-                ]),
-                vue.createElementVNode("view", { class: "errand-footer" }, [
-                  vue.createElementVNode(
-                    "text",
-                    { class: "errand-time" },
-                    vue.toDisplayString(item.创建时间),
-                    1
-                    /* TEXT */
-                  ),
-                  item.骑手ID ? (vue.openBlock(), vue.createElementBlock("text", {
-                    key: 0,
-                    class: "errand-rider"
-                  }, "骑手已接单")) : vue.createCommentVNode("v-if", true)
-                ])
-              ]);
-            }),
-            128
-            /* KEYED_FRAGMENT */
-          ))
-        ])) : (vue.openBlock(), vue.createElementBlock("view", {
-          key: 1,
-          class: "empty"
-        }, [
-          vue.createElementVNode("text", { class: "empty-icon" }, "🏃"),
-          vue.createElementVNode("text", { class: "empty-text" }, "暂无跑腿订单"),
-          vue.createElementVNode("text", { class: "empty-tip" }, "去发布一个试试吧")
-        ]))
-      ])) : vue.createCommentVNode("v-if", true)
-    ]);
-  }
-  const PagesErrandIndex = /* @__PURE__ */ _export_sfc(_sfc_main$s, [["render", _sfc_render$r], ["__scopeId", "data-v-55d84ade"], ["__file", "E:/固始县外卖商家端/pages/errand/index.vue"]]);
-  const COUNTY_CATEGORY_LIST = [
-    { id: 1, name: "外卖", emoji: "🍜", bgColor: "#FFF3E6" },
-    { id: 2, name: "超市代购", emoji: "🛒", bgColor: "#E6F7FF" },
-    { id: 3, name: "代买药品", emoji: "💊", bgColor: "#FFF0F6" },
-    { id: 4, name: "蔬菜水果", emoji: "🥬", bgColor: "#E6FFE6" },
-    { id: 5, name: "鲜花礼品", emoji: "💐", bgColor: "#F9F0FF" }
-  ];
-  const _sfc_main$r = {
-    data() {
-      return {
-        merchantTab: "特价",
-        goodsList: [],
-        currentCategory: "",
-        countyCategoryList: COUNTY_CATEGORY_LIST,
-        sortType: "综合排序",
-        recommendList: []
-      };
-    },
-    onLoad() {
-      this.loadRecommend();
-    },
-    onShow() {
-      this.updateCartBadge();
-    },
-    async onPullDownRefresh() {
-      try {
-        await this.loadRecommend();
-        await this.getGoodsList(this.currentCategory || void 0, this.sortType);
-      } catch (e2) {
-        formatAppLog("error", "at pages/county-takeaway/index.vue:207", e2);
-      } finally {
-        uni.stopPullDownRefresh();
-      }
-    },
-    methods: {
-      async loadRecommend() {
-        try {
-          const res = await getFoodList(void 0, "销量");
-          this.recommendList = (res.商品列表 || []).slice(0, 10);
-        } catch (e2) {
-        }
-      },
-      async getGoodsList(category, sort) {
-        try {
-          const res = await getFoodList(category || void 0, sort || this.sortType);
-          this.goodsList = res.商品列表 || [];
-        } catch (e2) {
-        }
-      },
-      goBack() {
-        uni.navigateBack();
-      },
-      onMoreRank() {
-        uni.showToast({ title: "更多排行敬请期待", icon: "none" });
-      },
-      onCouponUse(amount) {
-        uni.showToast({ title: amount + "元券去使用", icon: "none" });
-      },
-      async handleAddToCart(item) {
-        if (!requireLogin())
-          return;
-        try {
-          const res = await addToCart(item.商品ID);
-          uni.showToast({ title: res.消息, icon: "success" });
-          this.updateCartBadge();
-        } catch (e2) {
-        }
-      },
-      async updateCartBadge() {
-        try {
-          const { getCartList: getCartList2 } = require("@/api/cart.js");
-          const res = await getCartList2();
-          const count = res.总数量 || 0;
-          if (count > 0) {
-            uni.setTabBarBadge({ index: 1, text: String(count) });
-          } else {
-            uni.removeTabBarBadge({ index: 1 });
-          }
-        } catch (e2) {
-        }
-      },
-      onCountyCategoryClick(item) {
-        if (item.name === "外卖") {
-          this.clearFilter();
-          return;
-        }
-        if (this.currentCategory === item.name) {
-          this.clearFilter();
-        } else {
-          this.currentCategory = item.name;
-          this.getGoodsList(item.name, this.sortType);
-        }
-      },
-      onSortClick(sort) {
-        this.sortType = sort;
-        if (this.currentCategory) {
-          this.getGoodsList(this.currentCategory, sort);
-        }
-      },
-      clearFilter() {
-        this.currentCategory = "";
-        this.getGoodsList();
-      },
-      onSearchClick() {
-        uni.navigateTo({ url: "/pages/search/index" });
-      },
-      goDetail(id) {
-        uni.navigateTo({ url: "/pages/food/detail?id=" + id });
-      }
-    }
-  };
-  function _sfc_render$q(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      vue.createElementVNode("view", { class: "header" }, [
-        vue.createElementVNode("view", {
-          class: "search-row",
-          onClick: _cache[0] || (_cache[0] = (...args) => $options.onSearchClick && $options.onSearchClick(...args))
-        }, [
-          vue.createElementVNode("text", { class: "search-icon" }, "🔍"),
-          vue.createElementVNode("text", { class: "search-placeholder" }, "生日蛋糕"),
-          vue.createElementVNode("text", { class: "search-btn" }, "搜索")
-        ])
-      ]),
-      vue.createElementVNode("view", { class: "banner" }, [
-        vue.createElementVNode("swiper", {
-          class: "swiper",
-          autoplay: "",
-          circular: "",
-          "indicator-dots": "",
-          "indicator-color": "rgba(255,255,255,0.4)",
-          "indicator-active-color": "#fff"
-        }, [
-          vue.createElementVNode("swiper-item", null, [
-            vue.createElementVNode("view", { class: "banner-card banner-promo" }, [
-              vue.createElementVNode("text", { class: "banner-promo-title" }, "膨半价 节日神券"),
-              vue.createElementVNode("view", { class: "banner-promo-tags" }, [
-                vue.createElementVNode("text", { class: "promo-tag" }, "抢1888元"),
-                vue.createElementVNode("text", { class: "promo-tag" }, "38节最高得50元"),
-                vue.createElementVNode("text", { class: "promo-tag" }, "2.9元起")
-              ])
-            ])
-          ]),
-          vue.createElementVNode("swiper-item", null, [
-            vue.createElementVNode("view", { class: "banner-card banner-card2" }, [
-              vue.createElementVNode("view", { class: "banner-content" }, [
-                vue.createElementVNode("text", { class: "banner-title" }, "足不出户 坐等美食"),
-                vue.createElementVNode("text", { class: "banner-sub" }, "每日精选超值好物")
-              ]),
-              vue.createElementVNode("text", { class: "banner-emoji" }, "🎉")
-            ])
-          ]),
-          vue.createElementVNode("swiper-item", null, [
-            vue.createElementVNode("view", { class: "banner-card banner-card3" }, [
-              vue.createElementVNode("view", { class: "banner-content" }, [
-                vue.createElementVNode("text", { class: "banner-title" }, "招乡镇站长免加盟费"),
-                vue.createElementVNode("text", { class: "banner-sub" }, "每个乡镇仅限一名")
-              ]),
-              vue.createElementVNode("text", { class: "banner-emoji" }, "📋")
-            ])
-          ])
-        ])
-      ]),
-      vue.createElementVNode("view", { class: "category-grid category-grid-4" }, [
-        (vue.openBlock(true), vue.createElementBlock(
-          vue.Fragment,
-          null,
-          vue.renderList($data.countyCategoryList, (item) => {
-            return vue.openBlock(), vue.createElementBlock("view", {
-              class: "category-grid-item",
-              key: item.id,
-              onClick: ($event) => $options.onCountyCategoryClick(item)
-            }, [
-              vue.createElementVNode(
-                "view",
-                {
-                  class: "category-grid-icon",
-                  style: vue.normalizeStyle({ backgroundColor: item.bgColor })
-                },
-                [
-                  vue.createElementVNode(
-                    "text",
-                    { class: "category-grid-emoji" },
-                    vue.toDisplayString(item.emoji),
-                    1
-                    /* TEXT */
-                  )
-                ],
-                4
-                /* STYLE */
-              ),
-              vue.createElementVNode(
-                "text",
-                { class: "category-grid-name" },
-                vue.toDisplayString(item.name),
-                1
-                /* TEXT */
-              )
-            ], 8, ["onClick"]);
-          }),
-          128
-          /* KEYED_FRAGMENT */
-        ))
-      ]),
-      $data.recommendList.length > 0 ? (vue.openBlock(), vue.createElementBlock("view", {
-        key: 0,
-        class: "section"
-      }, [
-        vue.createElementVNode("view", { class: "section-head" }, [
-          vue.createElementVNode("view", { class: "section-head-left" }, [
-            vue.createElementVNode("text", { class: "section-title" }, "县城销量排行榜")
-          ]),
-          vue.createElementVNode("text", {
-            class: "section-more",
-            onClick: _cache[1] || (_cache[1] = (...args) => $options.onMoreRank && $options.onMoreRank(...args))
-          }, "更多›")
-        ]),
-        vue.createElementVNode("scroll-view", {
-          class: "recommend-scroll",
-          "scroll-x": ""
-        }, [
-          (vue.openBlock(true), vue.createElementBlock(
-            vue.Fragment,
-            null,
-            vue.renderList($data.recommendList, (item) => {
-              return vue.openBlock(), vue.createElementBlock("view", {
-                class: "recommend-item",
-                key: item.商品ID,
-                onClick: ($event) => $options.goDetail(item.商品ID)
-              }, [
-                vue.createElementVNode("view", { class: "recommend-img" }, [
-                  vue.createElementVNode("text", { class: "recommend-emoji" }, "🍱")
-                ]),
-                vue.createElementVNode(
-                  "text",
-                  { class: "recommend-name" },
-                  vue.toDisplayString(item.商品名称),
-                  1
-                  /* TEXT */
-                ),
-                vue.createElementVNode(
-                  "text",
-                  { class: "recommend-price" },
-                  "¥" + vue.toDisplayString(item.价格),
-                  1
-                  /* TEXT */
-                )
-              ], 8, ["onClick"]);
-            }),
-            128
-            /* KEYED_FRAGMENT */
-          ))
-        ])
-      ])) : vue.createCommentVNode("v-if", true),
-      vue.createElementVNode("view", { class: "coupon-row" }, [
-        vue.createElementVNode("view", {
-          class: "coupon-card",
-          onClick: _cache[2] || (_cache[2] = ($event) => $options.onCouponUse(20))
-        }, [
-          vue.createElementVNode("view", { class: "coupon-card-left" }, [
-            vue.createElementVNode("text", { class: "coupon-value" }, "20"),
-            vue.createElementVNode("text", { class: "coupon-unit" }, "元"),
-            vue.createElementVNode("text", { class: "coupon-title" }, "外卖大额神券"),
-            vue.createElementVNode("text", { class: "coupon-desc" }, "满38可用"),
-            vue.createElementVNode("text", { class: "coupon-expire" }, "08:00:51后失效")
-          ]),
-          vue.createElementVNode("view", { class: "coupon-btn" }, "去使用")
-        ]),
-        vue.createElementVNode("view", {
-          class: "coupon-card",
-          onClick: _cache[3] || (_cache[3] = ($event) => $options.onCouponUse(13))
-        }, [
-          vue.createElementVNode("view", { class: "coupon-card-left" }, [
-            vue.createElementVNode("text", { class: "coupon-value" }, "13"),
-            vue.createElementVNode("text", { class: "coupon-unit" }, "元"),
-            vue.createElementVNode("text", { class: "coupon-title" }, "外卖大额神券"),
-            vue.createElementVNode("text", { class: "coupon-desc" }, "满30可用"),
-            vue.createElementVNode("text", { class: "coupon-expire" }, "08:00:51后失效")
-          ]),
-          vue.createElementVNode("view", { class: "coupon-btn" }, "去使用")
-        ])
-      ]),
-      vue.createElementVNode("view", { class: "section section-merchants" }, [
-        vue.createElementVNode("view", { class: "section-head" }, [
-          vue.createElementVNode("text", { class: "section-title" }, "附近商家"),
-          vue.createElementVNode("view", { class: "merchant-tabs" }, [
-            vue.createElementVNode(
-              "text",
-              {
-                class: vue.normalizeClass(["merchant-tab", { active: $data.merchantTab === "特价" }]),
-                onClick: _cache[4] || (_cache[4] = ($event) => $data.merchantTab = "特价")
-              },
-              "特价外卖",
-              2
-              /* CLASS */
-            ),
-            vue.createElementVNode(
-              "text",
-              {
-                class: vue.normalizeClass(["merchant-tab", { active: $data.merchantTab === "10元" }]),
-                onClick: _cache[5] || (_cache[5] = ($event) => $data.merchantTab = "10元")
-              },
-              "10元点套餐",
-              2
-              /* CLASS */
-            )
-          ])
-        ]),
-        $data.recommendList.length > 0 ? (vue.openBlock(), vue.createElementBlock("view", {
-          key: 0,
-          class: "merchant-list"
-        }, [
-          (vue.openBlock(true), vue.createElementBlock(
-            vue.Fragment,
-            null,
-            vue.renderList($data.recommendList.slice(0, 6), (item) => {
-              return vue.openBlock(), vue.createElementBlock("view", {
-                class: "merchant-card",
-                key: item.商品ID,
-                onClick: ($event) => $options.goDetail(item.商品ID)
-              }, [
-                vue.createElementVNode("view", { class: "merchant-card-img" }, [
-                  vue.createElementVNode("text", { class: "merchant-emoji" }, "🍱")
-                ]),
-                vue.createElementVNode("view", { class: "merchant-card-body" }, [
-                  vue.createElementVNode(
-                    "text",
-                    { class: "merchant-name" },
-                    vue.toDisplayString(item.商品名称),
-                    1
-                    /* TEXT */
-                  ),
-                  vue.createElementVNode("view", { class: "merchant-meta" }, [
-                    vue.createElementVNode("text", { class: "merchant-score" }, "4.6分"),
-                    vue.createElementVNode(
-                      "text",
-                      { class: "merchant-sales" },
-                      "月售" + vue.toDisplayString(item.月销) + "+",
-                      1
-                      /* TEXT */
-                    ),
-                    vue.createElementVNode(
-                      "text",
-                      { class: "merchant-avg" },
-                      "人均¥" + vue.toDisplayString(item.价格),
-                      1
-                      /* TEXT */
-                    )
-                  ]),
-                  vue.createElementVNode("view", { class: "merchant-delivery" }, [
-                    vue.createElementVNode("text", { class: "delivery-tag" }, "专送"),
-                    vue.createElementVNode("text", { class: "delivery-dist" }, "约15分钟")
-                  ]),
-                  vue.createElementVNode("view", { class: "merchant-tags" }, [
-                    vue.createElementVNode("text", { class: "tag" }, "起送¥20 免配送费"),
-                    vue.createElementVNode("text", { class: "tag coupon-tag" }, "神券 满38减20")
-                  ])
-                ]),
-                vue.createElementVNode("view", {
-                  class: "merchant-cart",
-                  onClick: vue.withModifiers(($event) => $options.handleAddToCart(item), ["stop"])
-                }, [
-                  vue.createElementVNode("text", { class: "cart-icon" }, "🛒")
-                ], 8, ["onClick"])
-              ], 8, ["onClick"]);
-            }),
-            128
-            /* KEYED_FRAGMENT */
-          ))
-        ])) : (vue.openBlock(), vue.createElementBlock("view", {
-          key: 1,
-          class: "empty-goods"
-        }, [
-          vue.createElementVNode("text", { class: "empty-text" }, "暂无商家")
-        ]))
-      ]),
-      $data.currentCategory ? (vue.openBlock(), vue.createElementBlock("view", {
-        key: 1,
-        class: "section"
-      }, [
-        vue.createElementVNode("view", { class: "section-header" }, [
-          vue.createElementVNode(
-            "text",
-            { class: "section-title" },
-            vue.toDisplayString($data.currentCategory),
-            1
-            /* TEXT */
-          ),
-          vue.createElementVNode("text", {
-            class: "clear-filter",
-            onClick: _cache[6] || (_cache[6] = (...args) => $options.clearFilter && $options.clearFilter(...args))
-          }, "查看全部")
-        ]),
-        vue.createElementVNode("view", { class: "sort-bar" }, [
-          vue.createElementVNode(
-            "view",
-            {
-              class: vue.normalizeClass(["sort-item", { active: $data.sortType === "综合排序" }]),
-              onClick: _cache[7] || (_cache[7] = ($event) => $options.onSortClick("综合排序"))
-            },
-            [
-              vue.createElementVNode("text", { class: "sort-text" }, "综合排序")
-            ],
-            2
-            /* CLASS */
-          ),
-          vue.createElementVNode(
-            "view",
-            {
-              class: vue.normalizeClass(["sort-item", { active: $data.sortType === "销量" }]),
-              onClick: _cache[8] || (_cache[8] = ($event) => $options.onSortClick("销量"))
-            },
-            [
-              vue.createElementVNode("text", { class: "sort-text" }, "销量")
-            ],
-            2
-            /* CLASS */
-          ),
-          vue.createElementVNode(
-            "view",
-            {
-              class: vue.normalizeClass(["sort-item", { active: $data.sortType === "价格" }]),
-              onClick: _cache[9] || (_cache[9] = ($event) => $options.onSortClick("价格"))
-            },
-            [
-              vue.createElementVNode("text", { class: "sort-text" }, "价格")
-            ],
-            2
-            /* CLASS */
-          )
-        ]),
-        vue.createElementVNode("view", { class: "goods-list" }, [
-          (vue.openBlock(true), vue.createElementBlock(
-            vue.Fragment,
-            null,
-            vue.renderList($data.goodsList, (item) => {
-              return vue.openBlock(), vue.createElementBlock("view", {
-                class: "goods-item",
-                key: item.商品ID,
-                onClick: ($event) => $options.goDetail(item.商品ID)
-              }, [
-                vue.createElementVNode("view", { class: "goods-img-wrap" }, [
-                  vue.createElementVNode("text", { class: "goods-emoji" }, "🍱")
-                ]),
-                vue.createElementVNode("view", { class: "goods-info" }, [
-                  vue.createElementVNode(
-                    "text",
-                    { class: "goods-name" },
-                    vue.toDisplayString(item.商品名称),
-                    1
-                    /* TEXT */
-                  ),
-                  vue.createElementVNode(
-                    "text",
-                    { class: "goods-desc" },
-                    "月售 " + vue.toDisplayString(item.月销) + " · " + vue.toDisplayString(item.描述),
-                    1
-                    /* TEXT */
-                  ),
-                  vue.createElementVNode("view", { class: "goods-bottom" }, [
-                    vue.createElementVNode(
-                      "text",
-                      { class: "goods-price" },
-                      "¥" + vue.toDisplayString(item.价格),
-                      1
-                      /* TEXT */
-                    ),
-                    vue.createElementVNode("view", {
-                      class: "add-btn",
-                      onClick: vue.withModifiers(($event) => $options.handleAddToCart(item), ["stop"])
-                    }, [
-                      vue.createElementVNode("text", { class: "add-btn-text" }, "+")
-                    ], 8, ["onClick"])
-                  ])
-                ])
-              ], 8, ["onClick"]);
-            }),
-            128
-            /* KEYED_FRAGMENT */
-          ))
-        ]),
-        $data.goodsList.length === 0 ? (vue.openBlock(), vue.createElementBlock("view", {
-          key: 0,
-          class: "empty-goods"
-        }, [
-          vue.createElementVNode("text", { class: "empty-text" }, "该分类暂无商品")
-        ])) : vue.createCommentVNode("v-if", true)
-      ])) : vue.createCommentVNode("v-if", true)
-    ]);
-  }
-  const PagesCountyTakeawayIndex = /* @__PURE__ */ _export_sfc(_sfc_main$r, [["render", _sfc_render$q], ["__scopeId", "data-v-af3a7198"], ["__file", "E:/固始县外卖商家端/pages/county-takeaway/index.vue"]]);
-  const TOWN_CATEGORY_LIST = [
-    { id: 1, name: "外卖", emoji: "🍜", bgColor: "#FFF3E6" },
-    { id: 2, name: "超市代购", emoji: "🛒", bgColor: "#E6F7FF" },
-    { id: 3, name: "代买药品", emoji: "💊", bgColor: "#FFF0F6" },
-    { id: 4, name: "蔬菜水果", emoji: "🥬", bgColor: "#E6FFE6" },
-    { id: 5, name: "鲜花礼品", emoji: "💐", bgColor: "#F9F0FF" }
-  ];
-  const TOWN_LIST = [
-    "陈淋子镇",
-    "祖师庙镇",
-    "武庙集镇",
-    "段集镇",
-    "方集镇",
-    "郭陆滩镇",
-    "汪棚镇",
-    "胡族铺镇",
-    "李店镇",
-    "往流镇",
-    "三河尖镇",
-    "蒋集镇",
-    "陈集镇",
-    "泉河铺镇",
-    "分水亭镇",
-    "沙河铺镇",
-    "张广庙镇",
-    "石佛店镇",
-    "黎集镇",
-    "草庙集镇",
-    "马堽集镇",
-    "徐集镇"
-  ];
-  const _sfc_main$q = {
-    data() {
-      return {
-        townList: TOWN_LIST,
-        townIndex: 0,
-        merchantTab: "特价",
-        goodsList: [],
-        currentCategory: "",
-        townCategoryList: TOWN_CATEGORY_LIST,
-        sortType: "综合排序",
-        recommendList: []
-      };
-    },
-    onLoad() {
-      this.loadRecommend();
-    },
-    onShow() {
-      this.updateCartBadge();
-    },
-    async onPullDownRefresh() {
-      try {
-        await this.loadRecommend();
-        await this.getGoodsList(this.currentCategory || void 0, this.sortType);
-      } catch (e2) {
-        formatAppLog("error", "at pages/town-takeaway/index.vue:212", e2);
-      } finally {
-        uni.stopPullDownRefresh();
-      }
-    },
-    methods: {
-      async loadRecommend() {
-        try {
-          const res = await getFoodList(void 0, "销量");
-          this.recommendList = (res.商品列表 || []).slice(0, 10);
-        } catch (e2) {
-        }
-      },
-      async getGoodsList(category, sort) {
-        try {
-          const res = await getFoodList(category || void 0, sort || this.sortType);
-          this.goodsList = res.商品列表 || [];
-        } catch (e2) {
-        }
-      },
-      onMoreRank() {
-        uni.showToast({ title: "更多排行敬请期待", icon: "none" });
-      },
-      onCouponUse(amount) {
-        uni.showToast({ title: amount + "元券去使用", icon: "none" });
-      },
-      async handleAddToCart(item) {
-        if (!requireLogin())
-          return;
-        try {
-          const res = await addToCart(item.商品ID);
-          uni.showToast({ title: res.消息, icon: "success" });
-          this.updateCartBadge();
-        } catch (e2) {
-        }
-      },
-      async updateCartBadge() {
-        try {
-          const { getCartList: getCartList2 } = require("@/api/cart.js");
-          const res = await getCartList2();
-          const count = res.总数量 || 0;
-          if (count > 0) {
-            uni.setTabBarBadge({ index: 1, text: String(count) });
-          } else {
-            uni.removeTabBarBadge({ index: 1 });
-          }
-        } catch (e2) {
-        }
-      },
-      onTownCategoryClick(item) {
-        if (item.name === "外卖") {
-          this.clearFilter();
-          return;
-        }
-        if (this.currentCategory === item.name) {
-          this.clearFilter();
-        } else {
-          this.currentCategory = item.name;
-          this.getGoodsList(item.name, this.sortType);
-        }
-      },
-      onSortClick(sort) {
-        this.sortType = sort;
-        if (this.currentCategory) {
-          this.getGoodsList(this.currentCategory, sort);
-        }
-      },
-      clearFilter() {
-        this.currentCategory = "";
-        this.getGoodsList();
-      },
-      onTownChange(e2) {
-        this.townIndex = Number(e2.detail.value);
-      },
-      goDetail(id) {
-        uni.navigateTo({ url: "/pages/food/detail?id=" + id });
-      }
-    }
-  };
-  function _sfc_render$p(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      vue.createElementVNode("view", { class: "header" }, [
-        vue.createElementVNode("picker", {
-          mode: "selector",
-          range: $data.townList,
-          value: $data.townIndex,
-          onChange: _cache[0] || (_cache[0] = (...args) => $options.onTownChange && $options.onTownChange(...args))
-        }, [
-          vue.createElementVNode("view", { class: "town-picker" }, [
-            vue.createElementVNode("text", { class: "town-label" }, "当前"),
-            vue.createElementVNode(
-              "text",
-              { class: "town-text" },
-              vue.toDisplayString($data.townList[$data.townIndex] || "请选择乡镇"),
-              1
-              /* TEXT */
-            ),
-            vue.createElementVNode("text", { class: "town-switch" }, "切换"),
-            vue.createElementVNode("text", { class: "town-arrow" }, "›")
-          ])
-        ], 40, ["range", "value"])
-      ]),
-      vue.createElementVNode("view", { class: "banner" }, [
-        vue.createElementVNode("swiper", {
-          class: "swiper",
-          autoplay: "",
-          circular: "",
-          "indicator-dots": "",
-          "indicator-color": "rgba(255,255,255,0.4)",
-          "indicator-active-color": "#fff"
-        }, [
-          vue.createElementVNode("swiper-item", null, [
-            vue.createElementVNode("view", { class: "banner-card banner-promo" }, [
-              vue.createElementVNode("text", { class: "banner-promo-title" }, "膨半价 节日神券"),
-              vue.createElementVNode("view", { class: "banner-promo-tags" }, [
-                vue.createElementVNode("text", { class: "promo-tag" }, "抢1888元"),
-                vue.createElementVNode("text", { class: "promo-tag" }, "38节最高得50元"),
-                vue.createElementVNode("text", { class: "promo-tag" }, "2.9元起")
-              ])
-            ])
-          ]),
-          vue.createElementVNode("swiper-item", null, [
-            vue.createElementVNode("view", { class: "banner-card banner-card2" }, [
-              vue.createElementVNode("view", { class: "banner-content" }, [
-                vue.createElementVNode("text", { class: "banner-title" }, "足不出户 坐等美食"),
-                vue.createElementVNode("text", { class: "banner-sub" }, "每日精选超值好物")
-              ]),
-              vue.createElementVNode("text", { class: "banner-emoji" }, "🎉")
-            ])
-          ]),
-          vue.createElementVNode("swiper-item", null, [
-            vue.createElementVNode("view", { class: "banner-card banner-card3" }, [
-              vue.createElementVNode("view", { class: "banner-content" }, [
-                vue.createElementVNode("text", { class: "banner-title" }, "招乡镇站长免加盟费"),
-                vue.createElementVNode("text", { class: "banner-sub" }, "每个乡镇仅限一名")
-              ]),
-              vue.createElementVNode("text", { class: "banner-emoji" }, "📋")
-            ])
-          ])
-        ])
-      ]),
-      vue.createElementVNode("view", { class: "category-grid category-grid-4" }, [
-        (vue.openBlock(true), vue.createElementBlock(
-          vue.Fragment,
-          null,
-          vue.renderList($data.townCategoryList, (item) => {
-            return vue.openBlock(), vue.createElementBlock("view", {
-              class: "category-grid-item",
-              key: item.id,
-              onClick: ($event) => $options.onTownCategoryClick(item)
-            }, [
-              vue.createElementVNode(
-                "view",
-                {
-                  class: "category-grid-icon",
-                  style: vue.normalizeStyle({ backgroundColor: item.bgColor })
-                },
-                [
-                  vue.createElementVNode(
-                    "text",
-                    { class: "category-grid-emoji" },
-                    vue.toDisplayString(item.emoji),
-                    1
-                    /* TEXT */
-                  )
-                ],
-                4
-                /* STYLE */
-              ),
-              vue.createElementVNode(
-                "text",
-                { class: "category-grid-name" },
-                vue.toDisplayString(item.name),
-                1
-                /* TEXT */
-              )
-            ], 8, ["onClick"]);
-          }),
-          128
-          /* KEYED_FRAGMENT */
-        ))
-      ]),
-      $data.recommendList.length > 0 ? (vue.openBlock(), vue.createElementBlock("view", {
-        key: 0,
-        class: "section"
-      }, [
-        vue.createElementVNode("view", { class: "section-head" }, [
-          vue.createElementVNode("view", { class: "section-head-left" }, [
-            vue.createElementVNode("text", { class: "section-title" }, "镇上销量排行榜")
-          ]),
-          vue.createElementVNode("text", {
-            class: "section-more",
-            onClick: _cache[1] || (_cache[1] = (...args) => $options.onMoreRank && $options.onMoreRank(...args))
-          }, "更多›")
-        ]),
-        vue.createElementVNode("scroll-view", {
-          class: "recommend-scroll",
-          "scroll-x": ""
-        }, [
-          (vue.openBlock(true), vue.createElementBlock(
-            vue.Fragment,
-            null,
-            vue.renderList($data.recommendList, (item) => {
-              return vue.openBlock(), vue.createElementBlock("view", {
-                class: "recommend-item",
-                key: item.商品ID,
-                onClick: ($event) => $options.goDetail(item.商品ID)
-              }, [
-                vue.createElementVNode("view", { class: "recommend-img" }, [
-                  vue.createElementVNode("text", { class: "recommend-emoji" }, "🍱")
-                ]),
-                vue.createElementVNode(
-                  "text",
-                  { class: "recommend-name" },
-                  vue.toDisplayString(item.商品名称),
-                  1
-                  /* TEXT */
-                ),
-                vue.createElementVNode(
-                  "text",
-                  { class: "recommend-price" },
-                  "¥" + vue.toDisplayString(item.价格),
-                  1
-                  /* TEXT */
-                )
-              ], 8, ["onClick"]);
-            }),
-            128
-            /* KEYED_FRAGMENT */
-          ))
-        ])
-      ])) : vue.createCommentVNode("v-if", true),
-      vue.createElementVNode("view", { class: "coupon-row" }, [
-        vue.createElementVNode("view", {
-          class: "coupon-card",
-          onClick: _cache[2] || (_cache[2] = ($event) => $options.onCouponUse(20))
-        }, [
-          vue.createElementVNode("view", { class: "coupon-card-left" }, [
-            vue.createElementVNode("text", { class: "coupon-value" }, "20"),
-            vue.createElementVNode("text", { class: "coupon-unit" }, "元"),
-            vue.createElementVNode("text", { class: "coupon-title" }, "外卖大额神券"),
-            vue.createElementVNode("text", { class: "coupon-desc" }, "满38可用"),
-            vue.createElementVNode("text", { class: "coupon-expire" }, "08:00:51后失效")
-          ]),
-          vue.createElementVNode("view", { class: "coupon-btn" }, "去使用")
-        ]),
-        vue.createElementVNode("view", {
-          class: "coupon-card",
-          onClick: _cache[3] || (_cache[3] = ($event) => $options.onCouponUse(13))
-        }, [
-          vue.createElementVNode("view", { class: "coupon-card-left" }, [
-            vue.createElementVNode("text", { class: "coupon-value" }, "13"),
-            vue.createElementVNode("text", { class: "coupon-unit" }, "元"),
-            vue.createElementVNode("text", { class: "coupon-title" }, "外卖大额神券"),
-            vue.createElementVNode("text", { class: "coupon-desc" }, "满30可用"),
-            vue.createElementVNode("text", { class: "coupon-expire" }, "08:00:51后失效")
-          ]),
-          vue.createElementVNode("view", { class: "coupon-btn" }, "去使用")
-        ])
-      ]),
-      vue.createElementVNode("view", { class: "section section-merchants" }, [
-        vue.createElementVNode("view", { class: "section-head" }, [
-          vue.createElementVNode("text", { class: "section-title" }, "附近商家"),
-          vue.createElementVNode("view", { class: "merchant-tabs" }, [
-            vue.createElementVNode(
-              "text",
-              {
-                class: vue.normalizeClass(["merchant-tab", { active: $data.merchantTab === "特价" }]),
-                onClick: _cache[4] || (_cache[4] = ($event) => $data.merchantTab = "特价")
-              },
-              "特价外卖",
-              2
-              /* CLASS */
-            ),
-            vue.createElementVNode(
-              "text",
-              {
-                class: vue.normalizeClass(["merchant-tab", { active: $data.merchantTab === "10元" }]),
-                onClick: _cache[5] || (_cache[5] = ($event) => $data.merchantTab = "10元")
-              },
-              "10元点套餐",
-              2
-              /* CLASS */
-            )
-          ])
-        ]),
-        $data.recommendList.length > 0 ? (vue.openBlock(), vue.createElementBlock("view", {
-          key: 0,
-          class: "merchant-list"
-        }, [
-          (vue.openBlock(true), vue.createElementBlock(
-            vue.Fragment,
-            null,
-            vue.renderList($data.recommendList.slice(0, 6), (item) => {
-              return vue.openBlock(), vue.createElementBlock("view", {
-                class: "merchant-card",
-                key: item.商品ID,
-                onClick: ($event) => $options.goDetail(item.商品ID)
-              }, [
-                vue.createElementVNode("view", { class: "merchant-card-img" }, [
-                  vue.createElementVNode("text", { class: "merchant-emoji" }, "🍱")
-                ]),
-                vue.createElementVNode("view", { class: "merchant-card-body" }, [
-                  vue.createElementVNode(
-                    "text",
-                    { class: "merchant-name" },
-                    vue.toDisplayString(item.商品名称),
-                    1
-                    /* TEXT */
-                  ),
-                  vue.createElementVNode("view", { class: "merchant-meta" }, [
-                    vue.createElementVNode("text", { class: "merchant-score" }, "4.6分"),
-                    vue.createElementVNode(
-                      "text",
-                      { class: "merchant-sales" },
-                      "月售" + vue.toDisplayString(item.月销) + "+",
-                      1
-                      /* TEXT */
-                    ),
-                    vue.createElementVNode(
-                      "text",
-                      { class: "merchant-avg" },
-                      "人均¥" + vue.toDisplayString(item.价格),
-                      1
-                      /* TEXT */
-                    )
-                  ]),
-                  vue.createElementVNode("view", { class: "merchant-delivery" }, [
-                    vue.createElementVNode("text", { class: "delivery-tag" }, "专送"),
-                    vue.createElementVNode("text", { class: "delivery-dist" }, "约15分钟")
-                  ]),
-                  vue.createElementVNode("view", { class: "merchant-tags" }, [
-                    vue.createElementVNode("text", { class: "tag" }, "起送¥20 免配送费"),
-                    vue.createElementVNode("text", { class: "tag coupon-tag" }, "神券 满38减20")
-                  ])
-                ]),
-                vue.createElementVNode("view", {
-                  class: "merchant-cart",
-                  onClick: vue.withModifiers(($event) => $options.handleAddToCart(item), ["stop"])
-                }, [
-                  vue.createElementVNode("text", { class: "cart-icon" }, "🛒")
-                ], 8, ["onClick"])
-              ], 8, ["onClick"]);
-            }),
-            128
-            /* KEYED_FRAGMENT */
-          ))
-        ])) : (vue.openBlock(), vue.createElementBlock("view", {
-          key: 1,
-          class: "empty-goods"
-        }, [
-          vue.createElementVNode("text", { class: "empty-text" }, "暂无商家")
-        ]))
-      ]),
-      $data.currentCategory ? (vue.openBlock(), vue.createElementBlock("view", {
-        key: 1,
-        class: "section"
-      }, [
-        vue.createElementVNode("view", { class: "section-header" }, [
-          vue.createElementVNode(
-            "text",
-            { class: "section-title" },
-            vue.toDisplayString($data.currentCategory),
-            1
-            /* TEXT */
-          ),
-          vue.createElementVNode("text", {
-            class: "clear-filter",
-            onClick: _cache[6] || (_cache[6] = (...args) => $options.clearFilter && $options.clearFilter(...args))
-          }, "查看全部")
-        ]),
-        vue.createElementVNode("view", { class: "sort-bar" }, [
-          vue.createElementVNode(
-            "view",
-            {
-              class: vue.normalizeClass(["sort-item", { active: $data.sortType === "综合排序" }]),
-              onClick: _cache[7] || (_cache[7] = ($event) => $options.onSortClick("综合排序"))
-            },
-            [
-              vue.createElementVNode("text", { class: "sort-text" }, "综合排序")
-            ],
-            2
-            /* CLASS */
-          ),
-          vue.createElementVNode(
-            "view",
-            {
-              class: vue.normalizeClass(["sort-item", { active: $data.sortType === "销量" }]),
-              onClick: _cache[8] || (_cache[8] = ($event) => $options.onSortClick("销量"))
-            },
-            [
-              vue.createElementVNode("text", { class: "sort-text" }, "销量")
-            ],
-            2
-            /* CLASS */
-          ),
-          vue.createElementVNode(
-            "view",
-            {
-              class: vue.normalizeClass(["sort-item", { active: $data.sortType === "价格" }]),
-              onClick: _cache[9] || (_cache[9] = ($event) => $options.onSortClick("价格"))
-            },
-            [
-              vue.createElementVNode("text", { class: "sort-text" }, "价格")
-            ],
-            2
-            /* CLASS */
-          )
-        ]),
-        vue.createElementVNode("view", { class: "goods-list" }, [
-          (vue.openBlock(true), vue.createElementBlock(
-            vue.Fragment,
-            null,
-            vue.renderList($data.goodsList, (item) => {
-              return vue.openBlock(), vue.createElementBlock("view", {
-                class: "goods-item",
-                key: item.商品ID,
-                onClick: ($event) => $options.goDetail(item.商品ID)
-              }, [
-                vue.createElementVNode("view", { class: "goods-img-wrap" }, [
-                  vue.createElementVNode("text", { class: "goods-emoji" }, "🍱")
-                ]),
-                vue.createElementVNode("view", { class: "goods-info" }, [
-                  vue.createElementVNode(
-                    "text",
-                    { class: "goods-name" },
-                    vue.toDisplayString(item.商品名称),
-                    1
-                    /* TEXT */
-                  ),
-                  vue.createElementVNode(
-                    "text",
-                    { class: "goods-desc" },
-                    "月售 " + vue.toDisplayString(item.月销) + " · " + vue.toDisplayString(item.描述),
-                    1
-                    /* TEXT */
-                  ),
-                  vue.createElementVNode("view", { class: "goods-bottom" }, [
-                    vue.createElementVNode(
-                      "text",
-                      { class: "goods-price" },
-                      "¥" + vue.toDisplayString(item.价格),
-                      1
-                      /* TEXT */
-                    ),
-                    vue.createElementVNode("view", {
-                      class: "add-btn",
-                      onClick: vue.withModifiers(($event) => $options.handleAddToCart(item), ["stop"])
-                    }, [
-                      vue.createElementVNode("text", { class: "add-btn-text" }, "+")
-                    ], 8, ["onClick"])
-                  ])
-                ])
-              ], 8, ["onClick"]);
-            }),
-            128
-            /* KEYED_FRAGMENT */
-          ))
-        ]),
-        $data.goodsList.length === 0 ? (vue.openBlock(), vue.createElementBlock("view", {
-          key: 0,
-          class: "empty-goods"
-        }, [
-          vue.createElementVNode("text", { class: "empty-text" }, "该分类暂无商品")
-        ])) : vue.createCommentVNode("v-if", true)
-      ])) : vue.createCommentVNode("v-if", true)
-    ]);
-  }
-  const PagesTownTakeawayIndex = /* @__PURE__ */ _export_sfc(_sfc_main$q, [["render", _sfc_render$p], ["__scopeId", "data-v-9b03a2ad"], ["__file", "E:/固始县外卖商家端/pages/town-takeaway/index.vue"]]);
-  const _sfc_main$p = {
-    methods: {
-      goBack() {
-        uni.switchTab({ url: "/pages/home/index" });
-      },
-      goSellPhone() {
-        uni.navigateTo({ url: "/pages/sell-phone/index" });
-      },
-      goBuyPhone() {
-        uni.navigateTo({ url: "/pages/buy-phone/index" });
-      },
-      onOptionClick(name) {
-        uni.showToast({ title: name + " 敬请期待", icon: "none" });
-      }
-    }
-  };
-  function _sfc_render$o(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      vue.createElementVNode("view", { class: "nav-bar" }, [
-        vue.createElementVNode("view", {
-          class: "nav-left",
-          onClick: _cache[0] || (_cache[0] = (...args) => $options.goBack && $options.goBack(...args))
-        }, [
-          vue.createElementVNode("text", { class: "nav-back" }, "‹"),
-          vue.createElementVNode("text", { class: "nav-back-text" }, "返回")
-        ])
-      ]),
-      vue.createElementVNode("view", { class: "option-grid" }, [
-        vue.createElementVNode("view", {
-          class: "option-card",
-          onClick: _cache[1] || (_cache[1] = (...args) => $options.goSellPhone && $options.goSellPhone(...args))
-        }, [
-          vue.createElementVNode("text", { class: "option-title" }, "我要卖手机")
-        ]),
-        vue.createElementVNode("view", {
-          class: "option-card",
-          onClick: _cache[2] || (_cache[2] = (...args) => $options.goBuyPhone && $options.goBuyPhone(...args))
-        }, [
-          vue.createElementVNode("text", { class: "option-title" }, "我要买二手机")
-        ])
-      ])
-    ]);
-  }
-  const PagesMobileDigitalIndex = /* @__PURE__ */ _export_sfc(_sfc_main$p, [["render", _sfc_render$o], ["__scopeId", "data-v-c760bf8a"], ["__file", "E:/固始县外卖商家端/pages/mobile-digital/index.vue"]]);
-  const _sfc_main$o = {
-    data() {
-      return {
-        form: {
-          brand: "",
-          model: "",
-          condition: "全新",
-          storage: "64G",
-          remark: "",
-          phone: ""
-        },
-        conditionList: ["全新", "几乎全新", "轻微使用痕迹", "明显使用痕迹", "有磕碰/划痕"],
-        conditionIndex: 0,
-        storageList: ["64G", "128G", "256G", "512G", "1T"],
-        storageIndex: 0
-      };
-    },
-    methods: {
-      goBack() {
-        uni.navigateBack();
-      },
-      onConditionChange(e2) {
-        this.conditionIndex = e2.detail.value;
-        this.form.condition = this.conditionList[e2.detail.value];
-      },
-      onStorageChange(e2) {
-        this.storageIndex = e2.detail.value;
-        this.form.storage = this.storageList[e2.detail.value];
-      },
-      handleSubmit() {
-        if (!this.form.brand.trim()) {
-          uni.showToast({ title: "请填写手机品牌", icon: "none" });
-          return;
-        }
-        if (!this.form.model.trim()) {
-          uni.showToast({ title: "请填写手机型号", icon: "none" });
-          return;
-        }
-        if (!this.form.condition) {
-          uni.showToast({ title: "请选择成色", icon: "none" });
-          return;
-        }
-        if (!this.form.storage) {
-          uni.showToast({ title: "请选择内存容量", icon: "none" });
-          return;
-        }
-        if (!this.form.phone.trim()) {
-          uni.showToast({ title: "请填写联系电话", icon: "none" });
-          return;
-        }
-        uni.showToast({ title: "提交成功，我们会尽快联系您估价", icon: "success" });
-        setTimeout(() => {
-          uni.navigateBack();
-        }, 1500);
-      }
-    }
-  };
-  function _sfc_render$n(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      vue.createElementVNode("view", { class: "nav-bar" }, [
-        vue.createElementVNode("view", {
-          class: "nav-left",
-          onClick: _cache[0] || (_cache[0] = (...args) => $options.goBack && $options.goBack(...args))
-        }, [
-          vue.createElementVNode("text", { class: "nav-back" }, "‹"),
-          vue.createElementVNode("text", { class: "nav-back-text" }, "返回")
-        ]),
-        vue.createElementVNode("text", { class: "nav-title" }, "我要卖手机")
-      ]),
-      vue.createElementVNode("view", { class: "content" }, [
-        vue.createElementVNode("view", { class: "tip-box" }, [
-          vue.createElementVNode("text", { class: "tip-text" }, "填写手机信息，提交后我们将尽快为您估价")
-        ]),
-        vue.createElementVNode("view", { class: "form-section" }, [
-          vue.createElementVNode("view", { class: "form-item" }, [
-            vue.createElementVNode("text", { class: "form-label" }, "手机品牌"),
-            vue.withDirectives(vue.createElementVNode(
-              "input",
-              {
-                class: "form-input",
-                "onUpdate:modelValue": _cache[1] || (_cache[1] = ($event) => $data.form.brand = $event),
-                placeholder: "如：苹果、华为、小米"
-              },
-              null,
-              512
-              /* NEED_PATCH */
-            ), [
-              [vue.vModelText, $data.form.brand]
-            ])
-          ]),
-          vue.createElementVNode("view", { class: "form-item" }, [
-            vue.createElementVNode("text", { class: "form-label" }, "手机型号"),
-            vue.withDirectives(vue.createElementVNode(
-              "input",
-              {
-                class: "form-input",
-                "onUpdate:modelValue": _cache[2] || (_cache[2] = ($event) => $data.form.model = $event),
-                placeholder: "如：iPhone 14、Mate 60"
-              },
-              null,
-              512
-              /* NEED_PATCH */
-            ), [
-              [vue.vModelText, $data.form.model]
-            ])
-          ]),
-          vue.createElementVNode("view", { class: "form-item" }, [
-            vue.createElementVNode("text", { class: "form-label" }, "成色"),
-            vue.createElementVNode("picker", {
-              range: $data.conditionList,
-              onChange: _cache[3] || (_cache[3] = (...args) => $options.onConditionChange && $options.onConditionChange(...args)),
-              value: $data.conditionIndex
-            }, [
-              vue.createElementVNode("view", { class: "picker-value" }, [
-                vue.createElementVNode(
-                  "text",
-                  {
-                    class: vue.normalizeClass($data.form.condition ? "picker-text" : "picker-placeholder")
-                  },
-                  vue.toDisplayString($data.form.condition || "请选择成色"),
-                  3
-                  /* TEXT, CLASS */
-                ),
-                vue.createElementVNode("text", { class: "picker-arrow" }, "›")
-              ])
-            ], 40, ["range", "value"])
-          ]),
-          vue.createElementVNode("view", { class: "form-item" }, [
-            vue.createElementVNode("text", { class: "form-label" }, "内存容量"),
-            vue.createElementVNode("picker", {
-              range: $data.storageList,
-              onChange: _cache[4] || (_cache[4] = (...args) => $options.onStorageChange && $options.onStorageChange(...args)),
-              value: $data.storageIndex
-            }, [
-              vue.createElementVNode("view", { class: "picker-value" }, [
-                vue.createElementVNode(
-                  "text",
-                  {
-                    class: vue.normalizeClass($data.form.storage ? "picker-text" : "picker-placeholder")
-                  },
-                  vue.toDisplayString($data.form.storage || "请选择"),
-                  3
-                  /* TEXT, CLASS */
-                ),
-                vue.createElementVNode("text", { class: "picker-arrow" }, "›")
-              ])
-            ], 40, ["range", "value"])
-          ]),
-          vue.createElementVNode("view", { class: "form-item" }, [
-            vue.createElementVNode("text", { class: "form-label" }, "其他说明"),
-            vue.withDirectives(vue.createElementVNode(
-              "textarea",
-              {
-                class: "form-textarea",
-                "onUpdate:modelValue": _cache[5] || (_cache[5] = ($event) => $data.form.remark = $event),
-                placeholder: "屏幕、电池、维修史等（选填）"
-              },
-              null,
-              512
-              /* NEED_PATCH */
-            ), [
-              [vue.vModelText, $data.form.remark]
-            ])
-          ]),
-          vue.createElementVNode("view", { class: "form-item" }, [
-            vue.createElementVNode("text", { class: "form-label" }, "联系电话"),
-            vue.withDirectives(vue.createElementVNode(
-              "input",
-              {
-                class: "form-input",
-                "onUpdate:modelValue": _cache[6] || (_cache[6] = ($event) => $data.form.phone = $event),
-                placeholder: "便于联系您估价",
-                type: "number"
-              },
-              null,
-              512
-              /* NEED_PATCH */
-            ), [
-              [vue.vModelText, $data.form.phone]
-            ])
-          ])
-        ]),
-        vue.createElementVNode("view", { class: "submit-wrap" }, [
-          vue.createElementVNode("view", {
-            class: "submit-btn",
-            onClick: _cache[7] || (_cache[7] = (...args) => $options.handleSubmit && $options.handleSubmit(...args))
-          }, [
-            vue.createElementVNode("text", { class: "submit-btn-text" }, "提交估价")
-          ])
-        ])
-      ])
-    ]);
-  }
-  const PagesSellPhoneIndex = /* @__PURE__ */ _export_sfc(_sfc_main$o, [["render", _sfc_render$n], ["__scopeId", "data-v-fea9a689"], ["__file", "E:/固始县外卖商家端/pages/sell-phone/index.vue"]]);
-  const CATEGORY_NAME = "二手机";
-  const _sfc_main$n = {
-    data() {
-      return {
-        list: [],
-        listHeight: 400,
-        refreshing: false,
-        brandList: ["全部", "华为", "荣耀", "OPPO", "VIVO", "苹果iphone", "小米"],
-        brandIndex: 0
-      };
-    },
-    computed: {
-      cardMinHeightPx() {
-        const h2 = this.listHeight;
-        const paddingAndGaps = 50;
-        return Math.max(120, Math.floor((h2 - paddingAndGaps) / 5));
-      }
-    },
-    onLoad() {
-      const sys2 = uni.getSystemInfoSync();
-      const winH = sys2.windowHeight || 500;
-      this.listHeight = Math.max(400, Math.floor(winH - 100));
-      this.loadList();
-    },
-    onPullDownRefresh() {
-      this.loadList().catch(() => {
-      }).finally(() => {
-        uni.stopPullDownRefresh();
-      });
-    },
-    methods: {
-      goBack() {
-        uni.navigateBack();
-      },
-      onBrandChange(e2) {
-        this.brandIndex = e2.detail.value;
-        this.loadList();
-      },
-      onFloatBtn() {
-        uni.showToast({ title: "列表/卡片", icon: "none" });
-      },
-      async loadList() {
-        try {
-          const 搜索 = this.brandIndex === 0 ? "" : this.brandList[this.brandIndex];
-          const res = await getFoodList(CATEGORY_NAME, void 0, 搜索);
-          let rows = res.商品列表 || [];
-          const 等级List = ["E", "C+2", "I+", "E1", "C+"];
-          const 联盟List = ["严选联盟", "个人货源", "严选联盟", "门店直收", "严选联盟"];
-          const 卖家List = ["严选小豹帮卖", "广东深圳仓", "严选托管-均盛通讯", "江西志远站", "严选托管-均盛通讯"];
-          const 标签示例 = ["国行", "过保", "壳大花", "屏大花", "屏幕显示异常", "外屏维修", "面容功能异常"];
-          rows = rows.map((item, i2) => {
-            const 描述 = (item.描述 || "").trim();
-            const 标签数组 = 描述 ? 描述.split(/\|/).map((s2) => s2.trim()).filter(Boolean) : 标签示例;
-            const 联盟 = 联盟List[i2 % 5];
-            const 标签文案 = 标签数组.join(" | ");
-            return {
-              ...item,
-              等级: 等级List[i2 % 5] || "",
-              联盟,
-              标签列表: 标签数组,
-              标签文案,
-              卖家: item.卖家 || 卖家List[i2 % 5]
-            };
-          });
-          if (rows.length === 0) {
-            rows = [
-              {
-                商品ID: 0,
-                商品名称: "苹果 iPhone Xs 256G 银色",
-                价格: 390,
-                描述: "国行|过保|壳大花|屏大花|屏幕显示异常|外屏维修|面容功能异常",
-                等级: "I+",
-                联盟: "严选联盟",
-                标签列表: ["国行", "过保", "壳大花", "屏大花", "屏幕显示异常", "外屏维修", "面容功能异常"],
-                标签文案: "国行 | 过保 | 壳大花 | 屏大花 | 屏幕显示异常 | 外屏维修 | 面容功能异常",
-                卖家: "严选托管-均盛通讯"
-              },
-              {
-                商品ID: 1,
-                商品名称: "OPPO A55",
-                价格: 350,
-                描述: "国行|全网通|成色良好",
-                等级: "E",
-                联盟: "严选联盟",
-                标签列表: ["国行", "全网通", "成色良好"],
-                标签文案: "国行 | 全网通 | 成色良好",
-                卖家: "严选托管-均盛通讯"
-              },
-              {
-                商品ID: 2,
-                商品名称: "小米9",
-                价格: 260,
-                描述: "国行|全网通|功能正常",
-                等级: "C+",
-                联盟: "严选联盟",
-                标签列表: ["国行", "全网通", "功能正常"],
-                标签文案: "国行 | 全网通 | 功能正常",
-                卖家: "严选托管-均盛通讯"
-              },
-              {
-                商品ID: 3,
-                商品名称: "荣耀9",
-                价格: 150,
-                描述: "国行|全网通|备用机",
-                等级: "E1",
-                联盟: "严选联盟",
-                标签列表: ["国行", "全网通", "备用机"],
-                标签文案: "国行 | 全网通 | 备用机",
-                卖家: "严选托管-均盛通讯"
-              },
-              {
-                商品ID: 4,
-                商品名称: "华为P30",
-                价格: 300,
-                描述: "国行|全网通|成色靓",
-                等级: "C+2",
-                联盟: "严选联盟",
-                标签列表: ["国行", "全网通", "成色靓"],
-                标签文案: "国行 | 全网通 | 成色靓",
-                卖家: "严选托管-均盛通讯"
-              },
-              {
-                商品ID: 5,
-                商品名称: "vivo Y52s 8+128G",
-                价格: 420,
-                描述: "国行|全网通|功能正常",
-                等级: "E",
-                联盟: "严选联盟",
-                标签列表: ["国行", "全网通", "功能正常"],
-                标签文案: "国行 | 全网通 | 功能正常",
-                卖家: "严选托管-均盛通讯"
-              },
-              {
-                商品ID: 6,
-                商品名称: "红米 Note9 6+128G",
-                价格: 380,
-                描述: "国行|全网通|成色良好",
-                等级: "C+",
-                联盟: "严选联盟",
-                标签列表: ["国行", "全网通", "成色良好"],
-                标签文案: "国行 | 全网通 | 成色良好",
-                卖家: "严选托管-均盛通讯"
-              },
-              {
-                商品ID: 7,
-                商品名称: "苹果 iPhone 7 128G",
-                价格: 480,
-                描述: "国行|过保|备用机",
-                等级: "I+",
-                联盟: "严选联盟",
-                标签列表: ["国行", "过保", "备用机"],
-                标签文案: "国行 | 过保 | 备用机",
-                卖家: "严选托管-均盛通讯"
-              },
-              {
-                商品ID: 8,
-                商品名称: "华为 畅享20",
-                价格: 320,
-                描述: "国行|全网通|功能正常",
-                等级: "E1",
-                联盟: "严选联盟",
-                标签列表: ["国行", "全网通", "功能正常"],
-                标签文案: "国行 | 全网通 | 功能正常",
-                卖家: "严选托管-均盛通讯"
-              },
-              {
-                商品ID: 9,
-                商品名称: "OPPO K7x 8+128G",
-                价格: 450,
-                描述: "国行|全网通|成色靓",
-                等级: "C+2",
-                联盟: "严选联盟",
-                标签列表: ["国行", "全网通", "成色靓"],
-                标签文案: "国行 | 全网通 | 成色靓",
-                卖家: "严选托管-均盛通讯"
-              }
-            ];
-          }
-          this.list = rows;
-        } catch (e2) {
-          this.list = [
-            {
-              商品ID: 0,
-              商品名称: "苹果 iPhone Xs 256G 银色",
-              价格: 390,
-              描述: "国行|过保|壳大花|屏大花|屏幕显示异常|外屏维修|面容功能异常",
-              等级: "I+",
-              联盟: "严选联盟",
-              标签列表: ["国行", "过保", "壳大花", "屏大花", "屏幕显示异常", "外屏维修", "面容功能异常"],
-              标签文案: "国行 | 过保 | 壳大花 | 屏大花 | 屏幕显示异常 | 外屏维修 | 面容功能异常",
-              卖家: "严选托管-均盛通讯"
-            },
-            {
-              商品ID: 1,
-              商品名称: "OPPO A55",
-              价格: 350,
-              描述: "国行|全网通|成色良好",
-              等级: "E",
-              联盟: "严选联盟",
-              标签列表: ["国行", "全网通", "成色良好"],
-              标签文案: "国行 | 全网通 | 成色良好",
-              卖家: "严选托管-均盛通讯"
-            },
-            {
-              商品ID: 2,
-              商品名称: "小米9",
-              价格: 260,
-              描述: "国行|全网通|功能正常",
-              等级: "C+",
-              联盟: "严选联盟",
-              标签列表: ["国行", "全网通", "功能正常"],
-              标签文案: "国行 | 全网通 | 功能正常",
-              卖家: "严选托管-均盛通讯"
-            },
-            {
-              商品ID: 3,
-              商品名称: "荣耀9",
-              价格: 150,
-              描述: "国行|全网通|备用机",
-              等级: "E1",
-              联盟: "严选联盟",
-              标签列表: ["国行", "全网通", "备用机"],
-              标签文案: "国行 | 全网通 | 备用机",
-              卖家: "严选托管-均盛通讯"
-            },
-            {
-              商品ID: 4,
-              商品名称: "华为P30",
-              价格: 300,
-              描述: "国行|全网通|成色靓",
-              等级: "C+2",
-              联盟: "严选联盟",
-              标签列表: ["国行", "全网通", "成色靓"],
-              标签文案: "国行 | 全网通 | 成色靓",
-              卖家: "严选托管-均盛通讯"
-            },
-            {
-              商品ID: 5,
-              商品名称: "vivo Y52s 8+128G",
-              价格: 420,
-              描述: "国行|全网通|功能正常",
-              等级: "E",
-              联盟: "严选联盟",
-              标签列表: ["国行", "全网通", "功能正常"],
-              标签文案: "国行 | 全网通 | 功能正常",
-              卖家: "严选托管-均盛通讯"
-            },
-            {
-              商品ID: 6,
-              商品名称: "红米 Note9 6+128G",
-              价格: 380,
-              描述: "国行|全网通|成色良好",
-              等级: "C+",
-              联盟: "严选联盟",
-              标签列表: ["国行", "全网通", "成色良好"],
-              标签文案: "国行 | 全网通 | 成色良好",
-              卖家: "严选托管-均盛通讯"
-            },
-            {
-              商品ID: 7,
-              商品名称: "苹果 iPhone 7 128G",
-              价格: 480,
-              描述: "国行|过保|备用机",
-              等级: "I+",
-              联盟: "严选联盟",
-              标签列表: ["国行", "过保", "备用机"],
-              标签文案: "国行 | 过保 | 备用机",
-              卖家: "严选托管-均盛通讯"
-            },
-            {
-              商品ID: 8,
-              商品名称: "华为 畅享20",
-              价格: 320,
-              描述: "国行|全网通|功能正常",
-              等级: "E1",
-              联盟: "严选联盟",
-              标签列表: ["国行", "全网通", "功能正常"],
-              标签文案: "国行 | 全网通 | 功能正常",
-              卖家: "严选托管-均盛通讯"
-            },
-            {
-              商品ID: 9,
-              商品名称: "OPPO K7x 8+128G",
-              价格: 450,
-              描述: "国行|全网通|成色靓",
-              等级: "C+2",
-              联盟: "严选联盟",
-              标签列表: ["国行", "全网通", "成色靓"],
-              标签文案: "国行 | 全网通 | 成色靓",
-              卖家: "严选托管-均盛通讯"
-            }
-          ];
-        }
-      },
-      onRefresh() {
-        this.refreshing = true;
-        this.loadList().then(() => {
-          this.refreshing = false;
-        });
-      },
-      loadMore() {
-      },
-      goDetail(id) {
-        uni.navigateTo({ url: "/pages/food/detail?id=" + id });
-      },
-      onConsult(item) {
-        uni.showToast({ title: "咨询：" + item.商品名称, icon: "none" });
-      },
-      onBuy(item) {
-        uni.showToast({ title: "直接购买：" + item.商品名称, icon: "none" });
-      }
-    }
-  };
-  function _sfc_render$m(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      vue.createElementVNode("view", { class: "nav-bar" }, [
-        vue.createElementVNode("view", {
-          class: "nav-left",
-          onClick: _cache[0] || (_cache[0] = (...args) => $options.goBack && $options.goBack(...args))
-        }, [
-          vue.createElementVNode("text", { class: "nav-arrow" }, "‹")
-        ]),
-        vue.createElementVNode("text", { class: "nav-title" }, "我要买二手机")
-      ]),
-      vue.createElementVNode("view", { class: "filter-bar" }, [
-        vue.createElementVNode("view", { class: "filter-row" }, [
-          vue.createElementVNode("picker", {
-            mode: "selector",
-            range: $data.brandList,
-            value: $data.brandIndex,
-            onChange: _cache[1] || (_cache[1] = (...args) => $options.onBrandChange && $options.onBrandChange(...args))
-          }, [
-            vue.createElementVNode("view", { class: "filter-item" }, [
-              vue.createElementVNode(
-                "text",
-                null,
-                vue.toDisplayString($data.brandIndex === 0 ? "品牌型号" : $data.brandList[$data.brandIndex]),
-                1
-                /* TEXT */
-              ),
-              vue.createElementVNode("text", { class: "filter-arrow" }, "▼")
-            ])
-          ], 40, ["range", "value"])
-        ])
-      ]),
-      vue.createElementVNode("view", {
-        class: "float-side-btn",
-        onClick: _cache[2] || (_cache[2] = (...args) => $options.onFloatBtn && $options.onFloatBtn(...args))
-      }, [
-        vue.createElementVNode("text", { class: "float-icon" }, "▤")
-      ]),
-      vue.createElementVNode("scroll-view", {
-        class: "list-wrap",
-        "scroll-y": "",
-        style: vue.normalizeStyle({ height: $data.listHeight + "px" }),
-        onScrolltolower: _cache[3] || (_cache[3] = (...args) => $options.loadMore && $options.loadMore(...args)),
-        "refresher-enabled": "",
-        "refresher-triggered": $data.refreshing,
-        onRefresherrefresh: _cache[4] || (_cache[4] = (...args) => $options.onRefresh && $options.onRefresh(...args))
-      }, [
-        $data.list.length > 0 ? (vue.openBlock(), vue.createElementBlock("view", {
-          key: 0,
-          class: "list-inner"
-        }, [
-          (vue.openBlock(true), vue.createElementBlock(
-            vue.Fragment,
-            null,
-            vue.renderList($data.list, (item) => {
-              return vue.openBlock(), vue.createElementBlock("view", {
-                class: "phone-card",
-                key: item.商品ID,
-                style: vue.normalizeStyle({ minHeight: $options.cardMinHeightPx + "px" }),
-                onClick: ($event) => $options.goDetail(item.商品ID)
-              }, [
-                vue.createElementVNode("view", { class: "card-top" }, [
-                  item.等级 ? (vue.openBlock(), vue.createElementBlock("view", {
-                    key: 0,
-                    class: "card-grade-box"
-                  }, [
-                    vue.createElementVNode(
-                      "text",
-                      { class: "card-grade-text" },
-                      vue.toDisplayString(item.等级),
-                      1
-                      /* TEXT */
-                    )
-                  ])) : vue.createCommentVNode("v-if", true),
-                  vue.createElementVNode(
-                    "text",
-                    { class: "card-model" },
-                    vue.toDisplayString(item.商品名称),
-                    1
-                    /* TEXT */
-                  )
-                ]),
-                item.联盟 || item.标签列表 && item.标签列表.length ? (vue.openBlock(), vue.createElementBlock("view", {
-                  key: 0,
-                  class: "card-tags"
-                }, [
-                  item.联盟 ? (vue.openBlock(), vue.createElementBlock(
-                    "text",
-                    {
-                      key: 0,
-                      class: "card-tag-pill"
-                    },
-                    vue.toDisplayString(item.联盟),
-                    1
-                    /* TEXT */
-                  )) : vue.createCommentVNode("v-if", true),
-                  item.标签文案 ? (vue.openBlock(), vue.createElementBlock(
-                    "text",
-                    {
-                      key: 1,
-                      class: "card-tag-plain"
-                    },
-                    vue.toDisplayString(item.标签文案),
-                    1
-                    /* TEXT */
-                  )) : vue.createCommentVNode("v-if", true)
-                ])) : vue.createCommentVNode("v-if", true),
-                vue.createElementVNode("view", { class: "card-bottom" }, [
-                  vue.createElementVNode("view", { class: "card-left" }, [
-                    vue.createElementVNode(
-                      "text",
-                      { class: "card-price" },
-                      "¥" + vue.toDisplayString(item.价格),
-                      1
-                      /* TEXT */
-                    )
-                  ]),
-                  vue.createElementVNode("view", { class: "card-actions" }, [
-                    vue.createElementVNode("view", {
-                      class: "card-consult-btn",
-                      onClick: vue.withModifiers(($event) => $options.onConsult(item), ["stop"])
-                    }, "咨询", 8, ["onClick"]),
-                    vue.createElementVNode("view", {
-                      class: "card-buy-btn",
-                      onClick: vue.withModifiers(($event) => $options.onBuy(item), ["stop"])
-                    }, "直接购买", 8, ["onClick"])
-                  ])
-                ])
-              ], 12, ["onClick"]);
-            }),
-            128
-            /* KEYED_FRAGMENT */
-          ))
-        ])) : (vue.openBlock(), vue.createElementBlock("view", {
-          key: 1,
-          class: "empty-wrap"
-        }, [
-          vue.createElementVNode("text", { class: "empty-icon" }, "📱"),
-          vue.createElementVNode("text", { class: "empty-text" }, "暂无在售二手机"),
-          vue.createElementVNode("text", { class: "empty-tip" }, "后期上传商品后将按机型配置价格每行展示")
-        ]))
-      ], 44, ["refresher-triggered"])
-    ]);
-  }
-  const PagesBuyPhoneIndex = /* @__PURE__ */ _export_sfc(_sfc_main$n, [["render", _sfc_render$m], ["__scopeId", "data-v-399ad888"], ["__file", "E:/固始县外卖商家端/pages/buy-phone/index.vue"]]);
-  const _sfc_main$m = {
-    methods: {
-      goBack() {
-        uni.switchTab({ url: "/pages/home/index" });
-      },
-      goGoods() {
-        uni.navigateTo({ url: "/pages/digital-parts/goods" });
-      },
-      goInquiry() {
-        uni.showToast({ title: "敬请期待", icon: "none" });
-      }
-    }
-  };
-  function _sfc_render$l(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      vue.createElementVNode("view", { class: "nav-bar" }, [
-        vue.createElementVNode("view", {
-          class: "nav-left",
-          onClick: _cache[0] || (_cache[0] = (...args) => $options.goBack && $options.goBack(...args))
-        }, [
-          vue.createElementVNode("text", { class: "nav-back" }, "‹"),
-          vue.createElementVNode("text", { class: "nav-back-text" }, "返回")
-        ]),
-        vue.createElementVNode("text", { class: "nav-title" }, "数码配件")
-      ]),
-      vue.createElementVNode("view", { class: "option-grid" }, [
-        vue.createElementVNode("view", {
-          class: "option-card option-card-1",
-          onClick: _cache[1] || (_cache[1] = (...args) => $options.goGoods && $options.goGoods(...args))
-        }, [
-          vue.createElementVNode("text", { class: "option-emoji" }, "🎧"),
-          vue.createElementVNode("text", { class: "option-title" }, "浏览数码配件"),
-          vue.createElementVNode("text", { class: "option-desc" }, "耳机/数据线/充电器/保护壳等")
-        ]),
-        vue.createElementVNode("view", {
-          class: "option-card option-card-2",
-          onClick: _cache[2] || (_cache[2] = (...args) => $options.goInquiry && $options.goInquiry(...args))
-        }, [
-          vue.createElementVNode("text", { class: "option-emoji" }, "📋"),
-          vue.createElementVNode("text", { class: "option-title" }, "我要询价"),
-          vue.createElementVNode("text", { class: "option-desc" }, "批量采购、定制配件")
-        ])
-      ])
-    ]);
-  }
-  const PagesDigitalPartsIndex = /* @__PURE__ */ _export_sfc(_sfc_main$m, [["render", _sfc_render$l], ["__scopeId", "data-v-96067531"], ["__file", "E:/固始县外卖商家端/pages/digital-parts/index.vue"]]);
-  const CATEGORY$1 = "数码配件";
-  const _sfc_main$l = {
-    data() {
-      return {
-        list: []
-      };
-    },
-    onLoad() {
-      this.loadList();
-    },
-    onPullDownRefresh() {
-      this.loadList().catch(() => {
-      }).finally(() => {
-        uni.stopPullDownRefresh();
-      });
-    },
-    methods: {
-      goBack() {
-        uni.navigateBack();
-      },
-      async loadList() {
-        try {
-          const res = await getFoodList(CATEGORY$1);
-          this.list = res.商品列表 || [];
-        } catch (e2) {
-          this.list = [];
-        }
-      },
-      goDetail(id) {
-        uni.navigateTo({ url: "/pages/food/detail?id=" + id });
-      },
-      handleAdd(item) {
-        requireLogin(() => {
-          addToCart(item.商品ID, 1).then(() => {
-            uni.showToast({ title: "已加购物车", icon: "success" });
-          }).catch(() => {
-            uni.showToast({ title: "添加失败", icon: "none" });
-          });
-        });
-      }
-    }
-  };
-  function _sfc_render$k(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      vue.createElementVNode("view", { class: "nav-bar" }, [
-        vue.createElementVNode("view", {
-          class: "nav-left",
-          onClick: _cache[0] || (_cache[0] = (...args) => $options.goBack && $options.goBack(...args))
-        }, [
-          vue.createElementVNode("text", { class: "nav-back" }, "‹"),
-          vue.createElementVNode("text", { class: "nav-back-text" }, "返回")
-        ]),
-        vue.createElementVNode("text", { class: "nav-title" }, "数码配件")
-      ]),
-      vue.createElementVNode("view", { class: "list-wrap" }, [
-        $data.list.length > 0 ? (vue.openBlock(), vue.createElementBlock("view", {
-          key: 0,
-          class: "goods-list"
-        }, [
-          (vue.openBlock(true), vue.createElementBlock(
-            vue.Fragment,
-            null,
-            vue.renderList($data.list, (item) => {
-              return vue.openBlock(), vue.createElementBlock("view", {
-                class: "goods-item",
-                key: item.商品ID,
-                onClick: ($event) => $options.goDetail(item.商品ID)
-              }, [
-                vue.createElementVNode("view", { class: "goods-img-wrap" }, [
-                  vue.createElementVNode("text", { class: "goods-emoji" }, "🎧")
-                ]),
-                vue.createElementVNode("view", { class: "goods-info" }, [
-                  vue.createElementVNode(
-                    "text",
-                    { class: "goods-name" },
-                    vue.toDisplayString(item.商品名称),
-                    1
-                    /* TEXT */
-                  ),
-                  vue.createElementVNode(
-                    "text",
-                    { class: "goods-desc" },
-                    vue.toDisplayString(item.描述),
-                    1
-                    /* TEXT */
-                  ),
-                  vue.createElementVNode("view", { class: "goods-bottom" }, [
-                    vue.createElementVNode(
-                      "text",
-                      { class: "goods-price" },
-                      "¥" + vue.toDisplayString(item.价格),
-                      1
-                      /* TEXT */
-                    ),
-                    vue.createElementVNode("view", {
-                      class: "add-btn",
-                      onClick: vue.withModifiers(($event) => $options.handleAdd(item), ["stop"])
-                    }, [
-                      vue.createElementVNode("text", { class: "add-btn-text" }, "+")
-                    ], 8, ["onClick"])
-                  ])
-                ])
-              ], 8, ["onClick"]);
-            }),
-            128
-            /* KEYED_FRAGMENT */
-          ))
-        ])) : (vue.openBlock(), vue.createElementBlock("view", {
-          key: 1,
-          class: "empty"
-        }, [
-          vue.createElementVNode("text", { class: "empty-icon" }, "🎧"),
-          vue.createElementVNode("text", { class: "empty-text" }, "暂无数码配件"),
-          vue.createElementVNode("text", { class: "empty-tip" }, "商家上架后将在此展示")
-        ]))
-      ])
-    ]);
-  }
-  const PagesDigitalPartsGoods = /* @__PURE__ */ _export_sfc(_sfc_main$l, [["render", _sfc_render$k], ["__scopeId", "data-v-98b5f281"], ["__file", "E:/固始县外卖商家端/pages/digital-parts/goods.vue"]]);
-  const _sfc_main$k = {
-    methods: {
-      goBack() {
-        uni.switchTab({ url: "/pages/home/index" });
-      },
-      goGoods() {
-        uni.navigateTo({ url: "/pages/hardware/goods" });
-      },
-      goInquiry() {
-        uni.showToast({ title: "敬请期待", icon: "none" });
-      }
-    }
-  };
-  function _sfc_render$j(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      vue.createElementVNode("view", { class: "nav-bar" }, [
-        vue.createElementVNode("view", {
-          class: "nav-left",
-          onClick: _cache[0] || (_cache[0] = (...args) => $options.goBack && $options.goBack(...args))
-        }, [
-          vue.createElementVNode("text", { class: "nav-back" }, "‹"),
-          vue.createElementVNode("text", { class: "nav-back-text" }, "返回")
-        ]),
-        vue.createElementVNode("text", { class: "nav-title" }, "五金工具")
-      ]),
-      vue.createElementVNode("view", { class: "option-grid" }, [
-        vue.createElementVNode("view", {
-          class: "option-card option-card-1",
-          onClick: _cache[1] || (_cache[1] = (...args) => $options.goGoods && $options.goGoods(...args))
-        }, [
-          vue.createElementVNode("text", { class: "option-emoji" }, "🛠️"),
-          vue.createElementVNode("text", { class: "option-title" }, "浏览五金商品"),
-          vue.createElementVNode("text", { class: "option-desc" }, "螺丝/扳手/电钻/配件等")
-        ]),
-        vue.createElementVNode("view", {
-          class: "option-card option-card-2",
-          onClick: _cache[2] || (_cache[2] = (...args) => $options.goInquiry && $options.goInquiry(...args))
-        }, [
-          vue.createElementVNode("text", { class: "option-emoji" }, "📋"),
-          vue.createElementVNode("text", { class: "option-title" }, "我要询价"),
-          vue.createElementVNode("text", { class: "option-desc" }, "定制采购、批量询价")
-        ])
-      ])
-    ]);
-  }
-  const PagesHardwareIndex = /* @__PURE__ */ _export_sfc(_sfc_main$k, [["render", _sfc_render$j], ["__scopeId", "data-v-9c88997b"], ["__file", "E:/固始县外卖商家端/pages/hardware/index.vue"]]);
-  const CATEGORY = "五金工具";
-  const _sfc_main$j = {
-    data() {
-      return {
-        list: []
-      };
-    },
-    onLoad() {
-      this.loadList();
-    },
-    onPullDownRefresh() {
-      this.loadList().catch(() => {
-      }).finally(() => {
-        uni.stopPullDownRefresh();
-      });
-    },
-    methods: {
-      goBack() {
-        uni.navigateBack();
-      },
-      async loadList() {
-        try {
-          const res = await getFoodList(CATEGORY);
-          this.list = res.商品列表 || [];
-        } catch (e2) {
-          this.list = [];
-        }
-      },
-      goDetail(id) {
-        uni.navigateTo({ url: "/pages/food/detail?id=" + id });
-      },
-      handleAdd(item) {
-        requireLogin(() => {
-          addToCart(item.商品ID, 1).then(() => {
-            uni.showToast({ title: "已加购物车", icon: "success" });
-          }).catch(() => {
-            uni.showToast({ title: "添加失败", icon: "none" });
-          });
-        });
-      }
-    }
-  };
-  function _sfc_render$i(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      vue.createElementVNode("view", { class: "nav-bar" }, [
-        vue.createElementVNode("view", {
-          class: "nav-left",
-          onClick: _cache[0] || (_cache[0] = (...args) => $options.goBack && $options.goBack(...args))
-        }, [
-          vue.createElementVNode("text", { class: "nav-back" }, "‹"),
-          vue.createElementVNode("text", { class: "nav-back-text" }, "返回")
-        ]),
-        vue.createElementVNode("text", { class: "nav-title" }, "五金商品")
-      ]),
-      vue.createElementVNode("view", { class: "list-wrap" }, [
-        $data.list.length > 0 ? (vue.openBlock(), vue.createElementBlock("view", {
-          key: 0,
-          class: "goods-list"
-        }, [
-          (vue.openBlock(true), vue.createElementBlock(
-            vue.Fragment,
-            null,
-            vue.renderList($data.list, (item) => {
-              return vue.openBlock(), vue.createElementBlock("view", {
-                class: "goods-item",
-                key: item.商品ID,
-                onClick: ($event) => $options.goDetail(item.商品ID)
-              }, [
-                vue.createElementVNode("view", { class: "goods-img-wrap" }, [
-                  vue.createElementVNode("text", { class: "goods-emoji" }, "🛠️")
-                ]),
-                vue.createElementVNode("view", { class: "goods-info" }, [
-                  vue.createElementVNode(
-                    "text",
-                    { class: "goods-name" },
-                    vue.toDisplayString(item.商品名称),
-                    1
-                    /* TEXT */
-                  ),
-                  vue.createElementVNode(
-                    "text",
-                    { class: "goods-desc" },
-                    vue.toDisplayString(item.描述),
-                    1
-                    /* TEXT */
-                  ),
-                  vue.createElementVNode("view", { class: "goods-bottom" }, [
-                    vue.createElementVNode(
-                      "text",
-                      { class: "goods-price" },
-                      "¥" + vue.toDisplayString(item.价格),
-                      1
-                      /* TEXT */
-                    ),
-                    vue.createElementVNode("view", {
-                      class: "add-btn",
-                      onClick: vue.withModifiers(($event) => $options.handleAdd(item), ["stop"])
-                    }, [
-                      vue.createElementVNode("text", { class: "add-btn-text" }, "+")
-                    ], 8, ["onClick"])
-                  ])
-                ])
-              ], 8, ["onClick"]);
-            }),
-            128
-            /* KEYED_FRAGMENT */
-          ))
-        ])) : (vue.openBlock(), vue.createElementBlock("view", {
-          key: 1,
-          class: "empty"
-        }, [
-          vue.createElementVNode("text", { class: "empty-icon" }, "🛠️"),
-          vue.createElementVNode("text", { class: "empty-text" }, "暂无五金商品"),
-          vue.createElementVNode("text", { class: "empty-tip" }, "商家上架后将在此展示")
-        ]))
-      ])
-    ]);
-  }
-  const PagesHardwareGoods = /* @__PURE__ */ _export_sfc(_sfc_main$j, [["render", _sfc_render$i], ["__scopeId", "data-v-790ab79b"], ["__file", "E:/固始县外卖商家端/pages/hardware/goods.vue"]]);
-  const _sfc_main$i = {
-    methods: {
-      goBack() {
-        uni.switchTab({ url: "/pages/home/index" });
-      },
-      goReport() {
-        uni.navigateTo({ url: "/pages/appliance-repair/report" });
-      },
-      goProgress() {
-        uni.navigateTo({ url: "/pages/appliance-repair/progress" });
-      }
-    }
-  };
-  function _sfc_render$h(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      vue.createElementVNode("view", { class: "nav-bar" }, [
-        vue.createElementVNode("view", {
-          class: "nav-left",
-          onClick: _cache[0] || (_cache[0] = (...args) => $options.goBack && $options.goBack(...args))
-        }, [
-          vue.createElementVNode("text", { class: "nav-back" }, "‹"),
-          vue.createElementVNode("text", { class: "nav-back-text" }, "返回")
-        ]),
-        vue.createElementVNode("text", { class: "nav-title" }, "家电维修")
-      ]),
-      vue.createElementVNode("view", { class: "option-grid" }, [
-        vue.createElementVNode("view", {
-          class: "option-card option-card-1",
-          onClick: _cache[1] || (_cache[1] = (...args) => $options.goReport && $options.goReport(...args))
-        }, [
-          vue.createElementVNode("text", { class: "option-emoji" }, "🔧"),
-          vue.createElementVNode("text", { class: "option-title" }, "我要报修"),
-          vue.createElementVNode("text", { class: "option-desc" }, "空调/冰箱/洗衣机/电视等")
-        ]),
-        vue.createElementVNode("view", {
-          class: "option-card option-card-2",
-          onClick: _cache[2] || (_cache[2] = (...args) => $options.goProgress && $options.goProgress(...args))
-        }, [
-          vue.createElementVNode("text", { class: "option-emoji" }, "📋"),
-          vue.createElementVNode("text", { class: "option-title" }, "维修进度"),
-          vue.createElementVNode("text", { class: "option-desc" }, "查询我的报修单")
-        ])
-      ])
-    ]);
-  }
-  const PagesApplianceRepairIndex = /* @__PURE__ */ _export_sfc(_sfc_main$i, [["render", _sfc_render$h], ["__scopeId", "data-v-1ead0b20"], ["__file", "E:/固始县外卖商家端/pages/appliance-repair/index.vue"]]);
-  const _sfc_main$h = {
-    data() {
-      return {
-        types: ["空调", "冰箱", "洗衣机", "电视", "热水器", "其他"],
-        typeIndex: 0,
-        form: { desc: "", address: "", phone: "" }
-      };
-    },
-    methods: {
-      goBack() {
-        uni.navigateBack();
-      },
-      onTypeChange(e2) {
-        this.typeIndex = e2.detail.value;
-      },
-      submit() {
-        if (!this.form.desc.trim()) {
-          uni.showToast({ title: "请填写故障描述", icon: "none" });
-          return;
-        }
-        if (!this.form.phone.trim()) {
-          uni.showToast({ title: "请填写联系电话", icon: "none" });
-          return;
-        }
-        uni.showToast({ title: "提交成功，师傅将尽快联系您", icon: "success" });
-        setTimeout(() => uni.navigateBack(), 1500);
-      }
-    }
-  };
-  function _sfc_render$g(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      vue.createElementVNode("view", { class: "nav-bar" }, [
-        vue.createElementVNode("view", {
-          class: "nav-left",
-          onClick: _cache[0] || (_cache[0] = (...args) => $options.goBack && $options.goBack(...args))
-        }, [
-          vue.createElementVNode("text", { class: "nav-back" }, "‹"),
-          vue.createElementVNode("text", { class: "nav-back-text" }, "返回")
-        ]),
-        vue.createElementVNode("text", { class: "nav-title" }, "我要报修")
-      ]),
-      vue.createElementVNode("view", { class: "form-wrap" }, [
-        vue.createElementVNode("view", { class: "form-item" }, [
-          vue.createElementVNode("text", { class: "label" }, "家电类型"),
-          vue.createElementVNode("picker", {
-            mode: "selector",
-            range: $data.types,
-            value: $data.typeIndex,
-            onChange: _cache[1] || (_cache[1] = (...args) => $options.onTypeChange && $options.onTypeChange(...args))
-          }, [
-            vue.createElementVNode(
-              "view",
-              { class: "picker-val" },
-              vue.toDisplayString($data.types[$data.typeIndex]),
-              1
-              /* TEXT */
-            )
-          ], 40, ["range", "value"])
-        ]),
-        vue.createElementVNode("view", { class: "form-item" }, [
-          vue.createElementVNode("text", { class: "label" }, "故障描述"),
-          vue.withDirectives(vue.createElementVNode(
-            "textarea",
-            {
-              class: "textarea",
-              "onUpdate:modelValue": _cache[2] || (_cache[2] = ($event) => $data.form.desc = $event),
-              placeholder: "请简要描述故障现象"
-            },
-            null,
-            512
-            /* NEED_PATCH */
-          ), [
-            [vue.vModelText, $data.form.desc]
-          ])
-        ]),
-        vue.createElementVNode("view", { class: "form-item" }, [
-          vue.createElementVNode("text", { class: "label" }, "联系地址"),
-          vue.withDirectives(vue.createElementVNode(
-            "input",
-            {
-              class: "input",
-              "onUpdate:modelValue": _cache[3] || (_cache[3] = ($event) => $data.form.address = $event),
-              placeholder: "请填写详细地址"
-            },
-            null,
-            512
-            /* NEED_PATCH */
-          ), [
-            [vue.vModelText, $data.form.address]
-          ])
-        ]),
-        vue.createElementVNode("view", { class: "form-item" }, [
-          vue.createElementVNode("text", { class: "label" }, "联系电话"),
-          vue.withDirectives(vue.createElementVNode(
-            "input",
-            {
-              class: "input",
-              "onUpdate:modelValue": _cache[4] || (_cache[4] = ($event) => $data.form.phone = $event),
-              type: "number",
-              placeholder: "请填写联系电话"
-            },
-            null,
-            512
-            /* NEED_PATCH */
-          ), [
-            [vue.vModelText, $data.form.phone]
-          ])
-        ]),
-        vue.createElementVNode("view", {
-          class: "submit-btn",
-          onClick: _cache[5] || (_cache[5] = (...args) => $options.submit && $options.submit(...args))
-        }, "提交报修")
-      ])
-    ]);
-  }
-  const PagesApplianceRepairReport = /* @__PURE__ */ _export_sfc(_sfc_main$h, [["render", _sfc_render$g], ["__scopeId", "data-v-aac8e61c"], ["__file", "E:/固始县外卖商家端/pages/appliance-repair/report.vue"]]);
-  const _sfc_main$g = {
-    data() {
-      return {
-        list: []
-      };
-    },
-    methods: {
-      goBack() {
-        uni.navigateBack();
-      }
-    }
-  };
-  function _sfc_render$f(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      vue.createElementVNode("view", { class: "nav-bar" }, [
-        vue.createElementVNode("view", {
-          class: "nav-left",
-          onClick: _cache[0] || (_cache[0] = (...args) => $options.goBack && $options.goBack(...args))
-        }, [
-          vue.createElementVNode("text", { class: "nav-back" }, "‹"),
-          vue.createElementVNode("text", { class: "nav-back-text" }, "返回")
-        ]),
-        vue.createElementVNode("text", { class: "nav-title" }, "维修进度")
-      ]),
-      vue.createElementVNode("view", { class: "content" }, [
-        $data.list.length === 0 ? (vue.openBlock(), vue.createElementBlock("view", {
-          key: 0,
-          class: "empty"
-        }, [
-          vue.createElementVNode("text", { class: "empty-icon" }, "📋"),
-          vue.createElementVNode("text", { class: "empty-text" }, "暂无报修记录"),
-          vue.createElementVNode("text", { class: "empty-tip" }, "提交报修后可以在这里查看进度")
-        ])) : (vue.openBlock(), vue.createElementBlock("view", {
-          key: 1,
-          class: "list"
-        }, [
-          (vue.openBlock(true), vue.createElementBlock(
-            vue.Fragment,
-            null,
-            vue.renderList($data.list, (item) => {
-              return vue.openBlock(), vue.createElementBlock("view", {
-                class: "card",
-                key: item.id
-              }, [
-                vue.createElementVNode("view", { class: "card-row" }, [
-                  vue.createElementVNode(
-                    "text",
-                    { class: "card-type" },
-                    vue.toDisplayString(item.type),
-                    1
-                    /* TEXT */
-                  ),
-                  vue.createElementVNode(
-                    "text",
-                    { class: "card-status" },
-                    vue.toDisplayString(item.status),
-                    1
-                    /* TEXT */
-                  )
-                ]),
-                vue.createElementVNode(
-                  "text",
-                  { class: "card-desc" },
-                  vue.toDisplayString(item.desc),
-                  1
-                  /* TEXT */
-                ),
-                vue.createElementVNode(
-                  "text",
-                  { class: "card-time" },
-                  vue.toDisplayString(item.time),
-                  1
-                  /* TEXT */
-                )
-              ]);
-            }),
-            128
-            /* KEYED_FRAGMENT */
-          ))
-        ]))
-      ])
-    ]);
-  }
-  const PagesApplianceRepairProgress = /* @__PURE__ */ _export_sfc(_sfc_main$g, [["render", _sfc_render$f], ["__scopeId", "data-v-6634ec1e"], ["__file", "E:/固始县外卖商家端/pages/appliance-repair/progress.vue"]]);
-  const _sfc_main$f = {
-    data() {
-      return {
-        food: null,
-        quantity: 1
-      };
-    },
-    onLoad(options) {
-      if (options.id) {
-        this.loadDetail(options.id);
-      }
-    },
-    methods: {
-      async loadDetail(id) {
-        try {
-          const res = await getFoodDetail(id);
-          this.food = res.商品 || null;
-          if (this.food) {
-            uni.setNavigationBarTitle({ title: this.food.商品名称 });
-          }
-        } catch (e2) {
-        }
-      },
-      changeQty(delta) {
-        const next = this.quantity + delta;
-        if (next < 1)
-          return;
-        if (this.food && next > this.food.库存) {
-          uni.showToast({ title: "超出库存", icon: "none" });
-          return;
-        }
-        this.quantity = next;
-      },
-      async handleAddToCart() {
-        if (!requireLogin())
-          return;
-        try {
-          const res = await addToCart(this.food.商品ID, this.quantity);
-          uni.showToast({ title: `已加入${this.quantity}份`, icon: "success" });
-          this.quantity = 1;
-        } catch (e2) {
-        }
-      },
-      goCart() {
-        uni.switchTab({ url: "/pages/cart/index" });
-      }
-    }
-  };
-  function _sfc_render$e(_ctx, _cache, $props, $setup, $data, $options) {
-    return $data.food ? (vue.openBlock(), vue.createElementBlock("view", {
-      key: 0,
-      class: "container"
-    }, [
-      vue.createElementVNode("view", { class: "img-section" }, [
-        vue.createElementVNode("text", { class: "food-emoji" }, "🍱"),
-        vue.createElementVNode("view", { class: "category-tag" }, [
-          vue.createElementVNode(
-            "text",
-            { class: "category-text" },
-            vue.toDisplayString($data.food.分类),
-            1
-            /* TEXT */
-          )
-        ])
-      ]),
-      vue.createElementVNode("view", { class: "info-section" }, [
-        vue.createElementVNode(
-          "text",
-          { class: "food-name" },
-          vue.toDisplayString($data.food.商品名称),
-          1
-          /* TEXT */
-        ),
-        vue.createElementVNode("view", { class: "info-row" }, [
-          vue.createElementVNode(
-            "text",
-            { class: "food-price" },
-            "¥" + vue.toDisplayString($data.food.价格),
-            1
-            /* TEXT */
-          ),
-          vue.createElementVNode(
-            "text",
-            { class: "food-sales" },
-            "月售 " + vue.toDisplayString($data.food.月销),
-            1
-            /* TEXT */
-          )
-        ]),
-        $data.food.描述 ? (vue.openBlock(), vue.createElementBlock(
-          "text",
-          {
-            key: 0,
-            class: "food-desc"
-          },
-          vue.toDisplayString($data.food.描述),
-          1
-          /* TEXT */
-        )) : vue.createCommentVNode("v-if", true),
-        vue.createElementVNode("view", { class: "stock-row" }, [
-          vue.createElementVNode(
-            "text",
-            { class: "stock-label" },
-            "库存：" + vue.toDisplayString($data.food.库存),
-            1
-            /* TEXT */
-          )
-        ])
-      ]),
-      vue.createElementVNode("view", { class: "detail-section" }, [
-        vue.createElementVNode("text", { class: "section-title" }, "商品信息"),
-        vue.createElementVNode("view", { class: "detail-item" }, [
-          vue.createElementVNode("text", { class: "detail-label" }, "商品名称"),
-          vue.createElementVNode(
-            "text",
-            { class: "detail-value" },
-            vue.toDisplayString($data.food.商品名称),
-            1
-            /* TEXT */
-          )
-        ]),
-        vue.createElementVNode("view", { class: "detail-item" }, [
-          vue.createElementVNode("text", { class: "detail-label" }, "所属分类"),
-          vue.createElementVNode(
-            "text",
-            { class: "detail-value" },
-            vue.toDisplayString($data.food.分类),
-            1
-            /* TEXT */
-          )
-        ]),
-        vue.createElementVNode("view", { class: "detail-item" }, [
-          vue.createElementVNode("text", { class: "detail-label" }, "月销量"),
-          vue.createElementVNode(
-            "text",
-            { class: "detail-value" },
-            vue.toDisplayString($data.food.月销) + " 份",
-            1
-            /* TEXT */
-          )
-        ]),
-        vue.createElementVNode("view", { class: "detail-item" }, [
-          vue.createElementVNode("text", { class: "detail-label" }, "剩余库存"),
-          vue.createElementVNode(
-            "text",
-            { class: "detail-value" },
-            vue.toDisplayString($data.food.库存) + " 份",
-            1
-            /* TEXT */
-          )
-        ])
-      ]),
-      vue.createElementVNode("view", { class: "bottom-bar" }, [
-        vue.createElementVNode("view", { class: "bottom-left" }, [
-          vue.createElementVNode("view", {
-            class: "bottom-icon-item",
-            onClick: _cache[0] || (_cache[0] = (...args) => $options.goCart && $options.goCart(...args))
-          }, [
-            vue.createElementVNode("text", { class: "bottom-icon" }, "🛒"),
-            vue.createElementVNode("text", { class: "bottom-icon-label" }, "购物车")
-          ])
-        ]),
-        vue.createElementVNode("view", { class: "bottom-right" }, [
-          vue.createElementVNode("view", { class: "qty-control" }, [
-            vue.createElementVNode("view", {
-              class: "qty-btn",
-              onClick: _cache[1] || (_cache[1] = ($event) => $options.changeQty(-1))
-            }, [
-              vue.createElementVNode("text", { class: "qty-btn-text" }, "-")
-            ]),
-            vue.createElementVNode(
-              "text",
-              { class: "qty-num" },
-              vue.toDisplayString($data.quantity),
-              1
-              /* TEXT */
-            ),
-            vue.createElementVNode("view", {
-              class: "qty-btn",
-              onClick: _cache[2] || (_cache[2] = ($event) => $options.changeQty(1))
-            }, [
-              vue.createElementVNode("text", { class: "qty-btn-text" }, "+")
-            ])
-          ]),
-          vue.createElementVNode("view", {
-            class: "add-cart-btn",
-            onClick: _cache[3] || (_cache[3] = (...args) => $options.handleAddToCart && $options.handleAddToCart(...args))
-          }, [
-            vue.createElementVNode("text", { class: "add-cart-text" }, "加入购物车")
-          ])
-        ])
-      ])
-    ])) : vue.createCommentVNode("v-if", true);
-  }
-  const PagesFoodDetail = /* @__PURE__ */ _export_sfc(_sfc_main$f, [["render", _sfc_render$e], ["__scopeId", "data-v-b49a7fa1"], ["__file", "E:/固始县外卖商家端/pages/food/detail.vue"]]);
-  function getShopInfo() {
-    return request({ url: "/merchant/my", method: "GET" });
-  }
-  function createShop(data) {
-    return request({ url: "/merchant/create", method: "POST", data });
-  }
-  function updateShopInfo(data) {
-    return request({ url: "/merchant/update", method: "PUT", data });
-  }
-  function getMerchantCategoryList() {
-    return request({ url: "/merchant/my-categories", method: "GET" });
-  }
-  function createCategory(data) {
-    return request({ url: "/merchant/category", method: "POST", data });
-  }
-  function getMyProducts(params = {}) {
-    return request({ url: "/merchant/my-products", method: "GET", data: params });
-  }
-  function createProduct(data) {
-    return request({ url: "/merchant/product/create", method: "POST", data });
-  }
-  function createMerchantProduct(data) {
-    return request({ url: "/merchant/product", method: "POST", data });
-  }
-  function updateProduct(id, data) {
-    return request({ url: "/merchant/product/" + id, method: "PUT", data });
-  }
-  function deleteProduct(id) {
-    return request({ url: "/merchant/product/" + id, method: "DELETE" });
-  }
-  const _sfc_main$e = {
+  const PagesLoginIndex = /* @__PURE__ */ _export_sfc(_sfc_main$e, [["render", _sfc_render$d], ["__scopeId", "data-v-d08ef7d4"], ["__file", "E:/固始县外卖商家端/pages/login/index.vue"]]);
+  const _sfc_main$d = {
     data() {
       return {
         keyword: "",
@@ -11890,9 +9024,11 @@ This will fail in production.`);
         this.categorySubmitting = true;
         try {
           await createCategory({ name, sort: 1 });
-          uni.showToast({ title: "新增成功", icon: "success" });
+          uni.showToast({ title: "创建成功", icon: "success" });
           this.closeCategoryDialog();
           await this.loadCategories();
+        } catch (e2) {
+          uni.showToast({ title: e2 && e2.message || "创建失败", icon: "none" });
         } finally {
           this.categorySubmitting = false;
         }
@@ -11930,7 +9066,7 @@ This will fail in production.`);
       }
     }
   };
-  function _sfc_render$d(_ctx, _cache, $props, $setup, $data, $options) {
+  function _sfc_render$c(_ctx, _cache, $props, $setup, $data, $options) {
     return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
       vue.createElementVNode("view", { class: "card toolbar" }, [
         vue.withDirectives(vue.createElementVNode(
@@ -12132,167 +9268,7 @@ This will fail in production.`);
       ])) : vue.createCommentVNode("v-if", true)
     ]);
   }
-  const PagesProductList = /* @__PURE__ */ _export_sfc(_sfc_main$e, [["render", _sfc_render$d], ["__scopeId", "data-v-e958a167"], ["__file", "E:/固始县外卖商家端/pages/product/list.vue"]]);
-  const _sfc_main$d = {
-    data() {
-      return {
-        form: {
-          name: "",
-          price: "",
-          stock: 100,
-          image: "",
-          description: "",
-          status: 1
-        }
-      };
-    },
-    methods: {
-      onStatusChange(e2) {
-        this.form.status = e2.detail.value ? 1 : 0;
-      },
-      async submit() {
-        if (!this.form.name.trim()) {
-          uni.showToast({ title: "请输入商品名称", icon: "none" });
-          return;
-        }
-        if (!this.form.price || Number(this.form.price) <= 0) {
-          uni.showToast({ title: "请输入正确的价格", icon: "none" });
-          return;
-        }
-        if (!this.form.stock || Number(this.form.stock) < 0) {
-          uni.showToast({ title: "请输入正确的库存", icon: "none" });
-          return;
-        }
-        const payload = {
-          name: this.form.name.trim(),
-          price: Number(this.form.price),
-          stock: Number(this.form.stock),
-          image: this.form.image || "",
-          description: this.form.description || "",
-          status: Number(this.form.status)
-        };
-        try {
-          const res = await createProduct(payload);
-          uni.showToast({ title: "添加成功", icon: "success" });
-          setTimeout(() => uni.navigateBack(), 1500);
-        } catch (e2) {
-          uni.showToast({ title: "添加失败", icon: "none" });
-        }
-      }
-    }
-  };
-  function _sfc_render$c(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      vue.createElementVNode("view", { class: "card form" }, [
-        vue.createElementVNode("view", { class: "form-item" }, [
-          vue.createElementVNode("text", { class: "label" }, [
-            vue.createTextVNode("商品名称 "),
-            vue.createElementVNode("text", { class: "required" }, "*")
-          ]),
-          vue.withDirectives(vue.createElementVNode(
-            "input",
-            {
-              "onUpdate:modelValue": _cache[0] || (_cache[0] = ($event) => $data.form.name = $event),
-              placeholder: "请输入商品名称"
-            },
-            null,
-            512
-            /* NEED_PATCH */
-          ), [
-            [vue.vModelText, $data.form.name]
-          ])
-        ]),
-        vue.createElementVNode("view", { class: "form-item" }, [
-          vue.createElementVNode("text", { class: "label" }, [
-            vue.createTextVNode("商品价格(元) "),
-            vue.createElementVNode("text", { class: "required" }, "*")
-          ]),
-          vue.withDirectives(vue.createElementVNode(
-            "input",
-            {
-              "onUpdate:modelValue": _cache[1] || (_cache[1] = ($event) => $data.form.price = $event),
-              type: "digit",
-              placeholder: "0.00"
-            },
-            null,
-            512
-            /* NEED_PATCH */
-          ), [
-            [vue.vModelText, $data.form.price]
-          ])
-        ]),
-        vue.createElementVNode("view", { class: "form-item" }, [
-          vue.createElementVNode("text", { class: "label" }, [
-            vue.createTextVNode("库存数量 "),
-            vue.createElementVNode("text", { class: "required" }, "*")
-          ]),
-          vue.withDirectives(vue.createElementVNode(
-            "input",
-            {
-              "onUpdate:modelValue": _cache[2] || (_cache[2] = ($event) => $data.form.stock = $event),
-              type: "number",
-              placeholder: "默认100"
-            },
-            null,
-            512
-            /* NEED_PATCH */
-          ), [
-            [vue.vModelText, $data.form.stock]
-          ])
-        ]),
-        vue.createElementVNode("view", { class: "form-item" }, [
-          vue.createElementVNode("text", { class: "label" }, "商品图片"),
-          vue.withDirectives(vue.createElementVNode(
-            "input",
-            {
-              "onUpdate:modelValue": _cache[3] || (_cache[3] = ($event) => $data.form.image = $event),
-              placeholder: "请输入图片URL（选填）"
-            },
-            null,
-            512
-            /* NEED_PATCH */
-          ), [
-            [vue.vModelText, $data.form.image]
-          ])
-        ]),
-        vue.createElementVNode("view", { class: "form-item" }, [
-          vue.createElementVNode("text", { class: "label" }, "商品描述"),
-          vue.withDirectives(vue.createElementVNode(
-            "textarea",
-            {
-              "onUpdate:modelValue": _cache[4] || (_cache[4] = ($event) => $data.form.description = $event),
-              placeholder: "请输入商品描述（选填）"
-            },
-            null,
-            512
-            /* NEED_PATCH */
-          ), [
-            [vue.vModelText, $data.form.description]
-          ])
-        ]),
-        vue.createElementVNode("view", { class: "form-item status-item" }, [
-          vue.createElementVNode("text", { class: "label" }, "是否上架"),
-          vue.createElementVNode("switch", {
-            checked: $data.form.status === 1,
-            onChange: _cache[5] || (_cache[5] = (...args) => $options.onStatusChange && $options.onStatusChange(...args)),
-            color: "#FF6B35"
-          }, null, 40, ["checked"]),
-          vue.createElementVNode(
-            "text",
-            { class: "status-text" },
-            vue.toDisplayString($data.form.status === 1 ? "上架" : "下架"),
-            1
-            /* TEXT */
-          )
-        ]),
-        vue.createElementVNode("button", {
-          class: "btn-primary full",
-          onClick: _cache[6] || (_cache[6] = (...args) => $options.submit && $options.submit(...args))
-        }, "保存")
-      ])
-    ]);
-  }
-  const PagesProductEdit = /* @__PURE__ */ _export_sfc(_sfc_main$d, [["render", _sfc_render$c], ["__scopeId", "data-v-843aafdb"], ["__file", "E:/固始县外卖商家端/pages/product/edit.vue"]]);
+  const PagesProductList = /* @__PURE__ */ _export_sfc(_sfc_main$d, [["render", _sfc_render$c], ["__scopeId", "data-v-e958a167"], ["__file", "E:/固始县外卖商家端/pages/product/list.vue"]]);
   const _sfc_main$c = {
     data() {
       return {
@@ -12855,12 +9831,48 @@ This will fail in production.`);
     ]);
   }
   const PagesReviewList = /* @__PURE__ */ _export_sfc(_sfc_main$a, [["render", _sfc_render$9], ["__scopeId", "data-v-eeac79e8"], ["__file", "E:/固始县外卖商家端/pages/review/list.vue"]]);
+  const logShopMapStep = (step, payload) => {
+    try {
+      formatAppLog("log", "at pages/shop/index.vue:137", "[shop-setting-map][" + step + "]", payload || "");
+    } catch (e2) {
+    }
+  };
+  const logShopSaveStep = (step, payload) => {
+    try {
+      formatAppLog("log", "at pages/shop/index.vue:143", "[shop-setting-save][" + step + "]", payload || "");
+    } catch (e2) {
+    }
+  };
+  const normalizeCoordinateValue$2 = (value2) => {
+    if (value2 == null)
+      return null;
+    const raw = typeof value2 === "string" ? value2.trim() : value2;
+    if (raw === "")
+      return null;
+    const num = Number(raw);
+    return Number.isFinite(num) ? num : null;
+  };
+  const getValidCoordinatePair$2 = (latitude, longitude) => {
+    const lat = normalizeCoordinateValue$2(latitude);
+    const lng = normalizeCoordinateValue$2(longitude);
+    if (lat == null || lng == null)
+      return null;
+    if (lat === 0 && lng === 0)
+      return null;
+    return {
+      latitude: lat,
+      longitude: lng
+    };
+  };
   const DEFAULT_FORM = () => ({
     name: "",
     phone: "",
+    category: "",
     description: "",
     logo: "",
+    cover: "",
     address: "",
+    business_license: "",
     latitude: null,
     longitude: null,
     status: 1,
@@ -12871,127 +9883,263 @@ This will fail in production.`);
       return {
         isCreateMode: false,
         submitting: false,
-        logoLocal: "",
+        logoPreviewLocal: "",
+        coverPreviewLocal: "",
+        logoUploading: false,
+        coverUploading: false,
+        categoryOptions: [],
+        categoryLoading: false,
+        categoryLoadFailed: false,
         form: DEFAULT_FORM()
       };
     },
     computed: {
       logoDisplay() {
-        if (this.logoLocal)
-          return this.logoLocal;
-        const u2 = this.form.logo;
-        if (u2 && /^https?:\/\//i.test(u2))
-          return u2;
-        return "";
+        return this.logoPreviewLocal || this.resolveImageUrl(this.form.logo);
+      },
+      coverDisplay() {
+        return this.coverPreviewLocal || this.resolveImageUrl(this.form.cover);
       },
       hasCoords() {
-        return this.form.latitude != null && this.form.longitude != null && !Number.isNaN(Number(this.form.latitude)) && !Number.isNaN(Number(this.form.longitude));
+        return !!getValidCoordinatePair$2(this.form.latitude, this.form.longitude);
+      },
+      currentCategoryIndex() {
+        return this.categoryOptions.indexOf(this.form.category);
       }
     },
     onLoad() {
-      this.loadShopData();
+      this.loadCategoryOptions();
+      this.loadShopData("page-onload");
     },
     methods: {
+      normalizeCategoryOptions(res) {
+        const raw = res && typeof res === "object" && res.data !== void 0 ? res.data : res;
+        const arr = Array.isArray(raw) ? raw : raw && Array.isArray(raw.data) ? raw.data : [];
+        return arr.map((item) => String(item || "").trim()).filter(Boolean);
+      },
       formatCoord(v2) {
         if (v2 == null || v2 === "")
           return "-";
         const n2 = Number(v2);
         return Number.isFinite(n2) ? n2.toFixed(6) : String(v2);
       },
+      resolveImageUrl(url2) {
+        const value2 = url2 != null ? String(url2).trim() : "";
+        if (!value2)
+          return "";
+        if (/^(https?:)?\/\//i.test(value2) || /^data:image/i.test(value2) || /^blob:/i.test(value2)) {
+          return value2;
+        }
+        return value2.startsWith("/") ? BASE_URL + value2 : BASE_URL + "/" + value2;
+      },
+      async loadCategoryOptions() {
+        this.categoryLoading = true;
+        this.categoryLoadFailed = false;
+        try {
+          const res = await getMerchantPrimaryCategories();
+          this.categoryOptions = this.normalizeCategoryOptions(res);
+        } catch (e2) {
+          this.categoryOptions = [];
+          this.categoryLoadFailed = true;
+        } finally {
+          this.categoryLoading = false;
+        }
+      },
       normalizeMerchant(raw) {
         if (!raw || typeof raw !== "object")
           return null;
         const m2 = raw.merchant && typeof raw.merchant === "object" ? raw.merchant : raw;
-        const lat = m2.latitude;
-        const lng = m2.longitude;
+        const coordinatePair = getValidCoordinatePair$2(
+          m2.latitude != null ? m2.latitude : m2.delivery_latitude != null ? m2.delivery_latitude : m2.lat,
+          m2.longitude != null ? m2.longitude : m2.delivery_longitude != null ? m2.delivery_longitude : m2.lng
+        );
         return {
           name: m2.name != null ? String(m2.name) : "",
           phone: m2.phone != null ? String(m2.phone) : "",
+          category: m2.category != null ? String(m2.category) : "",
           description: m2.description != null ? String(m2.description) : "",
           logo: m2.logo != null ? String(m2.logo) : "",
+          cover: m2.cover != null ? String(m2.cover) : "",
           address: m2.address != null ? String(m2.address) : "",
-          latitude: lat === "" || lat == null ? null : Number(lat),
-          longitude: lng === "" || lng == null ? null : Number(lng),
+          business_license: m2.business_license != null ? String(m2.business_license) : "",
+          latitude: coordinatePair ? coordinatePair.latitude : null,
+          longitude: coordinatePair ? coordinatePair.longitude : null,
           status: m2.status === 0 ? 0 : 1,
           delivery_radius: m2.delivery_radius != null && m2.delivery_radius !== "" ? Number(m2.delivery_radius) : 3
         };
       },
-      async loadShopData() {
+      async loadShopData(source = "default") {
         try {
           const res = await getShopInfo();
+          logShopSaveStep("loadShopData-response", {
+            source,
+            url: BASE_URL + "/api/merchant/my",
+            response: res
+          });
           const raw = res && typeof res === "object" && "data" in res ? res.data : res;
           const merchant = this.normalizeMerchant(raw);
+          logShopSaveStep("loadShopData-normalized", {
+            source,
+            raw,
+            merchant
+          });
           const id = raw && raw.id != null ? raw.id : merchant && raw && raw.merchant && raw.merchant.id;
           const hasShop = !!(merchant && (merchant.name || id != null));
           if (hasShop) {
             this.isCreateMode = false;
             this.form = { ...DEFAULT_FORM(), ...merchant };
+            this.logoPreviewLocal = "";
+            this.coverPreviewLocal = "";
+            logShopSaveStep("loadShopData-form-applied", {
+              source,
+              form: this.form
+            });
           } else {
             this.isCreateMode = true;
             this.form = DEFAULT_FORM();
+            this.logoPreviewLocal = "";
+            this.coverPreviewLocal = "";
+            logShopSaveStep("loadShopData-empty", { source });
           }
         } catch (e2) {
-          formatAppLog("log", "at pages/shop/index.vue:197", "未获取到店铺或接口异常，进入创建模式", e2);
+          logShopSaveStep("loadShopData-error", {
+            source,
+            url: BASE_URL + "/api/merchant/my",
+            error: e2,
+            message: e2 && (e2.detail || e2.message || e2.msg),
+            statusCode: e2 && e2.statusCode,
+            data: e2 && e2.data
+          });
+          formatAppLog("log", "at pages/shop/index.vue:310", "未获取到店铺或接口异常，进入创建模式", e2);
           this.isCreateMode = true;
           this.form = DEFAULT_FORM();
+          this.logoPreviewLocal = "";
+          this.coverPreviewLocal = "";
         }
       },
       onStatusChange(e2) {
         this.form.status = e2.detail.value ? 1 : 0;
       },
-      previewLogo() {
-        if (!this.logoDisplay)
+      onCategoryChange(e2) {
+        if (!this.categoryOptions.length)
           return;
-        uni.previewImage({ urls: [this.logoDisplay] });
+        const index = Number(e2 && e2.detail && e2.detail.value);
+        this.form.category = this.categoryOptions[index] || "";
       },
-      chooseLogoImage() {
+      async chooseAndUploadImage(field) {
+        const isLogo = field === "logo";
+        const uploadingKey = isLogo ? "logoUploading" : "coverUploading";
+        const previewKey = isLogo ? "logoPreviewLocal" : "coverPreviewLocal";
+        const fieldLabel = isLogo ? "头像" : "封面";
+        if (this[uploadingKey])
+          return;
         uni.chooseImage({
           count: 1,
           sizeType: ["compressed"],
           sourceType: ["album", "camera"],
-          success: (res) => {
-            const path = res.tempFilePaths && res.tempFilePaths[0];
-            if (path)
-              this.logoLocal = path;
+          success: async (res) => {
+            const filePath = res.tempFilePaths && res.tempFilePaths[0];
+            if (!filePath)
+              return;
+            this[uploadingKey] = true;
+            try {
+              const uploadRes = await uploadShopImage(filePath);
+              const url2 = uploadRes && uploadRes.data && uploadRes.data.url ? String(uploadRes.data.url) : "";
+              if (!url2) {
+                throw new Error("上传成功但未返回图片地址");
+              }
+              this.form[field] = url2;
+              this[previewKey] = filePath;
+              uni.showToast({ title: fieldLabel + "上传成功", icon: "success" });
+            } catch (e2) {
+              const msg = e2 && (e2.message || e2.detail || e2.msg) || fieldLabel + "上传失败";
+              uni.showToast({ title: msg, icon: "none" });
+            } finally {
+              this[uploadingKey] = false;
+            }
           }
         });
       },
       openTiandituPicker() {
         const lat = this.form.latitude != null ? String(this.form.latitude) : "";
         const lng = this.form.longitude != null ? String(this.form.longitude) : "";
+        const address = this.form.address != null ? String(this.form.address) : "";
+        logShopMapStep("navigate-to-picker", { lat, lng, address });
         uni.navigateTo({
-          url: `/pages/shop/tianditu-picker?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`,
+          url: `/pages/shop/tianditu-picker?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}&address=${encodeURIComponent(address)}`,
           events: {
             picked: (data) => {
+              logShopMapStep("picked-received", data);
               if (!data)
                 return;
-              this.form.latitude = data.latitude;
-              this.form.longitude = data.longitude;
+              const coordinatePair = getValidCoordinatePair$2(data.latitude, data.longitude);
+              if (!coordinatePair) {
+                this.form.latitude = null;
+                this.form.longitude = null;
+                uni.showToast({ title: "地图选点无效，请重新选点", icon: "none" });
+                return;
+              }
+              this.form.latitude = coordinatePair.latitude;
+              this.form.longitude = coordinatePair.longitude;
+              if (data.address) {
+                this.form.address = data.address;
+              }
+              if (data.town && !this.form.address) {
+                this.form.address = data.town;
+              }
+              logShopMapStep("picked-applied", {
+                latitude: this.form.latitude,
+                longitude: this.form.longitude,
+                address: this.form.address
+              });
             }
           }
         });
       },
-      buildPayload() {
+      buildPayload(includeStatus = true) {
         const logo = (this.form.logo || "").trim();
+        const cover = (this.form.cover || "").trim();
+        const businessLicense = (this.form.business_license || "").trim();
+        const coordinatePair = getValidCoordinatePair$2(this.form.latitude, this.form.longitude);
         const payload = {
           name: (this.form.name || "").trim(),
           phone: (this.form.phone || "").trim(),
+          category: (this.form.category || "").trim(),
           description: (this.form.description || "").trim(),
           address: (this.form.address || "").trim(),
-          status: this.form.status,
           delivery_radius: Number(this.form.delivery_radius) || 0
         };
-        if (logo && /^https?:\/\//i.test(logo)) {
+        if (includeStatus) {
+          payload.status = this.form.status;
+        }
+        if (logo) {
           payload.logo = logo;
         }
-        if (this.hasCoords) {
-          payload.latitude = Number(this.form.latitude);
-          payload.longitude = Number(this.form.longitude);
+        if (cover) {
+          payload.cover = cover;
+        }
+        if (businessLicense) {
+          payload.business_license = businessLicense;
+        }
+        if (coordinatePair) {
+          payload.latitude = coordinatePair.latitude;
+          payload.longitude = coordinatePair.longitude;
         }
         return payload;
       },
       async submitForm() {
-        const p2 = this.buildPayload();
+        const p2 = this.buildPayload(this.isCreateMode);
+        logShopSaveStep("submitForm-form-model", {
+          form: {
+            ...this.form,
+            latitude: this.form.latitude,
+            longitude: this.form.longitude,
+            address: this.form.address
+          },
+          hasCoords: this.hasCoords,
+          isCreateMode: this.isCreateMode
+        });
+        logShopSaveStep("submitForm-payload", p2);
         if (!p2.name) {
           uni.showToast({ title: "请填写店名", icon: "none" });
           return;
@@ -13000,36 +10148,79 @@ This will fail in production.`);
           uni.showToast({ title: "请填写联系电话", icon: "none" });
           return;
         }
+        if (this.categoryLoading) {
+          uni.showToast({ title: "主营类目加载中，请稍后", icon: "none" });
+          return;
+        }
+        if (!this.categoryOptions.length) {
+          uni.showToast({ title: "主营类目暂不可用，请稍后重试", icon: "none" });
+          return;
+        }
+        if (!p2.category) {
+          uni.showToast({ title: "请选择店铺主营类目", icon: "none" });
+          return;
+        }
+        if (!this.categoryOptions.includes(p2.category)) {
+          uni.showToast({ title: "请选择有效的主营类目", icon: "none" });
+          return;
+        }
         if (!p2.address) {
           uni.showToast({ title: "请填写详细地址", icon: "none" });
           return;
         }
-        if (!this.hasCoords) {
-          uni.showToast({ title: "请通过天地图选择店铺坐标", icon: "none" });
+        const coordinatePair = getValidCoordinatePair$2(this.form.latitude, this.form.longitude);
+        if (!coordinatePair || p2.latitude == null || p2.longitude == null) {
+          uni.showToast({ title: "地图坐标无效，请重新选点", icon: "none" });
           return;
         }
         this.submitting = true;
         try {
           if (this.isCreateMode) {
+            logShopSaveStep("submitForm-request", {
+              url: BASE_URL + "/api/merchant/create",
+              method: "POST",
+              payload: p2
+            });
             const res = await createShop(p2);
+            logShopSaveStep("submitForm-response", {
+              url: BASE_URL + "/api/merchant/create",
+              response: res
+            });
             if (res && (res.code === 200 || res.code === 201 || res.success)) {
               uni.showToast({ title: "创建成功", icon: "success" });
               this.isCreateMode = false;
-              await this.loadShopData();
+              await this.loadShopData("after-create-success");
             } else {
               uni.showToast({ title: res && res.message || "创建失败", icon: "none" });
             }
           } else {
+            logShopSaveStep("submitForm-request", {
+              url: BASE_URL + "/api/merchant/update",
+              method: "PUT",
+              payload: p2
+            });
             const res = await updateShopInfo(p2);
+            logShopSaveStep("submitForm-response", {
+              url: BASE_URL + "/api/merchant/update",
+              response: res
+            });
             if (res && (res.code === 200 || res.success)) {
               uni.showToast({ title: "保存成功", icon: "success" });
-              await this.loadShopData();
+              await this.loadShopData("after-update-success");
             } else {
               uni.showToast({ title: res && res.message || "保存失败", icon: "none" });
             }
           }
         } catch (e2) {
-          uni.showToast({ title: "网络异常", icon: "none" });
+          logShopSaveStep("submitForm-error", {
+            url: BASE_URL + (this.isCreateMode ? "/api/merchant/create" : "/api/merchant/update"),
+            error: e2,
+            message: e2 && (e2.detail || e2.message || e2.msg),
+            statusCode: e2 && e2.statusCode,
+            data: e2 && e2.data
+          });
+          const msg = e2 && (e2.detail || e2.message || e2.msg) || "保存失败";
+          uni.showToast({ title: msg, icon: "none" });
         } finally {
           this.submitting = false;
         }
@@ -13044,33 +10235,66 @@ This will fail in production.`);
     }, [
       vue.createElementVNode("view", { class: "hero" }, [
         vue.createElementVNode("view", {
-          class: "avatar",
-          onClick: _cache[0] || (_cache[0] = (...args) => $options.previewLogo && $options.previewLogo(...args))
+          class: "cover",
+          onClick: _cache[0] || (_cache[0] = ($event) => $options.chooseAndUploadImage("cover"))
         }, [
-          $options.logoDisplay ? (vue.openBlock(), vue.createElementBlock("image", {
+          $options.coverDisplay ? (vue.openBlock(), vue.createElementBlock("image", {
             key: 0,
-            class: "avatar-img",
-            src: $options.logoDisplay,
+            class: "cover-img",
+            src: $options.coverDisplay,
             mode: "aspectFill"
-          }, null, 8, ["src"])) : (vue.openBlock(), vue.createElementBlock(
-            "text",
-            {
-              key: 1,
-              class: "avatar-text"
-            },
-            vue.toDisplayString($data.form.name ? $data.form.name.slice(0, 1) : "店"),
-            1
-            /* TEXT */
-          ))
+          }, null, 8, ["src"])) : vue.createCommentVNode("v-if", true),
+          vue.createElementVNode("view", { class: "cover-mask" }, [
+            vue.createElementVNode(
+              "text",
+              { class: "cover-tip" },
+              vue.toDisplayString($data.coverUploading ? "封面上传中..." : "点击更换店铺封面"),
+              1
+              /* TEXT */
+            )
+          ])
         ]),
-        vue.createElementVNode(
-          "text",
-          { class: "hero-title" },
-          vue.toDisplayString($data.form.name || "店铺基础设置"),
-          1
-          /* TEXT */
-        ),
-        vue.createElementVNode("text", { class: "hero-sub" }, "坐标仅通过天地图选取，未使用高德/百度")
+        vue.createElementVNode("view", { class: "hero-main" }, [
+          vue.createElementVNode("view", { class: "avatar-block" }, [
+            vue.createElementVNode("view", {
+              class: "avatar",
+              onClick: _cache[1] || (_cache[1] = ($event) => $options.chooseAndUploadImage("logo"))
+            }, [
+              $options.logoDisplay ? (vue.openBlock(), vue.createElementBlock("image", {
+                key: 0,
+                class: "avatar-img",
+                src: $options.logoDisplay,
+                mode: "aspectFill"
+              }, null, 8, ["src"])) : (vue.openBlock(), vue.createElementBlock(
+                "text",
+                {
+                  key: 1,
+                  class: "avatar-text"
+                },
+                vue.toDisplayString($data.form.name ? $data.form.name.slice(0, 1) : "店"),
+                1
+                /* TEXT */
+              ))
+            ]),
+            vue.createElementVNode(
+              "text",
+              { class: "avatar-action" },
+              vue.toDisplayString($data.logoUploading ? "头像上传中..." : "点击更换头像"),
+              1
+              /* TEXT */
+            )
+          ]),
+          vue.createElementVNode("view", { class: "hero-text" }, [
+            vue.createElementVNode(
+              "text",
+              { class: "hero-title" },
+              vue.toDisplayString($data.form.name || "店铺基础设置"),
+              1
+              /* TEXT */
+            ),
+            vue.createElementVNode("text", { class: "hero-sub" }, "店铺头像、封面和基础资料在此统一维护")
+          ])
+        ])
       ]),
       vue.createElementVNode("view", { class: "card" }, [
         vue.createElementVNode("view", { class: "card-title" }, "基本信息"),
@@ -13080,7 +10304,7 @@ This will fail in production.`);
             "input",
             {
               class: "input",
-              "onUpdate:modelValue": _cache[1] || (_cache[1] = ($event) => $data.form.name = $event),
+              "onUpdate:modelValue": _cache[2] || (_cache[2] = ($event) => $data.form.name = $event),
               placeholder: "请输入店铺名称",
               "placeholder-class": "ph"
             },
@@ -13097,7 +10321,7 @@ This will fail in production.`);
             "input",
             {
               class: "input",
-              "onUpdate:modelValue": _cache[2] || (_cache[2] = ($event) => $data.form.phone = $event),
+              "onUpdate:modelValue": _cache[3] || (_cache[3] = ($event) => $data.form.phone = $event),
               type: "number",
               maxlength: "11",
               placeholder: "请输入手机号",
@@ -13110,13 +10334,40 @@ This will fail in production.`);
             [vue.vModelText, $data.form.phone]
           ])
         ]),
+        vue.createElementVNode("view", { class: "cell" }, [
+          vue.createElementVNode("text", { class: "label" }, "主营类目"),
+          vue.createElementVNode("picker", {
+            range: $data.categoryOptions,
+            value: $options.currentCategoryIndex > -1 ? $options.currentCategoryIndex : 0,
+            disabled: !$data.categoryOptions.length,
+            onChange: _cache[4] || (_cache[4] = (...args) => $options.onCategoryChange && $options.onCategoryChange(...args))
+          }, [
+            vue.createElementVNode(
+              "view",
+              { class: "picker-line" },
+              vue.toDisplayString($data.form.category || "请选择店铺主营类目"),
+              1
+              /* TEXT */
+            )
+          ], 40, ["range", "value", "disabled"]),
+          $data.categoryLoading ? (vue.openBlock(), vue.createElementBlock("text", {
+            key: 0,
+            class: "picker-tip"
+          }, "主营类目加载中...")) : $data.categoryLoadFailed ? (vue.openBlock(), vue.createElementBlock("text", {
+            key: 1,
+            class: "picker-tip error"
+          }, "主营类目加载失败，请稍后重试")) : !$data.categoryOptions.length ? (vue.openBlock(), vue.createElementBlock("text", {
+            key: 2,
+            class: "picker-tip error"
+          }, "暂无可选主营类目")) : vue.createCommentVNode("v-if", true)
+        ]),
         vue.createElementVNode("view", { class: "cell column" }, [
           vue.createElementVNode("text", { class: "label" }, "店铺描述"),
           vue.withDirectives(vue.createElementVNode(
             "textarea",
             {
               class: "textarea",
-              "onUpdate:modelValue": _cache[3] || (_cache[3] = ($event) => $data.form.description = $event),
+              "onUpdate:modelValue": _cache[5] || (_cache[5] = ($event) => $data.form.description = $event),
               placeholder: "简介、特色等（选填）",
               "placeholder-class": "ph",
               maxlength: "500"
@@ -13126,29 +10377,6 @@ This will fail in production.`);
             /* NEED_PATCH */
           ), [
             [vue.vModelText, $data.form.description]
-          ])
-        ]),
-        vue.createElementVNode("view", { class: "cell column" }, [
-          vue.createElementVNode("text", { class: "label" }, "Logo 地址"),
-          vue.withDirectives(vue.createElementVNode(
-            "input",
-            {
-              class: "input",
-              "onUpdate:modelValue": _cache[4] || (_cache[4] = ($event) => $data.form.logo = $event),
-              placeholder: "https:// 开头的图片 URL（选填）",
-              "placeholder-class": "ph"
-            },
-            null,
-            512
-            /* NEED_PATCH */
-          ), [
-            [vue.vModelText, $data.form.logo]
-          ]),
-          vue.createElementVNode("view", { class: "logo-actions" }, [
-            vue.createElementVNode("text", {
-              class: "link",
-              onClick: _cache[5] || (_cache[5] = (...args) => $options.chooseLogoImage && $options.chooseLogoImage(...args))
-            }, "从相册选择图片（仅本地预览，提交需可访问 URL）")
           ])
         ]),
         vue.createElementVNode("view", { class: "cell column" }, [
@@ -13248,44 +10476,117 @@ This will fail in production.`);
     ]);
   }
   const PagesShopIndex = /* @__PURE__ */ _export_sfc(_sfc_main$9, [["render", _sfc_render$8], ["__scopeId", "data-v-7db6cc15"], ["__file", "E:/固始县外卖商家端/pages/shop/index.vue"]]);
-  const PLACEHOLDER_LAT = 32.14;
-  const PLACEHOLDER_LNG = 115.65;
   const MERCHANT_MY_URL = BASE_URL + "/api/merchant/my";
   const MERCHANT_CREATE_URL = BASE_URL + "/api/merchant/create";
+  const normalizeCoordinateValue$1 = (value2) => {
+    if (value2 == null)
+      return null;
+    const raw = typeof value2 === "string" ? value2.trim() : value2;
+    if (raw === "")
+      return null;
+    const num = Number(raw);
+    return Number.isFinite(num) ? num : null;
+  };
+  const getValidCoordinatePair$1 = (latitude, longitude) => {
+    const lat = normalizeCoordinateValue$1(latitude);
+    const lng = normalizeCoordinateValue$1(longitude);
+    if (lat == null || lng == null)
+      return null;
+    if (lat === 0 && lng === 0)
+      return null;
+    return {
+      latitude: lat,
+      longitude: lng
+    };
+  };
   const _sfc_main$8 = {
     data() {
       return {
         loading: true,
         hasShop: false,
         shopDisplay: null,
+        categoryOptions: [],
+        categoryLoading: false,
+        categoryLoadFailed: false,
+        routeToken: "",
         submitting: false,
         uploadingLicense: false,
         form: {
           name: "",
           phone: "",
           address: "",
+          category: "",
           min_price: "",
           delivery_fee: "",
-          business_license: ""
+          business_license: "",
+          latitude: null,
+          longitude: null
         }
       };
     },
+    computed: {
+      currentCategoryIndex() {
+        return this.categoryOptions.indexOf(this.form.category);
+      },
+      hasCoords() {
+        return !!getValidCoordinatePair$1(this.form.latitude, this.form.longitude);
+      }
+    },
+    onLoad(options) {
+      const routeToken = options && options.token ? decodeURIComponent(options.token) : "";
+      if (routeToken) {
+        this.routeToken = routeToken;
+        uni.setStorageSync("token", routeToken);
+      }
+    },
     onShow() {
-      if (!getToken()) {
+      const token = this.routeToken || getToken() || uni.getStorageSync("token") || "";
+      if (!token) {
         uni.redirectTo({ url: "/pages/login/index" });
         return;
       }
+      uni.setStorageSync("token", token);
+      this.loadCategoryOptions();
       this.loadMerchant();
     },
     methods: {
+      normalizeCategoryOptions(res) {
+        const raw = res && typeof res === "object" && res.data !== void 0 ? res.data : res;
+        const arr = Array.isArray(raw) ? raw : raw && Array.isArray(raw.data) ? raw.data : [];
+        return arr.map((item) => String(item || "").trim()).filter(Boolean);
+      },
       normalizeRaw(resBody) {
         if (!resBody || typeof resBody !== "object")
           return null;
         return "data" in resBody && resBody.data !== void 0 ? resBody.data : resBody;
       },
+      formatCoord(v2) {
+        if (v2 == null || v2 === "")
+          return "-";
+        const n2 = Number(v2);
+        return Number.isFinite(n2) ? n2.toFixed(6) : String(v2);
+      },
+      async loadCategoryOptions() {
+        this.categoryLoading = true;
+        this.categoryLoadFailed = false;
+        try {
+          const res = await getMerchantPrimaryCategories();
+          this.categoryOptions = this.normalizeCategoryOptions(res);
+        } catch (e2) {
+          this.categoryOptions = [];
+          this.categoryLoadFailed = true;
+        } finally {
+          this.categoryLoading = false;
+        }
+      },
       loadMerchant() {
         this.loading = true;
-        const token = uni.getStorageSync("token") || "";
+        const token = this.routeToken || uni.getStorageSync("token") || getToken() || "";
+        if (!token) {
+          this.loading = false;
+          uni.redirectTo({ url: "/pages/login/index" });
+          return;
+        }
         uni.request({
           url: MERCHANT_MY_URL,
           method: "GET",
@@ -13327,6 +10628,7 @@ This will fail in production.`);
                 name: name != null ? String(name) : "",
                 phone: raw.phone != null ? String(raw.phone) : "",
                 address: raw.address != null ? String(raw.address) : "",
+                category: raw.category != null ? String(raw.category) : "",
                 min_price: raw.min_price != null ? raw.min_price : "",
                 delivery_fee: raw.delivery_fee != null ? raw.delivery_fee : "",
                 business_license: raw.business_license != null ? String(raw.business_license) : ""
@@ -13343,6 +10645,34 @@ This will fail in production.`);
           },
           complete: () => {
             this.loading = false;
+          }
+        });
+      },
+      openTiandituPicker() {
+        const lat = this.form.latitude != null ? String(this.form.latitude) : "";
+        const lng = this.form.longitude != null ? String(this.form.longitude) : "";
+        const address = this.form.address != null ? String(this.form.address) : "";
+        uni.navigateTo({
+          url: `/pages/shop/tianditu-picker?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}&address=${encodeURIComponent(address)}`,
+          events: {
+            picked: (data) => {
+              if (!data)
+                return;
+              const coordinatePair = getValidCoordinatePair$1(data.latitude, data.longitude);
+              if (!coordinatePair) {
+                this.form.latitude = null;
+                this.form.longitude = null;
+                uni.showToast({ title: "地图选点无效，请重新选点", icon: "none" });
+                return;
+              }
+              this.form.latitude = coordinatePair.latitude;
+              this.form.longitude = coordinatePair.longitude;
+              if (data.address) {
+                this.form.address = data.address;
+              } else if (data.town && !this.form.address) {
+                this.form.address = data.town;
+              }
+            }
           }
         });
       },
@@ -13363,7 +10693,7 @@ This will fail in production.`);
         uni.chooseImage({
           count: 1,
           sizeType: ["compressed"],
-          sourceType: ["album"],
+          sourceType: ["album", "camera"],
           success: (res) => {
             this.uploadingLicense = true;
             uni.uploadFile({
@@ -13400,10 +10730,17 @@ This will fail in production.`);
           }
         });
       },
+      onCategoryChange(e2) {
+        if (!this.categoryOptions.length)
+          return;
+        const index = Number(e2 && e2.detail && e2.detail.value);
+        this.form.category = this.categoryOptions[index] || "";
+      },
       submit() {
         const name = (this.form.name || "").trim();
         const phone = (this.form.phone || "").trim();
         const address = (this.form.address || "").trim();
+        const category = (this.form.category || "").trim();
         const minPrice = parseFloat(this.form.min_price);
         const deliveryFee = parseFloat(this.form.delivery_fee);
         const business_license = (this.form.business_license || "").trim();
@@ -13420,6 +10757,26 @@ This will fail in production.`);
           uni.showToast({ title: "请填写详细地址", icon: "none" });
           return;
         }
+        if (!this.hasCoords) {
+          uni.showToast({ title: "请在地图上选择店铺位置", icon: "none" });
+          return;
+        }
+        if (this.categoryLoading) {
+          uni.showToast({ title: "主营类目加载中，请稍后", icon: "none" });
+          return;
+        }
+        if (!this.categoryOptions.length) {
+          uni.showToast({ title: "主营类目暂不可用，请稍后重试", icon: "none" });
+          return;
+        }
+        if (!category) {
+          uni.showToast({ title: "请选择店铺主营类目", icon: "none" });
+          return;
+        }
+        if (!this.categoryOptions.includes(category)) {
+          uni.showToast({ title: "请选择有效的主营类目", icon: "none" });
+          return;
+        }
         if (Number.isNaN(minPrice) || minPrice < 0) {
           uni.showToast({ title: "请填写有效起送价", icon: "none" });
           return;
@@ -13432,15 +10789,21 @@ This will fail in production.`);
           uni.showToast({ title: "请先登录", icon: "none" });
           return;
         }
+        const coordinatePair = getValidCoordinatePair$1(this.form.latitude, this.form.longitude);
+        if (!coordinatePair) {
+          uni.showToast({ title: "地图坐标无效，请重新选点", icon: "none" });
+          return;
+        }
         const data = {
           name,
           phone,
           address,
+          category,
           min_price: minPrice,
           delivery_fee: deliveryFee,
           business_license,
-          latitude: PLACEHOLDER_LAT,
-          longitude: PLACEHOLDER_LNG
+          latitude: coordinatePair.latitude,
+          longitude: coordinatePair.longitude
         };
         this.submitting = true;
         uni.request({
@@ -13525,6 +10888,16 @@ This will fail in production.`);
             "text",
             { class: "val" },
             vue.toDisplayString($data.shopDisplay.address),
+            1
+            /* TEXT */
+          )
+        ]),
+        vue.createElementVNode("view", { class: "row" }, [
+          vue.createElementVNode("text", { class: "label" }, "主营类目"),
+          vue.createElementVNode(
+            "text",
+            { class: "val" },
+            vue.toDisplayString($data.shopDisplay.category || "未填写"),
             1
             /* TEXT */
           )
@@ -13622,12 +10995,63 @@ This will fail in production.`);
           ])
         ]),
         vue.createElementVNode("view", { class: "field" }, [
+          vue.createElementVNode("text", { class: "label" }, "店铺位置"),
+          vue.createElementVNode("view", {
+            class: "picker-line coord-line",
+            onClick: _cache[5] || (_cache[5] = (...args) => $options.openTiandituPicker && $options.openTiandituPicker(...args))
+          }, [
+            $options.hasCoords ? (vue.openBlock(), vue.createElementBlock(
+              "text",
+              { key: 0 },
+              "纬度 " + vue.toDisplayString($options.formatCoord($data.form.latitude)) + "，经度 " + vue.toDisplayString($options.formatCoord($data.form.longitude)),
+              1
+              /* TEXT */
+            )) : (vue.openBlock(), vue.createElementBlock("text", {
+              key: 1,
+              class: "placeholder-text"
+            }, "请在地图上选择店铺位置"))
+          ]),
+          vue.createElementVNode("button", {
+            class: "location-btn",
+            type: "default",
+            onClick: _cache[6] || (_cache[6] = (...args) => $options.openTiandituPicker && $options.openTiandituPicker(...args))
+          }, "在地图上选择店铺位置"),
+          vue.createElementVNode("text", { class: "picker-tip" }, "使用天地图选点，提交真实 latitude / longitude")
+        ]),
+        vue.createElementVNode("view", { class: "field" }, [
+          vue.createElementVNode("text", { class: "label" }, "店铺主营类目"),
+          vue.createElementVNode("picker", {
+            range: $data.categoryOptions,
+            value: $options.currentCategoryIndex > -1 ? $options.currentCategoryIndex : 0,
+            disabled: !$data.categoryOptions.length,
+            onChange: _cache[7] || (_cache[7] = (...args) => $options.onCategoryChange && $options.onCategoryChange(...args))
+          }, [
+            vue.createElementVNode(
+              "view",
+              { class: "picker-line" },
+              vue.toDisplayString($data.form.category || "请选择店铺主营类目"),
+              1
+              /* TEXT */
+            )
+          ], 40, ["range", "value", "disabled"]),
+          $data.categoryLoading ? (vue.openBlock(), vue.createElementBlock("text", {
+            key: 0,
+            class: "picker-tip"
+          }, "主营类目加载中...")) : $data.categoryLoadFailed ? (vue.openBlock(), vue.createElementBlock("text", {
+            key: 1,
+            class: "picker-tip error"
+          }, "主营类目加载失败，请稍后重试")) : !$data.categoryOptions.length ? (vue.openBlock(), vue.createElementBlock("text", {
+            key: 2,
+            class: "picker-tip error"
+          }, "暂无可选主营类目")) : vue.createCommentVNode("v-if", true)
+        ]),
+        vue.createElementVNode("view", { class: "field" }, [
           vue.createElementVNode("text", { class: "label" }, "起送价"),
           vue.withDirectives(vue.createElementVNode(
             "input",
             {
               class: "input",
-              "onUpdate:modelValue": _cache[5] || (_cache[5] = ($event) => $data.form.min_price = $event),
+              "onUpdate:modelValue": _cache[8] || (_cache[8] = ($event) => $data.form.min_price = $event),
               type: "digit",
               placeholder: "元"
             },
@@ -13644,7 +11068,7 @@ This will fail in production.`);
             "input",
             {
               class: "input",
-              "onUpdate:modelValue": _cache[6] || (_cache[6] = ($event) => $data.form.delivery_fee = $event),
+              "onUpdate:modelValue": _cache[9] || (_cache[9] = ($event) => $data.form.delivery_fee = $event),
               type: "digit",
               placeholder: "元"
             },
@@ -13662,26 +11086,62 @@ This will fail in production.`);
             type: "default",
             disabled: $data.uploadingLicense,
             loading: $data.uploadingLicense,
-            onClick: _cache[7] || (_cache[7] = (...args) => $options.chooseAndUploadLicense && $options.chooseAndUploadLicense(...args))
+            onClick: _cache[10] || (_cache[10] = (...args) => $options.chooseAndUploadLicense && $options.chooseAndUploadLicense(...args))
           }, vue.toDisplayString($data.form.business_license ? "重新选择图片" : "从相册选择"), 9, ["disabled", "loading"]),
           $data.form.business_license ? (vue.openBlock(), vue.createElementBlock("image", {
             key: 0,
             class: "license-preview",
-            src: $data.form.business_license,
+            src: $data.form.business_license.startsWith("http://") || $data.form.business_license.startsWith("https://") ? $data.form.business_license : $data.form.business_license.startsWith("/") ? _ctx.BASE_URL + $data.form.business_license : _ctx.BASE_URL + "/" + $data.form.business_license,
             mode: "widthFix",
-            onClick: _cache[8] || (_cache[8] = ($event) => $options.previewUrl($data.form.business_license))
+            onClick: _cache[11] || (_cache[11] = ($event) => $options.previewUrl($data.form.business_license.startsWith("http://") || $data.form.business_license.startsWith("https://") ? $data.form.business_license : $data.form.business_license.startsWith("/") ? _ctx.BASE_URL + $data.form.business_license : _ctx.BASE_URL + "/" + $data.form.business_license))
           }, null, 8, ["src"])) : vue.createCommentVNode("v-if", true)
         ]),
         vue.createElementVNode("button", {
           class: "btn",
           type: "primary",
           loading: $data.submitting,
-          onClick: _cache[9] || (_cache[9] = (...args) => $options.submit && $options.submit(...args))
+          onClick: _cache[12] || (_cache[12] = (...args) => $options.submit && $options.submit(...args))
         }, "提交开店申请", 8, ["loading"])
       ]))
     ]);
   }
   const PagesShopShopApply = /* @__PURE__ */ _export_sfc(_sfc_main$8, [["render", _sfc_render$7], ["__scopeId", "data-v-797be701"], ["__file", "E:/固始县外卖商家端/pages/shop/shop-apply.vue"]]);
+  const logPickerStep = (step, payload) => {
+    try {
+      formatAppLog("log", "at pages/shop/tianditu-picker.vue:15", "[shop-tianditu-picker][" + step + "]", payload || "");
+    } catch (e2) {
+    }
+  };
+  const normalizeCoordinateValue = (value2) => {
+    if (value2 == null)
+      return null;
+    const raw = typeof value2 === "string" ? value2.trim() : value2;
+    if (raw === "")
+      return null;
+    const num = Number(raw);
+    return Number.isFinite(num) ? num : null;
+  };
+  const getValidCoordinatePair = (latitude, longitude) => {
+    const lat = normalizeCoordinateValue(latitude);
+    const lng = normalizeCoordinateValue(longitude);
+    if (lat == null || lng == null)
+      return null;
+    if (lat === 0 && lng === 0)
+      return null;
+    return {
+      latitude: lat,
+      longitude: lng
+    };
+  };
+  const pickCoordinatePair = (source) => {
+    if (!source || typeof source !== "object")
+      return null;
+    const deliveryAddress = source.delivery_address && typeof source.delivery_address === "object" ? source.delivery_address : {};
+    return getValidCoordinatePair(
+      source.latitude != null ? source.latitude : source.lat != null ? source.lat : source.delivery_latitude != null ? source.delivery_latitude : deliveryAddress.latitude,
+      source.longitude != null ? source.longitude : source.lng != null ? source.lng : source.delivery_longitude != null ? source.delivery_longitude : deliveryAddress.longitude
+    );
+  };
   const _sfc_main$7 = {
     data() {
       return {
@@ -13695,30 +11155,105 @@ This will fail in production.`);
       } catch (e2) {
         this.eventChannel = null;
       }
-      const lat = options.lat != null && options.lat !== "" ? String(options.lat) : "32.168";
-      const lng = options.lng != null && options.lng !== "" ? String(options.lng) : "115.654";
+      logPickerStep("onLoad-eventChannel", { hasEventChannel: !!this.eventChannel });
+      const lat = options.lat != null && options.lat !== "" ? String(options.lat) : "";
+      const lng = options.lng != null && options.lng !== "" ? String(options.lng) : "";
+      const address = options.address != null && options.address !== "" ? String(options.address) : "";
       const tk = TIANDITU_TK;
       const q2 = [
         "tk=" + encodeURIComponent(tk),
         "lat=" + encodeURIComponent(lat),
-        "lng=" + encodeURIComponent(lng)
+        "lng=" + encodeURIComponent(lng),
+        "address=" + encodeURIComponent(address)
       ].join("&");
       this.src = "/static/hybrid/html/tianditu-picker.html?" + q2;
+      logPickerStep("onLoad-src-ready", { src: this.src });
     },
     methods: {
-      onMessage(e2) {
-        const arr = e2.detail.data || [];
-        const msg = arr[arr.length - 1];
-        if (msg == null || msg.latitude == null || msg.longitude == null)
-          return;
-        const payload = {
-          latitude: Number(msg.latitude),
-          longitude: Number(msg.longitude)
+      normalizeResult(raw) {
+        const source = raw || {};
+        const deliveryAddress = source.delivery_address && typeof source.delivery_address === "object" ? source.delivery_address : {};
+        const coordinatePair = pickCoordinatePair(source);
+        const address = String(source.address || deliveryAddress.detail || deliveryAddress.name || "").trim();
+        const town = String(source.town || deliveryAddress.town || "").trim();
+        return {
+          latitude: coordinatePair ? coordinatePair.latitude : null,
+          longitude: coordinatePair ? coordinatePair.longitude : null,
+          address,
+          town,
+          delivery_address: {
+            province: String(deliveryAddress.province || "").trim(),
+            city: String(deliveryAddress.city || "").trim(),
+            district: String(deliveryAddress.district || "").trim(),
+            town,
+            street: String(deliveryAddress.street || "").trim(),
+            detail: String(deliveryAddress.detail || address || "").trim(),
+            name: String(deliveryAddress.name || address || "").trim(),
+            longitude: coordinatePair ? coordinatePair.longitude : null,
+            latitude: coordinatePair ? coordinatePair.latitude : null
+          }
         };
-        if (this.eventChannel) {
-          this.eventChannel.emit("picked", payload);
+      },
+      handlePicked(raw) {
+        logPickerStep("handlePicked-enter", raw);
+        const msg = this.normalizeResult(raw);
+        logPickerStep("handlePicked-normalized", msg);
+        if (msg == null || msg.latitude == null || msg.longitude == null) {
+          uni.showToast({ title: "地图选点无效，请重新选点", icon: "none" });
+          return;
         }
+        const payload = {
+          latitude: msg.latitude,
+          longitude: msg.longitude
+        };
+        if (msg.address) {
+          payload.address = msg.address;
+        }
+        if (msg.town) {
+          payload.town = msg.town;
+        }
+        if (msg.delivery_address && typeof msg.delivery_address === "object") {
+          payload.delivery_address = msg.delivery_address;
+        }
+        if (this.eventChannel) {
+          logPickerStep("handlePicked-before-emit", payload);
+          this.eventChannel.emit("picked", payload);
+          logPickerStep("handlePicked-after-emit", { emitted: true });
+        } else {
+          logPickerStep("handlePicked-no-eventChannel", payload);
+        }
+        logPickerStep("handlePicked-before-navigateBack", payload);
         uni.navigateBack();
+      },
+      extractMessagePayload(e2) {
+        const raw = e2 && e2.detail ? e2.detail.data : null;
+        const candidates = [];
+        if (Array.isArray(raw)) {
+          candidates.push(...raw);
+        } else if (raw != null) {
+          candidates.push(raw);
+        }
+        for (let i2 = candidates.length - 1; i2 >= 0; i2 -= 1) {
+          const item = candidates[i2];
+          if (item && typeof item === "object") {
+            if (pickCoordinatePair(item))
+              return item;
+            if (item.data && typeof item.data === "object") {
+              const nested = item.data;
+              if (pickCoordinatePair(nested))
+                return nested;
+            }
+          }
+        }
+        return null;
+      },
+      onMessage(e2) {
+        logPickerStep("onMessage-enter", e2 && e2.detail ? e2.detail.data : e2);
+        const msg = this.extractMessagePayload(e2);
+        logPickerStep("onMessage-extracted", msg);
+        if (msg == null)
+          return;
+        this.handlePicked(msg);
       }
     }
   };
@@ -13782,15 +11317,31 @@ This will fail in production.`);
       normalizeProducts(res) {
         const raw = res && typeof res === "object" && res.data !== void 0 ? res.data : res;
         const arr = Array.isArray(raw) ? raw : raw && Array.isArray(raw.list) ? raw.list : [];
-        return arr.map((p2) => ({
-          id: p2.id,
-          name: p2.name != null ? String(p2.name) : "",
-          price: p2.price,
-          stock: p2.stock != null ? p2.stock : p2.inventory != null ? p2.inventory : 0,
-          status: p2.status === 0 || p2.status === 1 ? p2.status : 0,
-          category_id: p2.category_id != null ? p2.category_id : null,
-          image: p2.image || p2.cover || p2.cover_url || p2.logo || ""
-        }));
+        return arr.map((p2) => {
+          const imageList = this.parseImageList(p2.images);
+          return {
+            id: p2.id,
+            name: p2.name != null ? String(p2.name) : "",
+            price: p2.price,
+            stock: p2.stock != null ? p2.stock : p2.inventory != null ? p2.inventory : 0,
+            status: p2.status === 0 || p2.status === 1 ? p2.status : 0,
+            category_id: p2.category_id != null ? p2.category_id : null,
+            image: imageList[0] || p2.image || p2.cover || p2.cover_url || p2.logo || ""
+          };
+        });
+      },
+      parseImageList(rawImages) {
+        if (Array.isArray(rawImages)) {
+          return rawImages.filter((u2) => typeof u2 === "string" && u2);
+        }
+        if (typeof rawImages !== "string" || !rawImages.trim())
+          return [];
+        try {
+          const parsed = JSON.parse(rawImages);
+          return Array.isArray(parsed) ? parsed.filter((u2) => typeof u2 === "string" && u2) : [];
+        } catch (e2) {
+          return [];
+        }
       },
       formatImageUrl(url2) {
         if (!url2)
@@ -14080,7 +11631,7 @@ This will fail in production.`);
       try {
         await this.loadList();
       } catch (e2) {
-        formatAppLog("error", "at pages/shop/category-manage.vue:64", e2);
+        formatAppLog("error", "at pages/shop/category-manage.vue:69", e2);
       } finally {
         uni.stopPullDownRefresh();
       }
@@ -14095,11 +11646,11 @@ This will fail in production.`);
       },
       async loadList() {
         try {
-          const res = await request({ url: "/merchant/my-categories", method: "GET" });
+          const res = await getMerchantCategoryList();
           this.list = this.normalizeList(res);
         } catch (e2) {
           this.list = [];
-          formatAppLog("log", "at pages/shop/category-manage.vue:87", "分类列表加载失败", e2);
+          formatAppLog("log", "at pages/shop/category-manage.vue:92", "分类列表加载失败", e2);
         }
       },
       openDialog(mode, item) {
@@ -14126,24 +11677,17 @@ This will fail in production.`);
         }
         try {
           if (this.dialogMode === "add") {
-            await request({
-              url: "/merchant/category",
-              method: "POST",
-              data: { name, sort: 1 }
-            });
+            await createCategory({ name, sort: 1 });
             uni.showToast({ title: "已新增", icon: "success" });
           } else {
-            await request({
-              url: "/merchant/category/" + this.editingId,
-              method: "PUT",
-              data: { name }
-            });
+            await updateCategory(this.editingId, { name });
             uni.showToast({ title: "已保存", icon: "success" });
           }
           this.closeDialog();
           await this.loadList();
         } catch (e2) {
-          uni.showToast({ title: "操作失败", icon: "none" });
+          const msg = e2 && (e2.message || e2.detail || e2.msg) || "操作失败";
+          uni.showToast({ title: msg, icon: "none" });
         }
       },
       confirmDelete(item) {
@@ -14154,11 +11698,12 @@ This will fail in production.`);
             if (!res.confirm)
               return;
             try {
-              await request({ url: "/merchant/category/" + item.id, method: "DELETE" });
+              await deleteCategory(item.id);
               uni.showToast({ title: "已删除", icon: "success" });
               await this.loadList();
             } catch (e2) {
-              uni.showToast({ title: "删除失败", icon: "none" });
+              const msg = e2 && (e2.message || e2.detail || e2.msg) || "删除失败";
+              uni.showToast({ title: msg, icon: "none" });
             }
           }
         });
@@ -14332,10 +11877,16 @@ This will fail in production.`);
     data() {
       return {
         imageUrls: [],
+        categoryList: [],
+        categoryIndex: -1,
+        merchantCategory: "",
+        specGroupName: "",
+        specOptions: [],
         form: {
           name: "",
           price: "",
-          description: ""
+          description: "",
+          images: []
         },
         uploading: false,
         submitting: false,
@@ -14343,7 +11894,18 @@ This will fail in production.`);
         publishDone: false
       };
     },
+    computed: {
+      isSupermarket() {
+        return this.merchantCategory === "超市";
+      }
+    },
+    onLoad() {
+      this.bootstrap();
+    },
     methods: {
+      async bootstrap() {
+        await Promise.all([this.loadCategoryList(), this.loadMerchantCategory()]);
+      },
       formatImageUrl(url2) {
         if (!url2)
           return "";
@@ -14364,6 +11926,56 @@ This will fail in production.`);
         const data = parsed && parsed.data && typeof parsed.data === "object" ? parsed.data : parsed;
         const url2 = data && data.url ? data.url : "";
         return url2 ? String(url2) : "";
+      },
+      normalizeCategoryList(res) {
+        const raw = res && typeof res === "object" && res.data !== void 0 ? res.data : res;
+        const arr = Array.isArray(raw) ? raw : raw && Array.isArray(raw.list) ? raw.list : raw && Array.isArray(raw.data) ? raw.data : [];
+        return arr.map((item) => ({
+          id: item.id,
+          name: item.name != null ? String(item.name) : ""
+        })).filter((item) => item.id != null);
+      },
+      normalizeMerchantCategory(res) {
+        const raw = res && typeof res === "object" && res.data !== void 0 ? res.data : res;
+        const merchant = raw && typeof raw === "object" && raw.merchant && typeof raw.merchant === "object" ? raw.merchant : raw;
+        return merchant && merchant.category != null ? String(merchant.category).trim() : "";
+      },
+      async loadCategoryList() {
+        try {
+          const res = await request({ url: "/merchant/my-categories", method: "GET" });
+          this.categoryList = Array.isArray(res) ? res : res.data || [];
+          if (this.categoryIndex >= this.categoryList.length) {
+            this.categoryIndex = -1;
+          }
+        } catch (e2) {
+          this.categoryList = [];
+          this.categoryIndex = -1;
+          formatAppLog("error", "at pages/shop/product-publish.vue:165", "拉取分类失败", e2);
+        }
+      },
+      async loadMerchantCategory() {
+        try {
+          const res = await getShopInfo();
+          this.merchantCategory = this.normalizeMerchantCategory(res);
+        } catch (e2) {
+          this.merchantCategory = "";
+        }
+      },
+      onCategoryChange(e2) {
+        this.categoryIndex = Number(e2 && e2.detail && e2.detail.value);
+      },
+      onSpecOptionInput(index, e2) {
+        const value2 = e2 && e2.detail ? String(e2.detail.value || "") : "";
+        this.$set ? this.$set(this.specOptions, index, value2) : this.specOptions.splice(index, 1, value2);
+      },
+      addSpecOption() {
+        this.specOptions.push("");
+      },
+      removeSpecOption(index) {
+        this.specOptions.splice(index, 1);
+      },
+      normalizeSpecOptions() {
+        return this.specOptions.map((item) => String(item || "").trim()).filter(Boolean);
       },
       chooseAndUploadImage() {
         if (this.uploading)
@@ -14394,6 +12006,7 @@ This will fail in production.`);
                   return;
                 }
                 this.imageUrls = [url2];
+                this.form.images = [url2];
                 uni.showToast({ title: "上传成功", icon: "success" });
               },
               fail: () => {
@@ -14462,9 +12075,13 @@ This will fail in production.`);
         this.form = {
           name: "",
           price: "",
-          description: ""
+          description: "",
+          images: []
         };
+        this.specGroupName = "";
+        this.specOptions = [];
         this.imageUrls = [];
+        this.categoryIndex = -1;
       },
       /** 返回商品列表（不依赖页面栈，保证能离开发布页） */
       backToProductList() {
@@ -14474,6 +12091,8 @@ This will fail in production.`);
         const name = (this.form.name || "").trim();
         const price = Number(this.form.price);
         const description = (this.form.description || "").trim();
+        const selectedCategory = this.categoryIndex > -1 ? this.categoryList[this.categoryIndex] : null;
+        const categoryId = selectedCategory && selectedCategory.id != null ? selectedCategory.id : "";
         if (!name) {
           uni.showToast({ title: "请填写商品名称", icon: "none" });
           return;
@@ -14482,14 +12101,33 @@ This will fail in production.`);
           uni.showToast({ title: "请填写有效售价", icon: "none" });
           return;
         }
+        if (categoryId === "") {
+          uni.showToast({ title: "请选择商品分类", icon: "none" });
+          return;
+        }
+        const spec_group_name = (this.specGroupName || "").trim();
+        const spec_options = this.normalizeSpecOptions();
+        if (this.isSupermarket) {
+          if (spec_group_name && !spec_options.length) {
+            uni.showToast({ title: "请至少填写一个规格项", icon: "none" });
+            return;
+          }
+          if (!spec_group_name && spec_options.length) {
+            uni.showToast({ title: "请填写规格组名", icon: "none" });
+            return;
+          }
+        }
         const payload = {
           name,
           price,
-          category_id: 1,
-          // 向下兼容后端限制
+          category_id: categoryId,
           description,
-          images: JSON.stringify(this.imageUrls.length ? this.imageUrls : [])
+          images: JSON.stringify(Array.isArray(this.form.images) ? this.form.images : [])
         };
+        if (this.isSupermarket) {
+          payload.spec_group_name = spec_group_name;
+          payload.spec_options = spec_options;
+        }
         this.submitting = true;
         try {
           const data = await createMerchantProduct(payload);
@@ -14555,12 +12193,29 @@ This will fail in production.`);
               ])
             ]),
             vue.createElementVNode("view", { class: "field" }, [
+              vue.createElementVNode("text", { class: "label" }, "商品分类 (category_id) *必填"),
+              vue.createElementVNode("picker", {
+                range: $data.categoryList,
+                "range-key": "name",
+                value: $data.categoryIndex,
+                onChange: _cache[1] || (_cache[1] = (...args) => $options.onCategoryChange && $options.onCategoryChange(...args))
+              }, [
+                vue.createElementVNode(
+                  "view",
+                  { class: "picker-line" },
+                  vue.toDisplayString($data.categoryIndex > -1 && $data.categoryList[$data.categoryIndex] ? $data.categoryList[$data.categoryIndex].name : "请选择商品分类"),
+                  1
+                  /* TEXT */
+                )
+              ], 40, ["range", "value"])
+            ]),
+            vue.createElementVNode("view", { class: "field" }, [
               vue.createElementVNode("text", { class: "label" }, "现价 (price) *必填"),
               vue.withDirectives(vue.createElementVNode(
                 "input",
                 {
                   class: "input",
-                  "onUpdate:modelValue": _cache[1] || (_cache[1] = ($event) => $data.form.price = $event),
+                  "onUpdate:modelValue": _cache[2] || (_cache[2] = ($event) => $data.form.price = $event),
                   type: "digit",
                   placeholder: "请输入售价"
                 },
@@ -14577,7 +12232,7 @@ This will fail in production.`);
                 "textarea",
                 {
                   class: "textarea",
-                  "onUpdate:modelValue": _cache[2] || (_cache[2] = ($event) => $data.form.description = $event),
+                  "onUpdate:modelValue": _cache[3] || (_cache[3] = ($event) => $data.form.description = $event),
                   placeholder: "选填，输入商品描述",
                   maxlength: "2000"
                 },
@@ -14588,11 +12243,64 @@ This will fail in production.`);
                 [vue.vModelText, $data.form.description]
               ])
             ]),
+            $options.isSupermarket ? (vue.openBlock(), vue.createElementBlock("view", {
+              key: 0,
+              class: "field"
+            }, [
+              vue.createElementVNode("text", { class: "label" }, "单组规格（超市专属）"),
+              vue.withDirectives(vue.createElementVNode(
+                "input",
+                {
+                  class: "input",
+                  "onUpdate:modelValue": _cache[4] || (_cache[4] = ($event) => $data.specGroupName = $event),
+                  placeholder: "请输入规格组名，例如：口味"
+                },
+                null,
+                512
+                /* NEED_PATCH */
+              ), [
+                [vue.vModelText, $data.specGroupName]
+              ]),
+              vue.createElementVNode("view", { class: "spec-options" }, [
+                (vue.openBlock(true), vue.createElementBlock(
+                  vue.Fragment,
+                  null,
+                  vue.renderList($data.specOptions, (option, index) => {
+                    return vue.openBlock(), vue.createElementBlock("view", {
+                      key: "spec-" + index,
+                      class: "spec-option-row"
+                    }, [
+                      vue.createElementVNode("input", {
+                        class: "input spec-option-input",
+                        value: option,
+                        placeholder: "规格项" + (index + 1),
+                        onInput: ($event) => $options.onSpecOptionInput(index, $event)
+                      }, null, 40, ["value", "placeholder", "onInput"]),
+                      vue.createElementVNode("button", {
+                        class: "spec-remove-btn",
+                        type: "warn",
+                        size: "mini",
+                        onClick: ($event) => $options.removeSpecOption(index)
+                      }, "删除", 8, ["onClick"])
+                    ]);
+                  }),
+                  128
+                  /* KEYED_FRAGMENT */
+                ))
+              ]),
+              vue.createElementVNode("button", {
+                class: "spec-add-btn",
+                type: "default",
+                size: "mini",
+                onClick: _cache[5] || (_cache[5] = (...args) => $options.addSpecOption && $options.addSpecOption(...args))
+              }, "添加规格项"),
+              vue.createElementVNode("text", { class: "hint" }, "可不配置；如配置，将提交 `spec_group_name` 和 `spec_options`")
+            ])) : vue.createCommentVNode("v-if", true),
             vue.createElementVNode("view", { class: "field" }, [
               vue.createElementVNode("text", { class: "label" }, "商品图片 (images)"),
               vue.createElementVNode("view", {
                 class: "upload-area",
-                onClick: _cache[3] || (_cache[3] = (...args) => $options.chooseAndUploadImage && $options.chooseAndUploadImage(...args))
+                onClick: _cache[6] || (_cache[6] = (...args) => $options.chooseAndUploadImage && $options.chooseAndUploadImage(...args))
               }, [
                 $data.imageUrls[0] ? (vue.openBlock(), vue.createElementBlock("image", {
                   key: 0,
@@ -14611,7 +12319,7 @@ This will fail in production.`);
             class: "btn",
             type: "primary",
             loading: $data.submitting,
-            onClick: _cache[4] || (_cache[4] = (...args) => $options.submit && $options.submit(...args))
+            onClick: _cache[7] || (_cache[7] = (...args) => $options.submit && $options.submit(...args))
           }, "发布商品", 8, ["loading"])
         ],
         64
@@ -14629,12 +12337,12 @@ This will fail in production.`);
           vue.createElementVNode("button", {
             class: "btn-secondary",
             type: "default",
-            onClick: _cache[5] || (_cache[5] = (...args) => $options.continuePublish && $options.continuePublish(...args))
+            onClick: _cache[8] || (_cache[8] = (...args) => $options.continuePublish && $options.continuePublish(...args))
           }, "继续发布"),
           vue.createElementVNode("button", {
             class: "btn-primary-line",
             type: "default",
-            onClick: _cache[6] || (_cache[6] = (...args) => $options.backToProductList && $options.backToProductList(...args))
+            onClick: _cache[9] || (_cache[9] = (...args) => $options.backToProductList && $options.backToProductList(...args))
           }, "返回商品列表")
         ])
       ]))
@@ -14648,6 +12356,9 @@ This will fail in production.`);
         productId: "",
         categories: [],
         imageList: [],
+        merchantCategory: "",
+        specGroupName: "",
+        specOptions: [],
         uploading: false,
         saving: false,
         deleting: false,
@@ -14656,11 +12367,15 @@ This will fail in production.`);
           price: "",
           original_price: "",
           category_id: null,
-          description: ""
+          description: "",
+          images: []
         }
       };
     },
     computed: {
+      isSupermarket() {
+        return this.merchantCategory === "超市";
+      },
       pickerIndex() {
         if (!this.categories.length || this.form.category_id == null)
           return 0;
@@ -14694,7 +12409,7 @@ This will fail in production.`);
         return url2.startsWith("/") ? BASE_URL + url2 : BASE_URL + "/" + url2;
       },
       async bootstrap() {
-        await Promise.all([this.loadCategories(), this.loadProductDetail()]);
+        await Promise.all([this.loadCategories(), this.loadProductDetail(), this.loadMerchantCategory()]);
         if (this.categories.length && this.form.category_id == null) {
           this.form.category_id = this.categories[0].id;
         }
@@ -14705,6 +12420,11 @@ This will fail in production.`);
           id: c2.id,
           name: c2.name != null ? String(c2.name) : ""
         })).filter((c2) => c2.id != null);
+      },
+      normalizeMerchantCategory(res) {
+        const raw = res && typeof res === "object" && res.data !== void 0 ? res.data : res;
+        const merchant = raw && typeof raw === "object" && raw.merchant && typeof raw.merchant === "object" ? raw.merchant : raw;
+        return merchant && merchant.category != null ? String(merchant.category).trim() : "";
       },
       parseImageList(rawImages) {
         if (Array.isArray(rawImages)) {
@@ -14731,12 +12451,33 @@ This will fail in production.`);
         const data = parsed && parsed.data && typeof parsed.data === "object" ? parsed.data : parsed;
         return data && data.url ? String(data.url) : "";
       },
+      parseSpecOptions(rawOptions) {
+        if (Array.isArray(rawOptions)) {
+          return rawOptions.map((item) => String(item || "").trim()).filter(Boolean);
+        }
+        if (typeof rawOptions !== "string" || !rawOptions.trim())
+          return [];
+        try {
+          const parsed = JSON.parse(rawOptions);
+          return Array.isArray(parsed) ? parsed.map((item) => String(item || "").trim()).filter(Boolean) : [];
+        } catch (e2) {
+          return rawOptions.split(",").map((item) => String(item || "").trim()).filter(Boolean);
+        }
+      },
       async loadCategories() {
         try {
           const res = await request({ url: "/merchant/my-categories", method: "GET" });
           this.categories = this.normalizeCategoryList(res);
         } catch (e2) {
           this.categories = [];
+        }
+      },
+      async loadMerchantCategory() {
+        try {
+          const res = await getShopInfo();
+          this.merchantCategory = this.normalizeMerchantCategory(res);
+        } catch (e2) {
+          this.merchantCategory = "";
         }
       },
       async loadProductDetail() {
@@ -14752,12 +12493,28 @@ This will fail in production.`);
             price: p2.price != null ? String(p2.price) : "",
             original_price: p2.original_price != null ? String(p2.original_price) : "",
             category_id: p2.category_id != null ? p2.category_id : null,
-            description: p2.description != null ? String(p2.description) : ""
+            description: p2.description != null ? String(p2.description) : "",
+            images: this.parseImageList(p2.images)
           };
-          this.imageList = this.parseImageList(p2.images);
+          this.imageList = Array.isArray(this.form.images) ? [...this.form.images] : [];
+          this.specGroupName = p2.spec_group_name != null ? String(p2.spec_group_name).trim() : "";
+          this.specOptions = this.parseSpecOptions(p2.spec_options);
         } catch (e2) {
           uni.showToast({ title: "加载商品失败", icon: "none" });
         }
+      },
+      onSpecOptionInput(index, e2) {
+        const value2 = e2 && e2.detail ? String(e2.detail.value || "") : "";
+        this.$set ? this.$set(this.specOptions, index, value2) : this.specOptions.splice(index, 1, value2);
+      },
+      addSpecOption() {
+        this.specOptions.push("");
+      },
+      removeSpecOption(index) {
+        this.specOptions.splice(index, 1);
+      },
+      normalizeSpecOptions() {
+        return this.specOptions.map((item) => String(item || "").trim()).filter(Boolean);
       },
       onCategoryPick(e2) {
         const index = Number(e2.detail.value);
@@ -14766,8 +12523,9 @@ This will fail in production.`);
       },
       removeImage(index) {
         this.imageList.splice(index, 1);
+        this.form.images = [...this.imageList];
       },
-      chooseAndUploadImage() {
+      chooseAndUploadImage(replaceIndex = -1) {
         if (this.uploading)
           return;
         const token = uni.getStorageSync("token") || "";
@@ -14785,9 +12543,16 @@ This will fail in production.`);
             try {
               for (const filePath of files) {
                 const url2 = await this.uploadSingle(filePath, token);
-                if (url2)
+                if (!url2)
+                  continue;
+                if (replaceIndex > -1) {
+                  this.imageList.splice(replaceIndex, 1, url2);
+                  replaceIndex = -1;
+                } else {
                   this.imageList.push(url2);
+                }
               }
+              this.form.images = [...this.imageList];
               uni.showToast({ title: "上传成功", icon: "success" });
             } catch (e2) {
               uni.showToast({ title: "上传失败", icon: "none" });
@@ -14831,11 +12596,13 @@ This will fail in production.`);
           original_price: originalPriceText === "" ? null : originalPrice,
           category_id,
           description,
-          images: JSON.stringify(this.imageList.length ? this.imageList : [])
+          images: JSON.stringify(Array.isArray(this.form.images) ? this.form.images : [])
         };
       },
       async saveProduct() {
         const payload = this.buildPayload();
+        const spec_group_name = (this.specGroupName || "").trim();
+        const spec_options = this.normalizeSpecOptions();
         if (!payload.name) {
           uni.showToast({ title: "请填写商品名称", icon: "none" });
           return;
@@ -14851,6 +12618,18 @@ This will fail in production.`);
         if (!Number.isFinite(payload.category_id) || payload.category_id < 1) {
           uni.showToast({ title: "请选择分类", icon: "none" });
           return;
+        }
+        if (this.isSupermarket) {
+          if (spec_group_name && !spec_options.length) {
+            uni.showToast({ title: "请至少填写一个规格项", icon: "none" });
+            return;
+          }
+          if (!spec_group_name && spec_options.length) {
+            uni.showToast({ title: "请填写规格组名", icon: "none" });
+            return;
+          }
+          payload.spec_group_name = spec_group_name;
+          payload.spec_options = spec_options;
         }
         this.saving = true;
         try {
@@ -14976,12 +12755,65 @@ This will fail in production.`);
             [vue.vModelText, $data.form.description]
           ])
         ]),
+        $options.isSupermarket ? (vue.openBlock(), vue.createElementBlock("view", {
+          key: 0,
+          class: "field"
+        }, [
+          vue.createElementVNode("text", { class: "label" }, "单组规格（超市专属）"),
+          vue.withDirectives(vue.createElementVNode(
+            "input",
+            {
+              class: "input",
+              "onUpdate:modelValue": _cache[5] || (_cache[5] = ($event) => $data.specGroupName = $event),
+              placeholder: "请输入规格组名，例如：口味"
+            },
+            null,
+            512
+            /* NEED_PATCH */
+          ), [
+            [vue.vModelText, $data.specGroupName]
+          ]),
+          vue.createElementVNode("view", { class: "spec-options" }, [
+            (vue.openBlock(true), vue.createElementBlock(
+              vue.Fragment,
+              null,
+              vue.renderList($data.specOptions, (option, index) => {
+                return vue.openBlock(), vue.createElementBlock("view", {
+                  key: "spec-" + index,
+                  class: "spec-option-row"
+                }, [
+                  vue.createElementVNode("input", {
+                    class: "input spec-option-input",
+                    value: option,
+                    placeholder: "规格项" + (index + 1),
+                    onInput: ($event) => $options.onSpecOptionInput(index, $event)
+                  }, null, 40, ["value", "placeholder", "onInput"]),
+                  vue.createElementVNode("button", {
+                    class: "spec-remove-btn",
+                    type: "warn",
+                    size: "mini",
+                    onClick: ($event) => $options.removeSpecOption(index)
+                  }, "删除", 8, ["onClick"])
+                ]);
+              }),
+              128
+              /* KEYED_FRAGMENT */
+            ))
+          ]),
+          vue.createElementVNode("button", {
+            class: "spec-add-btn",
+            type: "default",
+            size: "mini",
+            onClick: _cache[6] || (_cache[6] = (...args) => $options.addSpecOption && $options.addSpecOption(...args))
+          }, "添加规格项"),
+          vue.createElementVNode("text", { class: "hint" }, "可不配置；如配置，将提交 `spec_group_name` 和 `spec_options`")
+        ])) : vue.createCommentVNode("v-if", true),
         vue.createElementVNode("view", { class: "field" }, [
           vue.createElementVNode("text", { class: "label" }, "商品图片 (images)"),
           vue.createElementVNode("view", { class: "upload-list" }, [
             vue.createElementVNode("view", {
               class: "upload-item add",
-              onClick: _cache[5] || (_cache[5] = (...args) => $options.chooseAndUploadImage && $options.chooseAndUploadImage(...args))
+              onClick: _cache[7] || (_cache[7] = (...args) => $options.chooseAndUploadImage && $options.chooseAndUploadImage(...args))
             }, [
               vue.createElementVNode(
                 "text",
@@ -14997,7 +12829,8 @@ This will fail in production.`);
               vue.renderList($data.imageList, (url2, i2) => {
                 return vue.openBlock(), vue.createElementBlock("view", {
                   key: url2 + i2,
-                  class: "upload-item preview"
+                  class: "upload-item preview",
+                  onClick: ($event) => $options.chooseAndUploadImage(i2)
                 }, [
                   vue.createElementVNode("image", {
                     class: "preview-img",
@@ -15008,7 +12841,7 @@ This will fail in production.`);
                     class: "remove",
                     onClick: vue.withModifiers(($event) => $options.removeImage(i2), ["stop"])
                   }, "×", 8, ["onClick"])
-                ]);
+                ], 8, ["onClick"]);
               }),
               128
               /* KEYED_FRAGMENT */
@@ -15020,17 +12853,23 @@ This will fail in production.`);
         class: "btn-save",
         type: "primary",
         loading: $data.saving,
-        onClick: _cache[6] || (_cache[6] = (...args) => $options.saveProduct && $options.saveProduct(...args))
+        onClick: _cache[8] || (_cache[8] = (...args) => $options.saveProduct && $options.saveProduct(...args))
       }, "保存商品", 8, ["loading"]),
       vue.createElementVNode("button", {
         class: "btn-delete",
         type: "default",
         loading: $data.deleting,
-        onClick: _cache[7] || (_cache[7] = (...args) => $options.deleteProduct && $options.deleteProduct(...args))
+        onClick: _cache[9] || (_cache[9] = (...args) => $options.deleteProduct && $options.deleteProduct(...args))
       }, "删除商品", 8, ["loading"])
     ]);
   }
   const PagesShopFoodEdit = /* @__PURE__ */ _export_sfc(_sfc_main$2, [["render", _sfc_render$1], ["__scopeId", "data-v-33502258"], ["__file", "E:/固始县外卖商家端/pages/shop/food-edit.vue"]]);
+  function getOrderList(params = {}) {
+    return request({ url: "/order/my", method: "GET", data: params });
+  }
+  function acceptOrder(orderId, data = {}) {
+    return request({ url: "/order/accept", method: "POST", data: { order_id: orderId, ...data } });
+  }
   const _sfc_main$1 = {
     data() {
       return {
@@ -15307,35 +13146,12 @@ This will fail in production.`);
   }
   const PagesShopOrders = /* @__PURE__ */ _export_sfc(_sfc_main$1, [["render", _sfc_render], ["__scopeId", "data-v-01c150c3"], ["__file", "E:/固始县外卖商家端/pages/shop/orders.vue"]]);
   __definePage("pages/index/index", PagesIndexIndex);
-  __definePage("pages/home/index", PagesHomeIndex);
-  __definePage("pages/cart/index", PagesCartIndex);
-  __definePage("pages/order/index", PagesOrderIndex);
   __definePage("pages/order/list", PagesOrderList);
   __definePage("pages/order/detail", PagesOrderDetail);
+  __definePage("pages/order/self-delivery-nav", PagesOrderSelfDeliveryNav);
   __definePage("pages/mine/index", PagesMineIndex);
   __definePage("pages/login/index", PagesLoginIndex);
-  __definePage("pages/cart/checkout", PagesCartCheckout);
-  __definePage("pages/address/index", PagesAddressIndex);
-  __definePage("pages/address/edit", PagesAddressEdit);
-  __definePage("pages/search/index", PagesSearchIndex);
-  __definePage("pages/pay/index", PagesPayIndex);
-  __definePage("pages/profile/index", PagesProfileIndex);
-  __definePage("pages/errand/index", PagesErrandIndex);
-  __definePage("pages/county-takeaway/index", PagesCountyTakeawayIndex);
-  __definePage("pages/town-takeaway/index", PagesTownTakeawayIndex);
-  __definePage("pages/mobile-digital/index", PagesMobileDigitalIndex);
-  __definePage("pages/sell-phone/index", PagesSellPhoneIndex);
-  __definePage("pages/buy-phone/index", PagesBuyPhoneIndex);
-  __definePage("pages/digital-parts/index", PagesDigitalPartsIndex);
-  __definePage("pages/digital-parts/goods", PagesDigitalPartsGoods);
-  __definePage("pages/hardware/index", PagesHardwareIndex);
-  __definePage("pages/hardware/goods", PagesHardwareGoods);
-  __definePage("pages/appliance-repair/index", PagesApplianceRepairIndex);
-  __definePage("pages/appliance-repair/report", PagesApplianceRepairReport);
-  __definePage("pages/appliance-repair/progress", PagesApplianceRepairProgress);
-  __definePage("pages/food/detail", PagesFoodDetail);
   __definePage("pages/product/list", PagesProductList);
-  __definePage("pages/product/edit", PagesProductEdit);
   __definePage("pages/finance/index", PagesFinanceIndex);
   __definePage("pages/stats/index", PagesStatsIndex);
   __definePage("pages/review/list", PagesReviewList);
@@ -15348,60 +13164,26 @@ This will fail in production.`);
   __definePage("pages/shop/product-publish", PagesShopProductPublish);
   __definePage("pages/shop/food-edit", PagesShopFoodEdit);
   __definePage("pages/shop/orders", PagesShopOrders);
-  let _audio = null;
-  function playMerchantNewOrderNotify() {
-    try {
-      uni.vibrateLong();
-    } catch (e2) {
-      try {
-        uni.vibrateShort();
-      } catch (e22) {
-      }
-    }
-    try {
-      if (typeof uni.createInnerAudioContext !== "function") {
-        return;
-      }
-      if (!_audio) {
-        _audio = uni.createInnerAudioContext();
-        _audio.obeyMuteSwitch = false;
-        _audio.onError(() => {
-        });
-      }
-      _audio.stop();
-      _audio.src = "/static/audio/new-order.mp3";
-      _audio.play();
-    } catch (e2) {
-    }
-  }
   const _sfc_main = {
     onLaunch() {
-      formatAppLog("log", "at App.vue:8", "App Launch");
+      formatAppLog("log", "at App.vue:7", "App Launch");
+      if (!hasValidMerchantSession()) {
+        clearAuth();
+        uni.reLaunch({ url: "/pages/login/index" });
+        return;
+      }
       const token = getToken();
       const userInfo = getUser();
-      const userId = (userInfo == null ? void 0 : userInfo.id) || (userInfo == null ? void 0 : userInfo.userId) || "";
-      if (token) {
+      const userId = getUserId(userInfo);
+      if (token && userId) {
         initSocket(token, userId);
       }
-      onNewOrder((data) => {
-        formatAppLog("log", "at App.vue:17", "收到新订单推送：", data);
-        try {
-          playMerchantNewOrderNotify();
-        } catch (e2) {
-          formatAppLog("error", "at App.vue:21", "[merchant] playMerchantNewOrderNotify", e2);
-        }
-        try {
-          uni.showToast({ title: "您有新的外卖订单！", icon: "none" });
-        } catch (e2) {
-        }
-        uni.$emit("merchant_new_order", data);
-      });
     },
     onShow() {
-      formatAppLog("log", "at App.vue:31", "App Show");
+      formatAppLog("log", "at App.vue:22", "App Show");
     },
     onHide() {
-      formatAppLog("log", "at App.vue:34", "App Hide");
+      formatAppLog("log", "at App.vue:25", "App Hide");
     }
   };
   const App = /* @__PURE__ */ _export_sfc(_sfc_main, [["__file", "E:/固始县外卖商家端/App.vue"]]);
@@ -15410,32 +13192,8 @@ This will fail in production.`);
     {
       path: "pages/index/index",
       style: {
-        navigationBarTitleText: "首页",
+        navigationBarTitleText: "商家工作台",
         navigationBarBackgroundColor: "#FF6B35"
-      }
-    },
-    {
-      path: "pages/home/index",
-      style: {
-        navigationBarTitleText: "固始县外卖",
-        enablePullDownRefresh: true,
-        backgroundTextStyle: "dark"
-      }
-    },
-    {
-      path: "pages/cart/index",
-      style: {
-        navigationBarTitleText: "购物车",
-        enablePullDownRefresh: true,
-        backgroundTextStyle: "dark"
-      }
-    },
-    {
-      path: "pages/order/index",
-      style: {
-        navigationBarTitleText: "我的订单",
-        enablePullDownRefresh: true,
-        backgroundTextStyle: "dark"
       }
     },
     {
@@ -15453,6 +13211,13 @@ This will fail in production.`);
       }
     },
     {
+      path: "pages/order/self-delivery-nav",
+      style: {
+        navigationBarTitleText: "配送导航",
+        navigationBarBackgroundColor: "#FF6B35"
+      }
+    },
+    {
       path: "pages/mine/index",
       style: {
         navigationBarTitleText: "我的"
@@ -15466,152 +13231,10 @@ This will fail in production.`);
       }
     },
     {
-      path: "pages/cart/checkout",
-      style: {
-        navigationBarTitleText: "确认订单"
-      }
-    },
-    {
-      path: "pages/address/index",
-      style: {
-        navigationBarTitleText: "收货地址"
-      }
-    },
-    {
-      path: "pages/address/edit",
-      style: {
-        navigationBarTitleText: "编辑地址"
-      }
-    },
-    {
-      path: "pages/search/index",
-      style: {
-        navigationBarTitleText: "搜索"
-      }
-    },
-    {
-      path: "pages/pay/index",
-      style: {
-        navigationBarTitleText: "订单支付"
-      }
-    },
-    {
-      path: "pages/profile/index",
-      style: {
-        navigationBarTitleText: "个人资料"
-      }
-    },
-    {
-      path: "pages/errand/index",
-      style: {
-        navigationBarTitleText: "跑腿服务"
-      }
-    },
-    {
-      path: "pages/county-takeaway/index",
-      style: {
-        navigationBarTitleText: "县城外卖",
-        enablePullDownRefresh: true
-      }
-    },
-    {
-      path: "pages/town-takeaway/index",
-      style: {
-        navigationBarTitleText: "镇上外卖",
-        enablePullDownRefresh: true
-      }
-    },
-    {
-      path: "pages/mobile-digital/index",
-      style: {
-        navigationBarTitleText: "二手机买卖",
-        navigationStyle: "custom",
-        enablePullDownRefresh: true
-      }
-    },
-    {
-      path: "pages/sell-phone/index",
-      style: {
-        navigationBarTitleText: "我要卖手机",
-        navigationStyle: "custom"
-      }
-    },
-    {
-      path: "pages/buy-phone/index",
-      style: {
-        navigationBarTitleText: "我要买二手机",
-        navigationStyle: "custom",
-        enablePullDownRefresh: true
-      }
-    },
-    {
-      path: "pages/digital-parts/index",
-      style: {
-        navigationBarTitleText: "数码配件",
-        navigationStyle: "custom"
-      }
-    },
-    {
-      path: "pages/digital-parts/goods",
-      style: {
-        navigationBarTitleText: "数码配件",
-        navigationStyle: "custom",
-        enablePullDownRefresh: true
-      }
-    },
-    {
-      path: "pages/hardware/index",
-      style: {
-        navigationBarTitleText: "五金工具",
-        navigationStyle: "custom"
-      }
-    },
-    {
-      path: "pages/hardware/goods",
-      style: {
-        navigationBarTitleText: "五金商品",
-        navigationStyle: "custom",
-        enablePullDownRefresh: true
-      }
-    },
-    {
-      path: "pages/appliance-repair/index",
-      style: {
-        navigationBarTitleText: "家电维修",
-        navigationStyle: "custom"
-      }
-    },
-    {
-      path: "pages/appliance-repair/report",
-      style: {
-        navigationBarTitleText: "我要报修",
-        navigationStyle: "custom"
-      }
-    },
-    {
-      path: "pages/appliance-repair/progress",
-      style: {
-        navigationBarTitleText: "维修进度",
-        navigationStyle: "custom"
-      }
-    },
-    {
-      path: "pages/food/detail",
-      style: {
-        navigationBarTitleText: "商品详情"
-      }
-    },
-    {
       path: "pages/product/list",
       style: {
         navigationBarTitleText: "商品管理",
         enablePullDownRefresh: true
-      }
-    },
-    {
-      path: "pages/product/edit",
-      style: {
-        navigationBarTitleText: "编辑商品"
       }
     },
     {
@@ -15709,7 +13332,7 @@ This will fail in production.`);
         text: "首页"
       },
       {
-        pagePath: "pages/order/index",
+        pagePath: "pages/order/list",
         iconPath: "static/tabbar/order.png",
         selectedIconPath: "static/tabbar/order-active.png",
         text: "订单"
@@ -18727,10 +16350,10 @@ ${i3}
   })();
   var _r = yr;
   var define_process_env_UNI_STATISTICS_CONFIG_default = { version: "2", enable: true };
-  var define_process_env_UNI_STAT_TITLE_JSON_default = { "pages/index/index": "首页", "pages/home/index": "固始县外卖", "pages/cart/index": "购物车", "pages/order/index": "我的订单", "pages/order/list": "订单管理", "pages/order/detail": "订单详情", "pages/mine/index": "我的", "pages/login/index": "商家登录", "pages/cart/checkout": "确认订单", "pages/address/index": "收货地址", "pages/address/edit": "编辑地址", "pages/search/index": "搜索", "pages/pay/index": "订单支付", "pages/profile/index": "个人资料", "pages/errand/index": "跑腿服务", "pages/county-takeaway/index": "县城外卖", "pages/town-takeaway/index": "镇上外卖", "pages/mobile-digital/index": "二手机买卖", "pages/sell-phone/index": "我要卖手机", "pages/buy-phone/index": "我要买二手机", "pages/digital-parts/index": "数码配件", "pages/digital-parts/goods": "数码配件", "pages/hardware/index": "五金工具", "pages/hardware/goods": "五金商品", "pages/appliance-repair/index": "家电维修", "pages/appliance-repair/report": "我要报修", "pages/appliance-repair/progress": "维修进度", "pages/food/detail": "商品详情", "pages/product/list": "商品管理", "pages/product/edit": "编辑商品", "pages/finance/index": "财务管理", "pages/stats/index": "数据统计", "pages/review/list": "顾客评价", "pages/shop/index": "店铺设置", "pages/shop/shop-apply": "申请开店", "pages/shop/tianditu-picker": "选择店铺位置", "pages/shop/food-list": "商品管理", "pages/shop/category-manage": "商品分类", "pages/shop/category-add": "添加分类", "pages/shop/product-publish": "发布商品", "pages/shop/food-edit": "编辑商品", "pages/shop/orders": "订单管理" };
+  var define_process_env_UNI_STAT_TITLE_JSON_default = { "pages/index/index": "商家工作台", "pages/order/list": "订单管理", "pages/order/detail": "订单详情", "pages/order/self-delivery-nav": "配送导航", "pages/mine/index": "我的", "pages/login/index": "商家登录", "pages/product/list": "商品管理", "pages/finance/index": "财务管理", "pages/stats/index": "数据统计", "pages/review/list": "顾客评价", "pages/shop/index": "店铺设置", "pages/shop/shop-apply": "申请开店", "pages/shop/tianditu-picker": "选择店铺位置", "pages/shop/food-list": "商品管理", "pages/shop/category-manage": "商品分类", "pages/shop/category-add": "添加分类", "pages/shop/product-publish": "发布商品", "pages/shop/food-edit": "编辑商品", "pages/shop/orders": "订单管理" };
   var define_process_env_UNI_STAT_UNI_CLOUD_default = {};
   const sys = uni.getSystemInfoSync();
-  const STAT_VERSION = "5.05";
+  const STAT_VERSION = "5.07";
   const STAT_URL = "https://tongji.dcloud.io/uni/stat";
   const STAT_H5_URL = "https://tongji.dcloud.io/uni/stat.gif";
   const PAGE_PVER_TIME = 1800;

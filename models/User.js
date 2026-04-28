@@ -29,10 +29,10 @@ const User = sequelize.define('User', {
     comment: '头像 URL'
   },
   role: {
-    type: DataTypes.ENUM('user', 'merchant', 'rider'),
+    type: DataTypes.ENUM('user', 'merchant', 'rider', 'admin'),
     allowNull: false,
     defaultValue: 'user',
-    comment: '角色：user-用户，merchant-商家，rider-骑手'
+    comment: '角色：user-用户，merchant-商家，rider-骑手，admin-管理员'
   },
   status: {
     type: DataTypes.INTEGER,
@@ -54,6 +54,11 @@ const User = sequelize.define('User', {
     defaultValue: 0,
     comment: '骑手状态：0-休息，1-接单中'
   },
+  rider_audit_status: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+    comment: '骑手审核状态：0-待审核，1-已通过，2-已拒绝'
+  },
   rider_balance: {
     type: DataTypes.DECIMAL(10, 2),
     defaultValue: 0.00,
@@ -63,6 +68,24 @@ const User = sequelize.define('User', {
     type: DataTypes.ENUM('rider', 'stationmaster'),
     defaultValue: 'rider',
     comment: '骑手类型：rider-普通骑手，stationmaster-乡镇站长'
+  },
+  delivery_scope: {
+    type: DataTypes.ENUM('county_delivery', 'town_delivery'),
+    allowNull: true,
+    comment: '配送业务线：county_delivery-县城配送，town_delivery-乡镇配送'
+  },
+  rider_level: {
+    type: DataTypes.ENUM('captain', 'normal'),
+    allowNull: true,
+    comment: '骑手层级：captain-站长，normal-普通骑手'
+  },
+  town_code: {
+    type: DataTypes.STRING(32),
+    comment: '所属乡镇编码'
+  },
+  town_name: {
+    type: DataTypes.STRING(50),
+    comment: '所属乡镇名称'
   },
   rider_town: {
     type: DataTypes.STRING(50),
@@ -86,7 +109,9 @@ const User = sequelize.define('User', {
   updatedAt: false,
   indexes: [
     { fields: ['phone'] },
-    { fields: ['role'] }
+    { fields: ['role'] },
+    { fields: ['delivery_scope'] },
+    { fields: ['town_code'] }
   ]
 });
 

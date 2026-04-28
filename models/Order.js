@@ -60,6 +60,17 @@ const Order = sequelize.define('Order', {
     type: DataTypes.DATE,
     comment: '推送调度中心时间'
   },
+  merge_group_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    comment: '县城美食拼单组ID'
+  },
+  is_group_main: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+    comment: '是否为拼单主店订单'
+  },
   status: {
     type: DataTypes.INTEGER,
     defaultValue: 0,
@@ -79,11 +90,15 @@ const Order = sequelize.define('Order', {
   dispatch_status: {
     type: DataTypes.VIRTUAL,
     get() {
+      if (this.status === 6) return 'completed';
+      if (this.status === 7) return 'canceled';
+      if (this.rider_id) {
+        return this.status === 5 ? 'delivering' : 'dispatched';
+      }
       if (this.status <= 2) return 'pending';
       if (this.status === 3 || this.status === 4) return 'dispatched';
       if (this.status === 5) return 'delivering';
-      if (this.status === 6) return 'completed';
-      return 'canceled';
+      return 'pending';
     }
   },
   products_info: {
@@ -157,6 +172,21 @@ const Order = sequelize.define('Order', {
     type: DataTypes.INTEGER,
     defaultValue: 1,
     comment: '配送方式：1-配送，2-自取'
+  },
+  supermarket_delivery_permission_snapshot: {
+    type: DataTypes.ENUM('self_only', 'rider_only', 'hybrid'),
+    allowNull: true,
+    comment: '超市下单时的店铺配送权限快照'
+  },
+  supermarket_delivery_mode: {
+    type: DataTypes.ENUM('pending', 'self_delivery', 'rider_delivery'),
+    allowNull: true,
+    comment: '超市订单实际配送模式：pending/self_delivery/rider_delivery'
+  },
+  settlement_rule_snapshot: {
+    type: DataTypes.STRING(64),
+    allowNull: true,
+    comment: '订单分账规则快照'
   },
   contact_phone: {
     type: DataTypes.STRING(20),
@@ -300,6 +330,11 @@ const Order = sequelize.define('Order', {
   cancel_reason: {
     type: DataTypes.STRING(255),
     comment: '取消原因'
+  },
+  buyer_deleted_at: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    comment: '用户侧移出列表时间，仅影响买家订单列表展示'
   }
 }, {
   tableName: 'orders',
@@ -308,6 +343,7 @@ const Order = sequelize.define('Order', {
   indexes: [
     { fields: ['order_no'] },
     { fields: ['user_id'] },
+    { fields: ['user_id', 'buyer_deleted_at', 'status'] },
     { fields: ['merchant_id'] },
     { fields: ['rider_id'] },
     { fields: ['status'] },

@@ -1,0 +1,48 @@
+# 依赖
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json.bak
+
+# 运行时产物
+logs/
+*.log
+pids/
+*.pid
+*.seed
+coverage/
+.nyc_output/
+
+# 上传/缓存
+uploads/
+tmp/
+temp/
+
+# 环境变量与密钥（务必不要提交到仓库）
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+secrets/
+
+# 编辑器/系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# 打包/外部前端构建产物
+external/**/unpackage/dist/
+
+# 备份/归档
+*.zip
+*.tar.gz
+*.bak
+
+# 其他
+.cache/

@@ -8,29 +8,6 @@
       </view>
     </view>
 
-    <view class="card menu-list">
-      <view class="menu-item" @click="goShop">
-        <text>🏪 店铺管理</text>
-        <text class="arrow">›</text>
-      </view>
-      <view class="menu-item" @click="goProducts">
-        <text>🍱 商品管理</text>
-        <text class="arrow">›</text>
-      </view>
-      <view class="menu-item" @click="goFinance">
-        <text>💰 财务管理</text>
-        <text class="arrow">›</text>
-      </view>
-      <view class="menu-item" @click="goStats">
-        <text>📊 数据统计</text>
-        <text class="arrow">›</text>
-      </view>
-      <view class="menu-item" @click="goReview">
-        <text>⭐ 顾客评价</text>
-        <text class="arrow">›</text>
-      </view>
-    </view>
-
     <view class="card">
       <button class="logout-btn" @click="logout">退出登录</button>
     </view>
@@ -38,7 +15,8 @@
 </template>
 
 <script>
-import { disconnectSocket } from '@/utils/socket.js'
+import { disconnectSocket, offAllListeners } from '@/utils/socket.js'
+import { clearAuth } from '@/utils/auth.js'
 
 export default {
   data() {
@@ -58,30 +36,15 @@ export default {
     }
   },
   methods: {
-    goShop() {
-      uni.navigateTo({ url: '/pages/shop/index' });
-    },
-    goProducts() {
-      uni.navigateTo({ url: '/pages/product/list' });
-    },
-    goFinance() {
-      uni.navigateTo({ url: '/pages/finance/index' });
-    },
-    goStats() {
-      uni.navigateTo({ url: '/pages/stats/index' });
-    },
-    goReview() {
-      uni.navigateTo({ url: '/pages/review/list' });
-    },
     logout() {
       uni.showModal({
         title: '提示',
         content: '确定退出登录吗？',
         success: (res) => {
           if (res.confirm) {
+            offAllListeners()
             disconnectSocket()
-            uni.removeStorageSync('token')
-            uni.removeStorageSync('userInfo')
+            clearAuth()
             this.userInfo = null
             uni.showToast({ title: '已退出', icon: 'none' })
             setTimeout(() => {
@@ -110,16 +73,6 @@ export default {
 }
 .user-name { font-size: 34rpx; font-weight: 600; display: block; }
 .user-phone { font-size: 26rpx; margin-top: 8rpx; }
-.menu-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 32rpx 0;
-  font-size: 30rpx;
-  border-bottom: 1rpx solid #f5f5f5;
-}
-.menu-item:last-child { border-bottom: none; }
-.arrow { color: #ccc; font-size: 36rpx; }
 .logout-btn {
   width: 100%;
   background: transparent;

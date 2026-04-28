@@ -18,7 +18,7 @@ const OrderLog = sequelize.define('OrderLog', {
     comment: '操作人 ID'
   },
   operator_type: {
-    type: DataTypes.ENUM('user', 'merchant', 'rider', 'system'),
+    type: DataTypes.ENUM('user', 'merchant', 'rider', 'system', 'dispatcher'),
     comment: '操作人类型'
   },
   action: {

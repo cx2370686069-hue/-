@@ -1,7 +1,7 @@
 <template>
   <view class="container">
     <iframe v-if="isH5 && webViewSrc" ref="mapFrame" :src="webViewSrc" class="web-iframe"></iframe>
-    <web-view v-else-if="webViewSrc" class="web-view" :src="webViewSrc"></web-view>
+    <web-view v-else-if="webViewSrc" class="web-view" :src="webViewSrc" @message="onAppMapMessage"></web-view>
     <view v-else class="map-placeholder">
       <text class="placeholder-text">正在加载导航...</text>
     </view>
@@ -36,6 +36,8 @@ export default {
       watchId: null,
       trackingTimer: null,
       lastSent: { lng: null, lat: null, ts: 0 },
+      mapBridgeReady: false,
+      pendingBridgePayload: null,
       fallbackPos: { lng: 115.66638, lat: 32.18385 },
       isDestroyed: false
     }
@@ -104,6 +106,8 @@ export default {
   },
   onUnload() {
     this.isDestroyed = true
+    this.mapBridgeReady = false
+    this.pendingBridgePayload = null
     this.stopLocationTracking()
     this.destroySocket()
     if (this.isH5) {
@@ -119,9 +123,23 @@ export default {
     }
   },
   methods: {
-    onMapMessage(e) {
-      const d = e && e.data ? e.data : null
-      if (!d || d.type !== 'sim_location') {
+    normalizeHeadingValue(value) {
+      const n = Number(value)
+      return Number.isFinite(n) ? n : null
+    },
+    handleMapBridgeMessage(d) {
+      if (!d || !d.type) {
+        return
+      }
+      if (d.type === 'map_ready') {
+        this.mapBridgeReady = true
+        if (this.pendingBridgePayload) {
+          this.sendBridgePayloadToMap(this.pendingBridgePayload)
+          this.pendingBridgePayload = null
+        }
+        return
+      }
+      if (d.type !== 'sim_location') {
         return
       }
       this.stopLocationTracking()
@@ -134,6 +152,69 @@ export default {
         source: 'sim'
       }
       this.emitLocationForce(pos)
+    },
+    onAppMapMessage(event) {
+      const list = event && event.detail && Array.isArray(event.detail.data) ? event.detail.data : []
+      list.forEach((item) => {
+        const payload = item && item.data ? item.data : item
+        this.handleMapBridgeMessage(payload)
+      })
+    },
+    sendBridgePayloadToMap(payload) {
+      if (!payload || this.isDestroyed) {
+        return
+      }
+      if (this.isH5) {
+        const frame = this.$refs.mapFrame
+        const win = frame && frame.contentWindow ? frame.contentWindow : null
+        if (win && typeof win.postMessage === 'function') {
+          win.postMessage(payload, '*')
+        }
+        return
+      }
+      try {
+        if (!this.$scope || typeof this.$scope.$getAppWebview !== 'function') {
+          return
+        }
+        const currentWebview = this.$scope.$getAppWebview()
+        const children = currentWebview && typeof currentWebview.children === 'function'
+          ? currentWebview.children()
+          : []
+        const targetWebview = children && children.length ? children[children.length - 1] : null
+        if (targetWebview && typeof targetWebview.evalJS === 'function') {
+          const payloadStr = JSON.stringify(payload)
+          targetWebview.evalJS(`window.receiveRiderLocation && window.receiveRiderLocation(${payloadStr})`)
+        }
+      } catch (e) {
+        console.warn('桥接地图页定位失败:', e)
+      }
+    },
+    bridgeLocationToMap(pos) {
+      if (!pos || this.isDestroyed) {
+        return
+      }
+      const lng = Number(pos.lng)
+      const lat = Number(pos.lat)
+      if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
+        return
+      }
+      const payload = {
+        type: 'rider_location',
+        lng,
+        lat,
+        speed: Number(pos.speed) || 0,
+        heading: this.normalizeHeadingValue(pos.heading),
+        ts: Date.now()
+      }
+      if (!this.mapBridgeReady) {
+        this.pendingBridgePayload = payload
+        return
+      }
+      this.sendBridgePayloadToMap(payload)
+    },
+    onMapMessage(e) {
+      const d = e && e.data ? e.data : null
+      this.handleMapBridgeMessage(d)
     },
     initSocket() {
       const SOCKET_URL = 'http://121.43.190.218:3000'
@@ -217,7 +298,7 @@ export default {
                 lng: p.coords.longitude,
                 lat: p.coords.latitude,
                 speed: p.coords.speed || 0,
-                heading: p.coords.heading || 0,
+                heading: this.normalizeHeadingValue(p.coords.heading),
                 source: 'real'
               }
               this.emitLocation(pos)
@@ -259,7 +340,7 @@ export default {
                 lng: res.longitude,
                 lat: res.latitude,
                 speed: res.speed || 0,
-                heading: res.direction || 0,
+                heading: this.normalizeHeadingValue(res.direction),
                 source: 'real'
               })
             },
@@ -290,7 +371,7 @@ export default {
                 lng: p.coords.longitude,
                 lat: p.coords.latitude,
                 speed: p.coords.speed || 0,
-                heading: p.coords.heading || 0,
+                heading: this.normalizeHeadingValue(p.coords.heading),
                 source: 'real'
               })
             },
@@ -350,6 +431,12 @@ export default {
         return
       }
       this.lastSent = { lng, lat, ts: Date.now() }
+      this.bridgeLocationToMap({
+        lng,
+        lat,
+        speed: pos.speed || 0,
+        heading: this.normalizeHeadingValue(pos.heading)
+      })
       this.doEmitLocation(lng, lat, pos)
     },
     emitLocationForce(pos) {
@@ -420,6 +507,8 @@ export default {
       const pos = await this.getLocationWithFallback()
       const timestamp = Date.now()
       const htmlPath = this.isH5 ? '/static/driver_map.html' : '/hybrid/html/driver_map.html'
+      this.mapBridgeReady = false
+      this.pendingBridgePayload = null
       const url = `${htmlPath}?t=${timestamp}&stage=${encodeURIComponent(this.stage)}&tk=${encodeURIComponent(this.tk)}&startLng=${encodeURIComponent(String(pos.lng))}&startLat=${encodeURIComponent(String(pos.lat))}&destLng=${encodeURIComponent(destLng)}&destLat=${encodeURIComponent(destLat)}`
       this.webViewSrc = url
       this.emitLocation(pos)

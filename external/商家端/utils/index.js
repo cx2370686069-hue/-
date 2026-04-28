@@ -30,8 +30,9 @@ export function formatTime(timestamp, format = 'YYYY-MM-DD HH:mm') {
 
 // 订单状态映射（与后端状态机一致）
 export const ORDER_STATUS = {
-  1: { text: '待接单', color: '#FF6B35' },
-  2: { text: '备餐中', color: '#1890ff' },
+  0: { text: '待支付', color: '#FF6B35' },
+  1: { text: '已支付待接单', color: '#1890ff' },
+  2: { text: '备餐中', color: '#722ed1' },
   3: { text: '待配送', color: '#faad14' },
   4: { text: '配送中', color: '#1890ff' },
   5: { text: '已完成', color: '#52c41a' },

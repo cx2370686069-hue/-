@@ -129,15 +129,30 @@ export default {
     normalizeProducts(res) {
       const raw = res && typeof res === 'object' && res.data !== undefined ? res.data : res
       const arr = Array.isArray(raw) ? raw : raw && Array.isArray(raw.list) ? raw.list : []
-      return arr.map((p) => ({
+      return arr.map((p) => {
+        const imageList = this.parseImageList(p.images)
+        return {
         id: p.id,
         name: p.name != null ? String(p.name) : '',
         price: p.price,
         stock: p.stock != null ? p.stock : p.inventory != null ? p.inventory : 0,
         status: p.status === 0 || p.status === 1 ? p.status : 0,
         category_id: p.category_id != null ? p.category_id : null,
-        image: p.image || p.cover || p.cover_url || p.logo || ''
-      }))
+        image: imageList[0] || p.image || p.cover || p.cover_url || p.logo || ''
+      }
+      })
+    },
+    parseImageList(rawImages) {
+      if (Array.isArray(rawImages)) {
+        return rawImages.filter((u) => typeof u === 'string' && u)
+      }
+      if (typeof rawImages !== 'string' || !rawImages.trim()) return []
+      try {
+        const parsed = JSON.parse(rawImages)
+        return Array.isArray(parsed) ? parsed.filter((u) => typeof u === 'string' && u) : []
+      } catch (e) {
+        return []
+      }
     },
     formatImageUrl(url) {
       if (!url) return ''

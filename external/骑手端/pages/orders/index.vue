@@ -29,7 +29,7 @@
           v-for="order in orderList" 
           :key="order.id"
           class="order-card"
-          :class="{ 'highlight-card': order.status === 1 || order.status === 4 }"
+          :class="{ 'highlight-card': order.status === 1 || order.status === 4, 'town-order-card': isTownOrder(order) }"
           @click="goDetail(order)"
         >
           <!-- 订单头部 -->
@@ -37,8 +37,11 @@
             <view class="header-left">
               <view class="order-info-row">
                 <text class="order-no">{{ order.order_no }}</text>
-                <view class="status-tag" :style="{ backgroundColor: getStatusColor(order.status) }">
-                  {{ getStatusText(order.status) }}
+                <view class="header-tags">
+                  <view v-if="isTownOrder(order)" class="scope-tag">乡镇订单</view>
+                  <view class="status-tag" :style="{ backgroundColor: getStatusColor(order.status, order) }">
+                    {{ getStatusText(order.status) }}
+                  </view>
                 </view>
               </view>
               <text class="order-time">{{ formatTime(order.created_at) }}</text>
@@ -64,14 +67,43 @@
             <text class="info-text address-text">{{ getBriefAddress(order) }}</text>
           </view>
 
+          <view class="simple-info" v-if="getTownName(order)">
+            <text class="info-icon">🌲</text>
+            <text class="info-text">{{ getTownName(order) }}</text>
+          </view>
+
+          <view class="simple-info">
+            <text class="info-icon">🧭</text>
+            <text class="info-text">商家 {{ formatCoordinate(getMerchantCoords(order)) }}</text>
+          </view>
+
+          <view class="simple-info">
+            <text class="info-icon">📌</text>
+            <text class="info-text">用户 {{ formatCoordinate(getCustomerCoords(order)) }}</text>
+          </view>
+
           <!-- 操作按钮 -->
           <view class="order-actions">
+            <button
+              v-if="canPickup(order.status)"
+              class="btn btn-primary"
+              @click.stop="handlePickup(order)"
+            >
+              取餐配送
+            </button>
             <button 
-              v-if="order.status === 5" 
+              v-if="canRiderCallConfirmDeliveryApi(order.status)" 
               class="btn btn-success"
-              @click.stop="confirmDelivery(order)"
+              @click.stop="handleStandardDelivery(order)"
             >
               确认送达
+            </button>
+            <button 
+              v-else-if="canRiderOfferSpecialComplete(order.status)" 
+              class="btn btn-special"
+              @click.stop="handleSpecialComplete(order)"
+            >
+              特殊完结
             </button>
             <button 
               class="btn btn-default"
@@ -88,7 +120,7 @@
         <text class="empty-icon">📋</text>
         <text class="empty-text">暂无订单</text>
         <text class="empty-tip">
-          {{ currentStatus === '' ? '暂无可接订单' : '该状态下暂无订单' }}
+          {{ currentStatus === '' ? '当前没有分配到你的配送订单' : '该状态下暂无订单' }}
         </text>
       </view>
 
@@ -101,8 +133,18 @@
 </template>
 
 <script>
-import { getRiderOrders, confirmDelivery } from '@/api/order.js'
-import { ORDER_STATUS } from '@/config/index.js'
+import {
+  getRiderOrders,
+  riderPickup as riderPickupApi,
+  confirmDelivery as confirmDeliveryApi,
+  confirmDeliverySpecial as confirmDeliverySpecialApi
+} from '@/api/order.js'
+import {
+  ORDER_STATUS,
+  canRiderCallConfirmDeliveryApi,
+  canRiderOfferSpecialComplete
+} from '@/config/index.js'
+import { initSocket, onNewDelivery, disconnectSocket, offAllListeners } from '@/utils/socket.js'
 import { formatTime } from '@/utils/index.js'
 
 export default {
@@ -111,7 +153,7 @@ export default {
       currentStatus: '',
       statusTabs: [
         { key: '', label: '全部', count: 0 },
-        { key: '1', label: '待接单', count: 0 },
+        { key: '1', label: '待处理', count: 0 },
         { key: '4', label: '备货完成', count: 0 },
         { key: '5', label: '配送中', count: 0 },
         { key: '6', label: '已完成', count: 0 }
@@ -127,17 +169,71 @@ export default {
     this.loadOrderList()
   },
   onShow() {
+    this.initOrderSocket()
     this.loadOrderList()
+  },
+  onHide() {
+    this.destroyOrderSocket()
+  },
+  onUnload() {
+    this.destroyOrderSocket()
   },
   methods: {
     formatTime,
-    
+    canRiderCallConfirmDeliveryApi,
+    canRiderOfferSpecialComplete,
+
     getStatusText(status) {
       return ORDER_STATUS[status]?.text || '未知'
     },
     
-    getStatusColor(status) {
+    getStatusColor(status, order = {}) {
+      if (this.isTownOrder(order)) {
+        const townStatusColors = {
+          4: '#1f6f43',
+          5: '#2b8a57',
+          6: '#2b8a57'
+        }
+        return townStatusColors[Number(status)] || ORDER_STATUS[status]?.color || '#999'
+      }
       return ORDER_STATUS[status]?.color || '#999'
+    },
+    isTownOrder(order = {}) {
+      return order.order_type === 'town' || order.delivery_scope === 'town_delivery' || !!this.getTownName(order)
+    },
+    getTownName(order = {}) {
+      return order.customer_town || order.town_name || order.rider_town || ''
+    },
+    getCoordinateByKeys(source = {}, keys = []) {
+      for (let i = 0; i < keys.length; i++) {
+        const value = source[keys[i]]
+        if (value !== undefined && value !== null && value !== '') {
+          return value
+        }
+      }
+      return ''
+    },
+    getMerchantCoords(order = {}) {
+      const merchant = order.merchant || {}
+      return {
+        lng: this.getCoordinateByKeys(order, ['merchant_lng', 'merchantLng']) || this.getCoordinateByKeys(merchant, ['longitude', 'lng']),
+        lat: this.getCoordinateByKeys(order, ['merchant_lat', 'merchantLat']) || this.getCoordinateByKeys(merchant, ['latitude', 'lat'])
+      }
+    },
+    getCustomerCoords(order = {}) {
+      return {
+        lng: this.getCoordinateByKeys(order, ['customer_lng', 'delivery_longitude', 'longitude', 'lng']),
+        lat: this.getCoordinateByKeys(order, ['customer_lat', 'delivery_latitude', 'latitude', 'lat'])
+      }
+    },
+    formatCoordinate(coords = {}) {
+      if (coords.lng === '' || coords.lat === '') {
+        return '未提供坐标'
+      }
+      return `${coords.lng}, ${coords.lat}`
+    },
+    canPickup(status) {
+      return Number(status) === 4
     },
     
     getFullAddress(order) {
@@ -213,21 +309,96 @@ export default {
       // TODO: 实现分页加载
       this.loadingMore = false
     },
+    initOrderSocket() {
+      const token = uni.getStorageSync('token') || ''
+      if (!token) {
+        return
+      }
+      initSocket(token)
+      offAllListeners()
+      onNewDelivery(async (payload = {}) => {
+        const order = payload.data || {}
+        if (!order.id) {
+          return
+        }
+        uni.showToast({
+          title: this.isTownOrder(order) ? '收到乡镇配送任务' : '收到新的配送任务',
+          icon: 'none',
+          duration: 2000
+        })
+        await this.loadOrderList()
+      })
+    },
+    destroyOrderSocket() {
+      offAllListeners()
+      disconnectSocket()
+    },
+    handlePickup(order) {
+      uni.showModal({
+        title: '确认取餐',
+        content: '确认已到店取餐并开始配送？',
+        confirmText: '开始配送',
+        cancelText: '取消',
+        success: async (res) => {
+          if (!res.confirm) return
+          const fresh = this.orderList.find((o) => o.id === order.id) || order
+          if (!this.canPickup(fresh.status)) {
+            uni.showToast({ title: '订单状态已变更，请刷新后重试', icon: 'none' })
+            return
+          }
+          try {
+            await riderPickupApi(fresh.id)
+            uni.showToast({ title: '已开始配送', icon: 'success' })
+            await this.loadOrderList()
+          } catch (e) {
+            console.error('取餐失败', e)
+          }
+        }
+      })
+    },
     
-    async confirmDelivery(order) {
+    handleStandardDelivery(order) {
       uni.showModal({
         title: '确认送达',
-        content: '请确认已将餐品送达顾客手中',
+        content: '确认订单已送达？',
         confirmText: '确认送达',
+        cancelText: '取消',
         success: async (res) => {
-          if (res.confirm) {
-            try {
-              await confirmDelivery({ order_id: order.id })
-              uni.showToast({ title: '送达成功', icon: 'success' })
-              this.loadOrderList()
-            } catch (e) {
-              console.error('确认送达失败', e)
-            }
+          if (!res.confirm) return
+          const fresh = this.orderList.find((o) => o.id === order.id) || order
+          if (!canRiderCallConfirmDeliveryApi(fresh.status)) {
+            uni.showToast({ title: '订单状态已变更，请刷新后重试', icon: 'none' })
+            return
+          }
+          try {
+            await confirmDeliveryApi(fresh.id)
+            uni.showToast({ title: '送达成功', icon: 'success' })
+            await this.loadOrderList()
+          } catch (e) {
+            console.error('确认送达失败', e)
+          }
+        }
+      })
+    },
+    handleSpecialComplete(order) {
+      uni.showModal({
+        title: '特殊完结',
+        content: '确认按「特殊完结」处理该订单？',
+        confirmText: '特殊完结',
+        cancelText: '取消',
+        success: async (res) => {
+          if (!res.confirm) return
+          const fresh = this.orderList.find((o) => o.id === order.id) || order
+          if (!canRiderOfferSpecialComplete(fresh.status)) {
+            uni.showToast({ title: '订单状态已变更，请刷新后重试', icon: 'none' })
+            return
+          }
+          try {
+            await confirmDeliverySpecialApi(fresh.id)
+            uni.showToast({ title: '操作成功', icon: 'success' })
+            await this.loadOrderList()
+          } catch (e) {
+            console.error('特殊完结失败', e)
           }
         }
       })
@@ -311,6 +482,11 @@ export default {
   background: linear-gradient(135deg, #fff 0%, #fff7f5 100%);
 }
 
+.order-card.town-order-card {
+  border-left-color: #1f6f43;
+  background: linear-gradient(135deg, #fff 0%, #f2fbf5 100%);
+}
+
 .order-header {
   display: flex;
   justify-content: space-between;
@@ -327,6 +503,20 @@ export default {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 12rpx;
+}
+
+.header-tags {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.scope-tag {
+  font-size: 24rpx;
+  color: #fff;
+  background: #1f6f43;
+  padding: 8rpx 16rpx;
+  border-radius: 8rpx;
 }
 
 .order-no {
@@ -491,6 +681,11 @@ export default {
 
 .btn-success {
   background: linear-gradient(135deg, #52c41a, #73d13d);
+  color: #fff;
+}
+
+.btn-special {
+  background: linear-gradient(135deg, #fa8c16, #ffc069);
   color: #fff;
 }
 

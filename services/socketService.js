@@ -1,4 +1,5 @@
-const { User } = require('../models');
+const jwt = require('jsonwebtoken');
+const { User, Order, Merchant } = require('../models');
 
 let io = null;
 const userSockets = new Map();
@@ -8,6 +9,124 @@ const dispatcherSockets = new Map(); // 调度中心连接池
 const riderLastSeen = new Map(); // 看门狗：记录骑手最后上报GPS的时间 
 const riderLocations = new Map(); // 缓存骑手最新坐标 
 const LOST_CONTACT_THRESHOLD = 30000; // 骑手失联判定阈值 (30秒) 
+
+const toFiniteNumber = (value) => {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+};
+
+async function resolveSocketIdentity(socket) {
+  const token = socket.handshake.auth?.token || socket.handshake.query?.token;
+  if (!token || typeof token !== 'string') {
+    throw new Error('Unauthorized');
+  }
+
+  let decoded;
+  try {
+    decoded = jwt.verify(token, process.env.JWT_SECRET);
+  } catch (error) {
+    throw new Error('Unauthorized');
+  }
+
+  const rawUserId = decoded.userId || decoded.id;
+  const userId = Number(rawUserId);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    throw new Error('Unauthorized');
+  }
+
+  const user = await User.findByPk(userId, {
+    attributes: ['id', 'role', 'status']
+  });
+  if (!user || Number(user.status) !== 1) {
+    throw new Error('Unauthorized');
+  }
+
+  const dbRole = String(user.role || '').toLowerCase();
+  let socketRole = dbRole;
+  if (dbRole === 'admin') {
+    socketRole = 'dispatcher';
+  }
+
+  if (!['user', 'merchant', 'rider', 'dispatcher'].includes(socketRole)) {
+    throw new Error('Unauthorized');
+  }
+
+  return {
+    userId: user.id,
+    userRole: socketRole,
+    accountRole: dbRole
+  };
+}
+
+function buildDispatcherRadarOrder(order) {
+  const merchant = order.merchant || {};
+  const customerLng = toFiniteNumber(order.customer_lng ?? order.delivery_longitude);
+  const customerLat = toFiniteNumber(order.customer_lat ?? order.delivery_latitude);
+  const merchantLng = toFiniteNumber(order.merchant_lng ?? merchant.longitude);
+  const merchantLat = toFiniteNumber(order.merchant_lat ?? merchant.latitude);
+
+  return {
+    id: order.order_no,
+    order_id: order.id,
+    order_no: order.order_no,
+    rider_id: order.rider_id || null,
+    lng: customerLng,
+    lat: customerLat,
+    position: customerLng !== null && customerLat !== null ? [customerLng, customerLat] : null,
+    customer_lng: customerLng,
+    customer_lat: customerLat,
+    customer_position: customerLng !== null && customerLat !== null ? [customerLng, customerLat] : null,
+    merchant_lng: merchantLng,
+    merchant_lat: merchantLat,
+    merchant_position: merchantLng !== null && merchantLat !== null ? [merchantLng, merchantLat] : null,
+    merchant_name: merchant.name || '',
+    restaurant: merchant.name || '',
+    customer_town: order.customer_town,
+    status: order.dispatch_status || 'pending',
+    type: order.order_type === 'county' ? 'county' : 'town',
+    color: order.order_type === 'county' ? 'blue' : 'red',
+    products_info: order.products_info,
+    delivery_address: order.delivery_address || '',
+    address: order.address || order.delivery_address || ''
+  };
+}
+
+async function getDispatcherOrdersSnapshot() {
+  const { Op } = require('sequelize');
+  const activeOrders = await Order.findAll({
+    where: { status: { [Op.in]: [0, 1, 2, 3, 4, 5] } },
+    include: [{ model: Merchant, as: 'merchant' }],
+    order: [['id', 'DESC']]
+  });
+
+  return activeOrders.map(buildDispatcherRadarOrder);
+}
+
+async function broadcastDispatcherOrdersUpdate(targetSocket = null) {
+  if (!io && !targetSocket) {
+    return;
+  }
+
+  try {
+    const orders = await getDispatcherOrdersSnapshot();
+    const payload = {
+      type: 'orders_update',
+      orders
+    };
+
+    if (targetSocket) {
+      targetSocket.emit('orders_update', payload);
+      return;
+    }
+
+    io.to('dispatcher_room').emit('orders_update', payload);
+  } catch (error) {
+    console.error('推送调度台订单地图快照失败:', error);
+  }
+}
 
 /**
  * 初始化 Socket.io
@@ -22,47 +141,13 @@ function init(server) {
 
   io.use(async (socket, next) => {
     try {
-      let userId = null;
-      let userRole = null;
-      const token = socket.handshake.auth?.token || socket.handshake.query?.token;
-      
-      if (token) {
-        try {
-          const jwt = require('jsonwebtoken');
-          // 尝试验证真正的 JWT
-          const decoded = jwt.verify(token, process.env.JWT_SECRET);
-          userId = decoded.userId || decoded.id;
-          
-          if (userId) {
-            const user = await User.findByPk(userId);
-            if (user) {
-              userRole = user.role;
-            }
-          }
-        } catch (err) {
-          // token 无效（比如大屏的 mock_jwt_token_for_admin_123），忽略并继续降级解析
-        }
-      }
-
-      const authRole = socket.handshake.auth?.role;
-      const queryRole = socket.handshake.query?.role;
-      const headerRole = socket.handshake.headers?.role;
-      
-      socket.userRole = userRole || (authRole || queryRole || headerRole || 'user').toString().toLowerCase();
-      
-      // 提取原始的用户ID
-      let rawUserId = userId ||
-        socket.handshake.auth?.userId ||
-        socket.handshake.query?.userId ||
-        socket.handshake.headers?.['x-user-id'] ||
-        `${socket.userRole}_${socket.id}`;
-        
-      // 关键修复：强制转换 userId 为数字，如果包含字母(如 dispatcher_xxxx)，则默认为 1
-      socket.userId = isNaN(Number(rawUserId)) ? 1 : Number(rawUserId);
-
+      const identity = await resolveSocketIdentity(socket);
+      socket.userId = identity.userId;
+      socket.userRole = identity.userRole;
+      socket.accountRole = identity.accountRole;
       next();
-    } catch (e) {
-      next();
+    } catch (error) {
+      next(new Error('Unauthorized'));
     }
   });
 
@@ -76,7 +161,7 @@ function init(server) {
       riderSockets.set(socket.userId, socket);
       socket.join(`rider_${socket.userId}`);
       riderLastSeen.set(socket.userId, Date.now()); // 初始化活跃时间
-    } else if (socket.userRole === 'dispatcher' || socket.userRole.startsWith('dispatcher')) {
+    } else if (socket.userRole === 'dispatcher') {
       dispatcherSockets.set(socket.userId, socket);
       socket.join('dispatcher');
       socket.join('dispatcher_room');
@@ -84,43 +169,9 @@ function init(server) {
       // 【大屏刷新防丢失优化】当调度员连接时，主动将数据库里的活跃订单和骑手推给它
       setTimeout(async () => {
         try {
-          const { Order, Merchant, User } = require('../models');
-          const { Op } = require('sequelize');
-          
-          // 1. 推送活跃订单 (状态 1~5 代表未完成的活跃订单)
-          const activeOrders = await Order.findAll({
-            where: { status: { [Op.in]: [1, 2, 3, 4, 5] } },
-            include: [{ model: Merchant, as: 'merchant' }]
-          });
-          
-          if (activeOrders.length > 0) {
-            const radarData = activeOrders.map(order => {
-              const m = order.merchant || {};
-              const lng = order.customer_lng ?? order.delivery_longitude ?? null;
-              const lat = order.customer_lat ?? order.delivery_latitude ?? null;
-              return {
-                id: order.id,
-                orderId: order.order_no,
-                order_no: order.order_no,
-                restaurant: m.name,
-                customer_town: order.customer_town,
-                status: order.dispatch_status || 'pending',
-                type: order.order_type || 'takeout',
-                merchant_lng: m.longitude ? Number(m.longitude) : null,
-                merchant_lat: m.latitude ? Number(m.latitude) : null,
-                customer_lng: lng ? Number(lng) : null,
-                customer_lat: lat ? Number(lat) : null,
-                position: (lng && lat) ? [Number(lng), Number(lat)] : null,
-                delivery_address: order.delivery_address || ''
-              };
-            });
-            
-            socket.emit('orders_update', {
-              type: 'orders_update',
-              orders: radarData
-            });
-          }
+          await broadcastDispatcherOrdersUpdate(socket);
 
+          const { Op } = require('sequelize');
           // 2. 推送活跃骑手坐标
           const activeRiders = await User.findAll({
             where: { 
@@ -142,6 +193,7 @@ function init(server) {
             });
           });
           
+          const activeOrders = await getDispatcherOrdersSnapshot();
           console.log(`[大屏初始化] 已向调度员 ${socket.userId} 推送 ${activeOrders.length} 个活跃订单和 ${activeRiders.length} 个骑手坐标`);
         } catch (err) {
           console.error('初始化大屏数据失败:', err);
@@ -153,6 +205,10 @@ function init(server) {
     }
 
     socket.on('location_update', (data = {}) => {
+      if (socket.userRole !== 'rider') {
+        return;
+      }
+
       // 心跳与保活更新
       riderLastSeen.set(socket.userId, Date.now());
       
@@ -206,43 +262,88 @@ function init(server) {
 
     // 处理大屏端的派单指令核心逻辑
     const handleDispatchOrder = async (data) => {
+      if (socket.userRole !== 'dispatcher') {
+        return socket.emit('error_msg', { message: '无权派单' });
+      }
+
       console.log(`[大屏派单指令] 收到派单请求:`, data);
       try {
         const { orderId, riderId } = data;
-        const { Order, User, Merchant, OrderLog } = require('../models');
-        
-        // 大屏传过来的 orderId 可能是 order_no
-        let order = await Order.findOne({ where: { order_no: orderId } });
-        if (!order) {
-          order = await Order.findByPk(orderId);
+        if (!orderId || !riderId) {
+          return socket.emit('error_msg', { message: '派单参数不完整' });
         }
 
-        if (!order) {
-          return socket.emit('error_msg', { message: '订单不存在' });
-        }
+        const { Order, User, Merchant, OrderLog, sequelize } = require('../models');
 
-        const rider = await User.findByPk(riderId);
-        if (!rider || rider.role !== 'rider') {
-          return socket.emit('error_msg', { message: '骑手不存在或角色错误' });
-        }
+        const dispatchResult = await sequelize.transaction(async (transaction) => {
+          // 大屏传过来的 orderId 可能是 order_no
+          let order = await Order.findOne({
+            where: { order_no: orderId },
+            transaction,
+            lock: transaction.LOCK.UPDATE
+          });
+          if (!order) {
+            order = await Order.findByPk(orderId, {
+              transaction,
+              lock: transaction.LOCK.UPDATE
+            });
+          }
 
-        const fromStatus = order.status;
-        await order.update({
-          rider_id: rider.id,
-          status: 4 // 变更为骑手已接单 (原来是5)，这样骑手端才能点“去取餐”
+          if (!order) {
+            return { error: '订单不存在' };
+          }
+
+          if (order.type !== 'takeout' || order.order_type !== 'county') {
+            return { error: '当前订单不支持大屏派单，请走对应业务链路' };
+          }
+
+          const rider = await User.findByPk(riderId, { transaction });
+          if (!rider || rider.role !== 'rider') {
+            return { error: '骑手不存在或角色错误' };
+          }
+
+          const fromStatus = Number(order.status);
+          if (![3, 4].includes(fromStatus)) {
+            return { error: '当前订单状态不允许派单' };
+          }
+
+          const currentRiderId = Number(order.rider_id || 0) || null;
+          if (currentRiderId && currentRiderId !== Number(rider.id)) {
+            return { error: '订单已分配给其他骑手，请走改派流程' };
+          }
+
+          const alreadyAssignedToSameRider = currentRiderId === Number(rider.id) && fromStatus === 4;
+          if (!alreadyAssignedToSameRider) {
+            await order.update({
+              rider_id: rider.id,
+              status: 4,
+              dispatch_center_status: 'sent'
+            }, { transaction });
+
+            await OrderLog.create({
+              order_id: order.id,
+              operator_id: socket.userId || 1,
+              operator_type: 'dispatcher',
+              action: '大屏派单',
+              from_status: fromStatus,
+              to_status: 4,
+              remark: `调度员派单给骑手：${rider.nickname || rider.phone || rider.id}`
+            }, { transaction });
+          }
+
+          return {
+            orderId: order.id,
+            riderId: rider.id,
+            oldRiderId: currentRiderId,
+            alreadyAssignedToSameRider
+          };
         });
 
-        await OrderLog.create({
-          order_id: order.id,
-          operator_id: socket.userId || 1, // 调度员ID
-          operator_type: 'dispatcher',
-          action: '大屏派单',
-          from_status: fromStatus,
-          to_status: 4,
-          remark: `调度员派单给骑手：${rider.nickname || rider.phone || rider.id}`
-        });
+        if (dispatchResult.error) {
+          return socket.emit('error_msg', { message: dispatchResult.error });
+        }
 
-        const refreshed = await Order.findByPk(order.id, {
+        const refreshed = await Order.findByPk(dispatchResult.orderId, {
           include: [
             { model: Merchant, as: 'merchant', attributes: ['name', 'address', 'phone'] },
             { model: User, as: 'user', attributes: ['nickname', 'phone'] },
@@ -250,15 +351,30 @@ function init(server) {
           ]
         });
 
-        // 核心：推送给指定骑手！
-        console.log(`[大屏派单成功] 正在通知骑手 ${rider.id}`);
-        notifyRiderNewOrder(rider.id, refreshed);
-        
-        // 通知用户
-        notifyUserOrderUpdate(order.user_id, refreshed, '骑手已接单，正在配送中');
+        if (!refreshed) {
+          return socket.emit('error_msg', { message: '派单后订单刷新失败' });
+        }
 
-        // 回复大屏派单成功
-        socket.emit('dispatch_success', { orderId: order.id, order_no: order.order_no, riderId: rider.id });
+        if (!dispatchResult.alreadyAssignedToSameRider) {
+          console.log(`[大屏派单成功] 正在通知骑手 ${dispatchResult.riderId}`);
+          notifyRiderNewOrder(dispatchResult.riderId, refreshed);
+          notifyUserOrderUpdate(
+            refreshed.user_id,
+            refreshed,
+            '已分配骑手，等待骑手取餐'
+          );
+          await broadcastDispatcherOrdersUpdate();
+        }
+
+        socket.emit('dispatch_success', {
+          orderId: refreshed.id,
+          order_no: refreshed.order_no,
+          riderId: dispatchResult.riderId,
+          oldRiderId: dispatchResult.oldRiderId,
+          orderStatus: refreshed.status,
+          dispatchStatus: refreshed.dispatch_status,
+          duplicate: Boolean(dispatchResult.alreadyAssignedToSameRider)
+        });
 
       } catch (err) {
         console.error('大屏派单处理失败:', err);
@@ -296,6 +412,26 @@ function init(server) {
     });
 
     socket.on('join_room', (room) => {
+      const allowedRooms = new Set([
+        `user_${socket.userId}`
+      ]);
+
+      if (socket.userRole === 'merchant') {
+        allowedRooms.add(`merchant_${socket.userId}`);
+      }
+      if (socket.userRole === 'rider') {
+        allowedRooms.add(`rider_${socket.userId}`);
+      }
+      if (socket.userRole === 'dispatcher') {
+        allowedRooms.add('dispatcher');
+        allowedRooms.add('dispatcher_room');
+      }
+
+      if (!allowedRooms.has(room)) {
+        socket.emit('error_msg', { message: '无权加入该房间' });
+        return;
+      }
+
       socket.join(room);
     });
   });
@@ -402,6 +538,7 @@ function notifyRiderNewOrder(riderUserId, order) {
 module.exports = {
   init,
   getIO,
+  broadcastDispatcherOrdersUpdate,
   emitToUser,
   emitToMerchant,
   emitToRider,

@@ -46,6 +46,24 @@ const Merchant = sequelize.define('Merchant', {
     type: DataTypes.STRING(50),
     comment: '商家分类'
   },
+  channel_tags: {
+    type: DataTypes.STRING(255),
+    allowNull: true,
+    comment: '频道标签，逗号分隔，如冷饮雪糕批发'
+  },
+  business_scope: {
+    type: DataTypes.ENUM('county_food', 'town_food'),
+    allowNull: true,
+    comment: '商家业务线：county_food-县城外卖，town_food-乡镇外卖'
+  },
+  town_code: {
+    type: DataTypes.STRING(32),
+    comment: '所属乡镇编码'
+  },
+  town_name: {
+    type: DataTypes.STRING(50),
+    comment: '所属乡镇名称'
+  },
   latitude: {
     type: DataTypes.DECIMAL(10, 8),
     comment: '纬度'
@@ -68,6 +86,11 @@ const Merchant = sequelize.define('Merchant', {
     type: DataTypes.DECIMAL(10, 2),
     defaultValue: 0.00,
     comment: '配送费'
+  },
+  supermarket_delivery_permission: {
+    type: DataTypes.ENUM('self_only', 'rider_only', 'hybrid'),
+    allowNull: true,
+    comment: '超市配送权限：self_only-只能老板自配，rider_only-只能骑手配送，hybrid-两者都支持'
   },
   status: {
     type: DataTypes.INTEGER,
@@ -98,7 +121,10 @@ const Merchant = sequelize.define('Merchant', {
   tableName: 'merchants',
   indexes: [
     { fields: ['user_id'] },
-    { fields: ['status'] }
+    { fields: ['status'] },
+    { fields: ['channel_tags'] },
+    { fields: ['business_scope'] },
+    { fields: ['town_code'] }
   ]
 });
 

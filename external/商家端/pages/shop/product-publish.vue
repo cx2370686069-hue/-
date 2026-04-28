@@ -9,6 +9,13 @@
       </view>
 
       <view class="field">
+        <text class="label">商品分类 (category_id) *必填</text>
+        <picker :range="categoryList" range-key="name" :value="categoryIndex" @change="onCategoryChange">
+          <view class="picker-line">{{ categoryIndex > -1 && categoryList[categoryIndex] ? categoryList[categoryIndex].name : '请选择商品分类' }}</view>
+        </picker>
+      </view>
+
+      <view class="field">
         <text class="label">现价 (price) *必填</text>
         <input class="input" v-model="form.price" type="digit" placeholder="请输入售价" />
       </view>
@@ -21,6 +28,24 @@
             placeholder="选填，输入商品描述"
             maxlength="2000"
           />
+        </view>
+
+        <view v-if="isSupermarket" class="field">
+          <text class="label">单组规格（超市专属）</text>
+          <input class="input" v-model="specGroupName" placeholder="请输入规格组名，例如：口味" />
+          <view class="spec-options">
+            <view v-for="(option, index) in specOptions" :key="'spec-' + index" class="spec-option-row">
+              <input
+                class="input spec-option-input"
+                :value="option"
+                :placeholder="'规格项' + (index + 1)"
+                @input="onSpecOptionInput(index, $event)"
+              />
+              <button class="spec-remove-btn" type="warn" size="mini" @click="removeSpecOption(index)">删除</button>
+            </view>
+          </view>
+          <button class="spec-add-btn" type="default" size="mini" @click="addSpecOption">添加规格项</button>
+          <text class="hint">可不配置；如配置，将提交 `spec_group_name` 和 `spec_options`</text>
         </view>
 
         <view class="field">
@@ -53,7 +78,8 @@
 
 <script>
 import { BASE_URL } from '@/config/index.js'
-import { createMerchantProduct } from '@/api/shop.js'
+import { createMerchantProduct, getShopInfo } from '@/api/shop.js'
+import request from '@/utils/request.js'
 
 const API_BASE_URL = BASE_URL + '/api'
 
@@ -61,10 +87,16 @@ export default {
   data() {
     return {
       imageUrls: [],
+      categoryList: [],
+      categoryIndex: -1,
+      merchantCategory: '',
+      specGroupName: '',
+      specOptions: [],
       form: {
         name: '',
         price: '',
-        description: ''
+        description: '',
+        images: []
       },
       uploading: false,
       submitting: false,
@@ -72,7 +104,18 @@ export default {
       publishDone: false
     }
   },
+  computed: {
+    isSupermarket() {
+      return this.merchantCategory === '超市'
+    }
+  },
+  onLoad() {
+    this.bootstrap()
+  },
   methods: {
+    async bootstrap() {
+      await Promise.all([this.loadCategoryList(), this.loadMerchantCategory()])
+    },
     formatImageUrl(url) {
       if (!url) return ''
       if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:image') || url.startsWith('blob:')) {
@@ -92,6 +135,59 @@ export default {
       const data = parsed && parsed.data && typeof parsed.data === 'object' ? parsed.data : parsed
       const url = data && data.url ? data.url : ''
       return url ? String(url) : ''
+    },
+    normalizeCategoryList(res) {
+      const raw = res && typeof res === 'object' && res.data !== undefined ? res.data : res
+      const arr =
+        Array.isArray(raw) ? raw : raw && Array.isArray(raw.list) ? raw.list : raw && Array.isArray(raw.data) ? raw.data : []
+      return arr
+        .map((item) => ({
+          id: item.id,
+          name: item.name != null ? String(item.name) : ''
+        }))
+        .filter((item) => item.id != null)
+    },
+    normalizeMerchantCategory(res) {
+      const raw = res && typeof res === 'object' && res.data !== undefined ? res.data : res
+      const merchant = raw && typeof raw === 'object' && raw.merchant && typeof raw.merchant === 'object' ? raw.merchant : raw
+      return merchant && merchant.category != null ? String(merchant.category).trim() : ''
+    },
+    async loadCategoryList() {
+      try {
+        const res = await request({ url: '/merchant/my-categories', method: 'GET' })
+        this.categoryList = Array.isArray(res) ? res : (res.data || [])
+        if (this.categoryIndex >= this.categoryList.length) {
+          this.categoryIndex = -1
+        }
+      } catch (e) {
+        this.categoryList = []
+        this.categoryIndex = -1
+        console.error('拉取分类失败', e)
+      }
+    },
+    async loadMerchantCategory() {
+      try {
+        const res = await getShopInfo()
+        this.merchantCategory = this.normalizeMerchantCategory(res)
+      } catch (e) {
+        this.merchantCategory = ''
+      }
+    },
+    onCategoryChange(e) {
+      this.categoryIndex = Number(e && e.detail && e.detail.value)
+    },
+    onSpecOptionInput(index, e) {
+      const value = e && e.detail ? String(e.detail.value || '') : ''
+      this.$set ? this.$set(this.specOptions, index, value) : this.specOptions.splice(index, 1, value)
+    },
+    addSpecOption() {
+      this.specOptions.push('')
+    },
+    removeSpecOption(index) {
+      this.specOptions.splice(index, 1)
+    },
+    normalizeSpecOptions() {
+      return this.specOptions.map((item) => String(item || '').trim()).filter(Boolean)
     },
     chooseAndUploadImage() {
       if (this.uploading) return
@@ -120,6 +216,7 @@ export default {
                 return
               }
               this.imageUrls = [url]
+              this.form.images = [url]
               uni.showToast({ title: '上传成功', icon: 'success' })
             },
             fail: () => {
@@ -184,9 +281,13 @@ export default {
       this.form = {
         name: '',
         price: '',
-        description: ''
+        description: '',
+        images: []
       }
+      this.specGroupName = ''
+      this.specOptions = []
       this.imageUrls = []
+      this.categoryIndex = -1
     },
     /** 返回商品列表（不依赖页面栈，保证能离开发布页） */
     backToProductList() {
@@ -196,6 +297,8 @@ export default {
       const name = (this.form.name || '').trim()
       const price = Number(this.form.price)
       const description = (this.form.description || '').trim()
+      const selectedCategory = this.categoryIndex > -1 ? this.categoryList[this.categoryIndex] : null
+      const categoryId = selectedCategory && selectedCategory.id != null ? selectedCategory.id : ''
 
       if (!name) {
         uni.showToast({ title: '请填写商品名称', icon: 'none' })
@@ -205,14 +308,34 @@ export default {
         uni.showToast({ title: '请填写有效售价', icon: 'none' })
         return
       }
+      if (categoryId === '') {
+        uni.showToast({ title: '请选择商品分类', icon: 'none' })
+        return
+      }
 
-      // 为了兼容后端可能存在的必填校验，强行塞一个默认的 category_id
+      const spec_group_name = (this.specGroupName || '').trim()
+      const spec_options = this.normalizeSpecOptions()
+      if (this.isSupermarket) {
+        if (spec_group_name && !spec_options.length) {
+          uni.showToast({ title: '请至少填写一个规格项', icon: 'none' })
+          return
+        }
+        if (!spec_group_name && spec_options.length) {
+          uni.showToast({ title: '请填写规格组名', icon: 'none' })
+          return
+        }
+      }
+
       const payload = {
         name,
         price,
-        category_id: 1, // 向下兼容后端限制
+        category_id: categoryId,
         description,
-        images: JSON.stringify(this.imageUrls.length ? this.imageUrls : [])
+        images: JSON.stringify(Array.isArray(this.form.images) ? this.form.images : [])
+      }
+      if (this.isSupermarket) {
+        payload.spec_group_name = spec_group_name
+        payload.spec_options = spec_options
       }
 
       this.submitting = true
@@ -274,6 +397,11 @@ export default {
 .upload-text { font-size: 24rpx; color: #999; }
 .hint { display: block; margin-top: 12rpx; font-size: 22rpx; color: #999; }
 .btn { margin-top: 8rpx; }
+.spec-options { margin-top: 16rpx; }
+.spec-option-row { display: flex; align-items: center; gap: 16rpx; margin-top: 12rpx; }
+.spec-option-input { flex: 1; }
+.spec-add-btn { margin-top: 16rpx; }
+.spec-remove-btn { flex-shrink: 0; }
 .result-wrap {
   min-height: 60vh;
   display: flex;

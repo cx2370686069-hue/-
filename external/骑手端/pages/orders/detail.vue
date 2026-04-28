@@ -2,6 +2,9 @@
   <view class="container">
     <view class="card">
       <text class="section-title">订单信息</text>
+      <view class="scope-banner" :class="{ 'town-banner': isTownOrder(order) }">
+        {{ isTownOrder(order) ? `乡镇配送｜${getTownName(order) || '未标注乡镇'}` : '县城配送' }}
+      </view>
       <view class="info-row">
         <text class="label">订单号</text>
         <text class="value">{{ order.order_no }}</text>
@@ -21,8 +24,16 @@
     <view class="card">
       <text class="section-title">配送信息</text>
       <view class="info-row">
+        <text class="label">商家名称</text>
+        <text class="value">{{ order.merchant?.name || '未知商家' }}</text>
+      </view>
+      <view class="info-row">
         <text class="label">配送地址</text>
         <text class="value">{{ getFullAddress(order) }}</text>
+      </view>
+      <view class="info-row" v-if="getTownName(order)">
+        <text class="label">所属乡镇</text>
+        <text class="value">{{ getTownName(order) }}</text>
       </view>
       <view class="info-row">
         <text class="label">联系人</text>
@@ -31,6 +42,14 @@
       <view class="info-row">
         <text class="label">联系电话</text>
         <text class="value" @click="callUser(order.contact_phone)">{{ order.contact_phone }}</text>
+      </view>
+      <view class="info-row">
+        <text class="label">商家坐标</text>
+        <text class="value">{{ formatCoordinate(getMerchantCoords()) }}</text>
+      </view>
+      <view class="info-row">
+        <text class="label">用户坐标</text>
+        <text class="value">{{ formatCoordinate(getCustomerCoords()) }}</text>
       </view>
     </view>
 
@@ -47,13 +66,24 @@
     </view>
 
     <view class="action-bar">
+      <button
+        v-if="canPickup(order.status)"
+        class="btn btn-primary"
+        @click="handlePickup"
+      >
+        取餐并开始配送
+      </button>
       <button class="btn btn-primary" @click="goPickup">
         去取餐
       </button>
       <button class="btn btn-primary" @click="goDelivery">
         去送餐
       </button>
-      <button v-if="canDeliver" class="btn btn-success" @click="handleConfirmDelivery">
+      <button
+        v-if="canRiderShowConfirmDelivery(order.status)"
+        class="btn btn-success"
+        @click="handleConfirmDeliveryAction"
+      >
         确认送达
       </button>
     </view>
@@ -61,8 +91,14 @@
 </template>
 
 <script>
-import { getOrderDetail, confirmDelivery } from '@/api/order.js'
-import { ORDER_STATUS, TIANDITU_TK } from '@/config/index.js'
+import { getOrderDetail, riderPickup, confirmDelivery, confirmDeliverySpecial } from '@/api/order.js'
+import {
+  ORDER_STATUS,
+  TIANDITU_TK,
+  canRiderShowConfirmDelivery,
+  canRiderCallConfirmDeliveryApi,
+  canRiderOfferSpecialComplete
+} from '@/config/index.js'
 import { formatTime } from '@/utils/index.js'
 
 export default {
@@ -72,22 +108,42 @@ export default {
       order: {}
     }
   },
-  computed: {
-    canDeliver() {
-      return this.order.status === 5
-    }
-  },
   onLoad(options) {
     this.orderId = options.id
     this.loadOrderDetail()
   },
+  onShow() {
+    if (this.orderId) {
+      this.loadOrderDetail()
+    }
+  },
   methods: {
     formatTime,
+    canRiderShowConfirmDelivery,
+    canRiderCallConfirmDeliveryApi,
+    canRiderOfferSpecialComplete,
     getStatusText(status) {
       return ORDER_STATUS[status]?.text || '未知'
     },
     getStatusColor(status) {
+      if (this.isTownOrder(this.order)) {
+        const townStatusColors = {
+          4: '#1f6f43',
+          5: '#2b8a57',
+          6: '#2b8a57'
+        }
+        return townStatusColors[Number(status)] || ORDER_STATUS[status]?.color || '#999'
+      }
       return ORDER_STATUS[status]?.color || '#999'
+    },
+    isTownOrder(order = {}) {
+      return order.order_type === 'town' || order.delivery_scope === 'town_delivery' || !!this.getTownName(order)
+    },
+    getTownName(order = {}) {
+      return order.customer_town || order.town_name || order.rider_town || ''
+    },
+    canPickup(status) {
+      return Number(status) === 4
     },
     getFullAddress(order) {
       try {
@@ -107,14 +163,59 @@ export default {
         console.error('加载订单详情失败', e)
       }
     },
-    async handleConfirmDelivery() {
-      try {
-        await confirmDelivery({ order_id: this.orderId })
-        uni.showToast({ title: '送达成功', icon: 'success' })
-        this.loadOrderDetail()
-      } catch (e) {
-        console.error('确认送达失败', e)
+    handleConfirmDeliveryAction() {
+      const st = Number(this.order.status)
+      if (canRiderCallConfirmDeliveryApi(st)) {
+        uni.showModal({
+          title: '确认送达',
+          content: '确认订单已送达？',
+          confirmText: '确认送达',
+          cancelText: '取消',
+          success: async (res) => {
+            if (!res.confirm) return
+            if (!canRiderCallConfirmDeliveryApi(this.order.status)) {
+              uni.showToast({ title: '订单状态已变更，请刷新后重试', icon: 'none' })
+              return
+            }
+            try {
+              await confirmDelivery(this.orderId)
+              uni.showToast({ title: '送达成功', icon: 'success' })
+              await this.loadOrderDetail()
+            } catch (e) {
+              console.error('确认送达失败', e)
+            }
+          }
+        })
+        return
       }
+      if (canRiderOfferSpecialComplete(st)) {
+        uni.showModal({
+          title: '确认送达',
+          content: '当前订单未进入配送中，将按特殊完结处理，确认继续？',
+          confirmText: '确认送达',
+          cancelText: '取消',
+          success: async (res) => {
+            if (!res.confirm) return
+            if (!canRiderOfferSpecialComplete(this.order.status)) {
+              uni.showToast({ title: '订单状态已变更，请刷新后重试', icon: 'none' })
+              return
+            }
+            try {
+              await confirmDeliverySpecial(this.orderId)
+              uni.showToast({ title: '操作成功', icon: 'success' })
+              await this.loadOrderDetail()
+            } catch (e) {
+              console.error('特殊完结失败', e)
+            }
+          }
+        })
+        return
+      }
+      uni.showToast({
+        title: '当前订单无法确认送达',
+        icon: 'none',
+        duration: 2500
+      })
     },
     getRiderId() {
       const userInfoStr = uni.getStorageSync('userInfo')
@@ -206,6 +307,34 @@ export default {
       if (phone) {
         uni.makePhoneCall({ phoneNumber: phone })
       }
+    },
+    formatCoordinate(coords = {}) {
+      if (coords.lng === '' || coords.lat === '') {
+        return '未提供坐标'
+      }
+      return `${coords.lng}, ${coords.lat}`
+    },
+    async handlePickup() {
+      if (!this.canPickup(this.order.status)) {
+        uni.showToast({ title: '当前订单不可取餐', icon: 'none' })
+        return
+      }
+      uni.showModal({
+        title: '确认取餐',
+        content: '确认已取餐并开始配送？',
+        confirmText: '开始配送',
+        cancelText: '取消',
+        success: async (res) => {
+          if (!res.confirm) return
+          try {
+            await riderPickup(this.orderId)
+            uni.showToast({ title: '已开始配送', icon: 'success' })
+            await this.loadOrderDetail()
+          } catch (e) {
+            console.error('取餐失败', e)
+          }
+        }
+      })
     }
   }
 }
@@ -231,6 +360,21 @@ export default {
   color: #333;
   margin-bottom: 20rpx;
   display: block;
+}
+
+.scope-banner {
+  margin-bottom: 20rpx;
+  background: #f0f5ff;
+  color: #1890ff;
+  border-radius: 12rpx;
+  padding: 16rpx 20rpx;
+  font-size: 26rpx;
+  font-weight: 500;
+}
+
+.scope-banner.town-banner {
+  background: rgba(31, 111, 67, 0.12);
+  color: #1f6f43;
 }
 
 .info-row {

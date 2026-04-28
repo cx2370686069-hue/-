@@ -14,6 +14,7 @@
 2. [商家接口](#商家接口)
 3. [订单接口](#订单接口)
 4. [地址接口](#地址接口)
+5. [通用接口](#通用接口)
 
 ---
 
@@ -129,6 +130,16 @@
 
 **GET** `/merchant/list?page=1&limit=10`
 
+**可选筛选参数（镇上首页类目筛店）**:
+- `business_scope=town_food`：只取乡镇外卖商家
+- `town_code=<乡镇编码>` 或 `town_name=<乡镇名称>`：限定乡镇范围（二选一即可）
+- `category=<主营类目>`：店铺主营类目（受控值，来自 `/common/merchant-primary-categories`）
+
+**镇上首页类目筛店示例**:
+```
+/merchant/list?business_scope=town_food&town_code=410000xxxx&category=龙虾烧烤&page=1&limit=10
+```
+
 **响应示例**:
 ```json
 {
@@ -182,6 +193,26 @@
 ```
 
 ---
+
+## 通用接口
+
+### 1. 获取乡镇/区域字典
+
+**GET** `/common/service-areas?area_type=town&enabled=true`
+
+---
+
+### 2. 获取店铺主营类目（受控字典）
+
+**GET** `/common/merchant-primary-categories`
+
+**响应示例**:
+```json
+{
+  "code": 200,
+  "data": ["美食","甜点饮品","龙虾烧烤","鲜花蛋糕","汉堡炸鸡","跑腿代购"]
+}
+```
 
 ### 6. 获取我的店铺（商家端）
 
@@ -347,26 +378,15 @@
 
 ---
 
-### 9. 获取可抢订单列表（骑手端）
+### 9. 获取骑手工作台订单（骑手端）
 
 **GET** `/order/available`
 
----
-
-### 10. 骑手抢单
-
-**POST** `/order/rider-accept`
-
-**请求参数**:
-```json
-{
-  "order_id": 1
-}
-```
+说明：当前项目不启用抢单，该接口仅返回骑手自己的工作台订单（状态 5/6）。
 
 ---
 
-### 11. 骑手确认送达
+### 10. 骑手确认送达
 
 **POST** `/order/confirm-delivery`
 
@@ -377,15 +397,13 @@
 }
 ```
 
----
-
-### 12. 获取我的配送订单（骑手端）
+### 11. 获取我的配送订单（骑手端）
 
 **GET** `/order/rider-orders?status=5`
 
 ---
 
-### 13. 更新骑手状态
+### 12. 更新骑手状态
 
 **POST** `/order/rider-status`
 

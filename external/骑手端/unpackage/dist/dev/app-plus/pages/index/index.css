@@ -184,6 +184,11 @@
   margin-bottom: 0.375rem;
   border-left: 0.1875rem solid #1890ff;
 }
+.order-tags[data-v-1cf27b2a] {
+  display: flex;
+  align-items: center;
+  gap: 0.3125rem;
+}
 .order-card[data-v-1cf27b2a]:last-child {
   margin-bottom: 0;
 }
@@ -200,10 +205,34 @@
   padding: 0.125rem 0.375rem;
   border-radius: 0.1875rem;
 }
+.order-type.town-type[data-v-1cf27b2a] {
+  background: #1f6f43;
+}
+.order-town[data-v-1cf27b2a] {
+  font-size: 0.6875rem;
+  color: #1f6f43;
+  background: rgba(31, 111, 67, 0.12);
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.1875rem;
+}
 .order-price[data-v-1cf27b2a] {
   font-size: 0.9375rem;
   color: #FF6B35;
   font-weight: bold;
+}
+.order-merchant[data-v-1cf27b2a] {
+  display: flex;
+  align-items: center;
+  margin-bottom: 0.3125rem;
+}
+.merchant-icon[data-v-1cf27b2a] {
+  font-size: 0.75rem;
+  margin-right: 0.25rem;
+}
+.merchant-text[data-v-1cf27b2a] {
+  font-size: 0.8125rem;
+  color: #333;
+  font-weight: 500;
 }
 .order-addr[data-v-1cf27b2a] {
   display: flex;
@@ -227,6 +256,14 @@
 .order-time[data-v-1cf27b2a] {
   font-size: 0.6875rem;
   color: #ccc;
+}
+.order-status[data-v-1cf27b2a] {
+  font-size: 0.75rem;
+  color: #1890ff;
+  font-weight: 500;
+}
+.order-status.town-status[data-v-1cf27b2a] {
+  color: #1f6f43;
 }
 .take-btn[data-v-1cf27b2a] {
   background: linear-gradient(135deg, #1890ff, #40a9ff);

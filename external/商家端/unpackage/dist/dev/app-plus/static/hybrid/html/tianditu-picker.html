@@ -4,17 +4,46 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
   <title>天地图选点</title>
-  <script src="https://js.cdn.aliyun.dcloud.net.cn/dev/uni-app/uni.webview.1.5.4.js"></script>
   <style>
     html, body { margin: 0; padding: 0; height: 100%; font-family: sans-serif; }
-    #map { width: 100%; height: calc(100% - 120px); }
+    body { background: #f5f5f5; }
+    #map-wrap { position: relative; width: 100%; height: calc(100% - 176px); overflow: hidden; z-index: 1; }
+    #map { width: 100%; height: 100%; }
+    #center-pin {
+      position: fixed;
+      left: 50%;
+      top: calc((100vh - 176px) / 2);
+      transform: translate(-50%, calc(-100% + 8px));
+      pointer-events: none;
+      z-index: 99999;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    #center-pin-icon {
+      font-size: 38px;
+      line-height: 1;
+      filter: drop-shadow(0 3px 8px rgba(0,0,0,.28));
+    }
+    #center-pin-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #ff6b35;
+      border: 3px solid #fff;
+      box-shadow: 0 2px 8px rgba(0,0,0,.28);
+      margin-top: -4px;
+    }
     #bar {
-      position: fixed; left: 0; right: 0; bottom: 0; height: 120px;
+      position: fixed; left: 0; right: 0; bottom: 0; height: 176px;
       background: #fff; box-shadow: 0 -4px 12px rgba(0,0,0,.08);
-      display: flex; flex-direction: column; justify-content: center; align-items: center;
-      padding: 0 16px; box-sizing: border-box;
+      display: flex; flex-direction: column; justify-content: center;
+      padding: 14px 16px 12px; box-sizing: border-box;
     }
     #tip { font-size: 12px; color: #666; margin-bottom: 8px; text-align: center; }
+    #coord { font-size: 13px; color: #333; line-height: 1.5; margin-bottom: 6px; text-align: center; }
+    #town { font-size: 12px; color: #333; line-height: 1.5; margin-bottom: 4px; text-align: center; min-height: 18px; }
+    #addr { font-size: 12px; color: #666; line-height: 1.5; margin-bottom: 10px; text-align: center; min-height: 18px; }
     #btn {
       width: 100%; max-width: 320px; height: 44px; border: none; border-radius: 22px;
       background: linear-gradient(135deg, #FF6B35, #FF8C42); color: #fff; font-size: 16px;
@@ -24,11 +53,21 @@
 </head>
 <body>
   <div id="err" style="display:none;"></div>
-  <div id="map"></div>
+  <div id="map-wrap">
+    <div id="map"></div>
+    <div id="center-pin">
+      <div id="center-pin-icon">📍</div>
+      <div id="center-pin-dot"></div>
+    </div>
+  </div>
   <div id="bar">
-    <div id="tip">地图提供商：国家地理信息公共服务平台 · 天地图（点击地图更新标记）</div>
+    <div id="tip">拖动地图，使中心图钉对准店铺位置，再点击确认选点</div>
+    <div id="coord">当前坐标加载中...</div>
+    <div id="town">所属乡镇/街道识别中...</div>
+    <div id="addr">正在解析位置...</div>
     <button id="btn" type="button">确认选点</button>
   </div>
+  <script type="text/javascript" src="https://doc.dcloud.net.cn/uni.webview.1.5.6.js"></script>
   <script>
     function getQuery(name) {
       var m = new RegExp('[?&]' + name + '=([^&]*)').exec(location.search);
@@ -41,6 +80,18 @@
       document.getElementById('map').style.display = 'none';
       document.getElementById('bar').style.display = 'none';
     }
+    function logStep(step, payload) {
+      try {
+        console.log('[shop-map-picker][' + step + ']', payload || '');
+      } catch (e) {}
+    }
+    window.addEventListener('load', function () {
+      logStep('bridge-status-onload', {
+        hasUni: typeof uni !== 'undefined',
+        hasUniPostMessage: typeof uni !== 'undefined' && typeof uni.postMessage === 'function',
+        hasWindowParentPostMessage: !!(window.parent && typeof window.parent.postMessage === 'function')
+      });
+    });
     var tk = getQuery('tk');
     if (!tk) {
       showErr('缺少天地图密钥：请配置 config/index.js 中的 TIANDITU_TK');
@@ -55,8 +106,281 @@
     }
 
     var map;
-    var marker;
     var currentLngLat;
+    var initialAddress = getQuery('address') || '';
+    var currentAddress = '';
+    var currentTown = '';
+    var currentAddressMeta = {};
+    var geocodeSeq = 0;
+    var DEFAULT_CENTER = { lat: 32.168, lng: 115.654, zoom: 16 };
+    var TOWN_FALLBACK_AREAS = [
+      '陈淋子镇', '祖师庙镇', '武庙集镇', '段集镇', '方集镇', '郭陆滩镇', '汪棚镇', '胡族铺镇',
+      '李店镇', '往流镇', '三河尖镇', '蒋集镇', '陈集镇', '泉河铺镇', '分水亭镇', '沙河铺镇',
+      '张广庙镇', '石佛店镇', '黎集镇', '草庙集镇', '马堽集镇', '徐集镇'
+    ];
+
+    function setText(id, text) {
+      var el = document.getElementById(id);
+      if (el) el.textContent = text;
+    }
+
+    function getLat(point) {
+      if (!point) return NaN;
+      return typeof point.getLat === 'function' ? point.getLat() : point.lat;
+    }
+
+    function getLng(point) {
+      if (!point) return NaN;
+      return typeof point.getLng === 'function' ? point.getLng() : point.lng;
+    }
+
+    function toFiniteNumber(v) {
+      if (v === null || v === undefined) return null;
+      if (typeof v === 'string' && v.trim() === '') return null;
+      var n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    }
+
+    function getValidCoordinatePair(latitude, longitude) {
+      var lat = toFiniteNumber(latitude);
+      var lng = toFiniteNumber(longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+      if (lat === 0 && lng === 0) return null;
+      return {
+        latitude: lat,
+        longitude: lng
+      };
+    }
+
+    function firstText() {
+      for (var i = 0; i < arguments.length; i += 1) {
+        var text = String(arguments[i] || '').trim();
+        if (text) return text;
+      }
+      return '';
+    }
+
+    function normalizeTownName(name) {
+      return String(name || '')
+        .trim()
+        .replace(/\s+/g, '')
+        .replace(/^河南省/, '')
+        .replace(/^信阳市/, '')
+        .replace(/^固始县/, '');
+    }
+
+    function resolveTownFromText(text) {
+      var content = normalizeTownName(text);
+      if (!content) return '';
+      for (var i = 0; i < TOWN_FALLBACK_AREAS.length; i += 1) {
+        var townName = TOWN_FALLBACK_AREAS[i];
+        if (content.indexOf(normalizeTownName(townName)) > -1) {
+          return townName;
+        }
+      }
+      return '';
+    }
+
+    function updateCoordText(point) {
+      var lat = getLat(point);
+      var lng = getLng(point);
+      if (isNaN(lat) || isNaN(lng)) {
+        setText('coord', '当前坐标获取失败');
+        return;
+      }
+      setText('coord', '纬度 ' + lat.toFixed(6) + '，经度 ' + lng.toFixed(6));
+    }
+
+    function extractTown(addr) {
+      if (!addr) return currentTown || '';
+      var m = String(addr).match(/([\u4e00-\u9fa5]{2,12}(镇|乡|街道))/);
+      return m ? m[1] : (currentTown || '');
+    }
+
+    function replaceTownInAddress(fullText, town) {
+      if (!fullText) return '';
+      var currentTownName = String(town || '').trim();
+      if (!currentTownName) return fullText;
+      var oldTownMatch = String(fullText).match(/([\u4e00-\u9fa5]{2,12}(镇|乡|街道))/);
+      if (oldTownMatch && oldTownMatch[1] && oldTownMatch[1] !== currentTownName) {
+        return String(fullText).replace(oldTownMatch[1], currentTownName);
+      }
+      return String(fullText);
+    }
+
+    function reverseGeo(lng, lat, cb) {
+      var nLng = toFiniteNumber(lng);
+      var nLat = toFiniteNumber(lat);
+      if (!Number.isFinite(nLng) || !Number.isFinite(nLat) || !tk) {
+        cb('', '', {});
+        return;
+      }
+      var finished = false;
+      function done(addr, town, addressMeta) {
+        if (finished) return;
+        finished = true;
+        cb(
+          String(addr || '').trim(),
+          String(town || '').trim(),
+          addressMeta && typeof addressMeta === 'object' ? addressMeta : {}
+        );
+      }
+      function parseAndDone(json) {
+        var result = (json && json.result) || {};
+        var comp = (result && result.addressComponent) || {};
+        var province = String(comp.province || comp.provinceName || '').trim();
+        var city = String(comp.city || comp.cityName || '').trim();
+        var district = String(comp.county || comp.district || comp.districtName || '').trim();
+        var town = String(comp.town || comp.township || comp.village || '').trim();
+        var street = String(comp.street || comp.road || comp.streetName || '').trim();
+        var addr = String(firstText(
+          result && result.formatted_address,
+          result && result.formattedAddress,
+          comp && comp.address,
+          comp && comp.road,
+          comp && comp.poi
+        ) || '').trim();
+        if (!addr) {
+          addr = [province, city, district, town, street].filter(Boolean).join('');
+        }
+        var inferredTown = town || resolveTownFromText(addr) || extractTown(addr);
+        var addressMeta = {
+          province: province,
+          city: city,
+          district: district,
+          town: inferredTown,
+          street: street
+        };
+        done(replaceTownInAddress(addr, inferredTown), inferredTown, addressMeta);
+      }
+      try {
+        var postStr = JSON.stringify({ lon: nLng, lat: nLat, ver: 1 });
+        var url = 'https://api.tianditu.gov.cn/geocoder?postStr=' + encodeURIComponent(postStr) + '&type=geocode&tk=' + encodeURIComponent(tk);
+        if (typeof fetch === 'function') {
+          fetch(url, { method: 'GET' })
+            .then(function(resp) {
+              if (!resp || !resp.ok) throw new Error('http status ' + (resp && resp.status));
+              return resp.json();
+            })
+            .then(parseAndDone)
+            .catch(function() {
+              done('', '', {});
+            });
+          return;
+        }
+        var xhr = new XMLHttpRequest();
+        xhr.open('GET', url, true);
+        xhr.onreadystatechange = function() {
+          if (xhr.readyState !== 4) return;
+          if (xhr.status < 200 || xhr.status >= 300) {
+            done('', '', {});
+            return;
+          }
+          try {
+            parseAndDone(JSON.parse(xhr.responseText || '{}'));
+          } catch (e) {
+            done('', '', {});
+          }
+        };
+        xhr.onerror = function() { done('', '', {}); };
+        xhr.send();
+      } catch (e) {
+        done('', '', {});
+      }
+    }
+
+    function reverseGeocode(point) {
+      if (!point) return;
+      var seq = ++geocodeSeq;
+      currentAddress = '';
+      currentTown = '';
+      currentAddressMeta = {};
+      setText('town', '所属乡镇/街道识别中...');
+      setText('addr', '正在解析位置...');
+      reverseGeo(getLng(point), getLat(point), function(address, town, addressMeta) {
+        if (seq !== geocodeSeq) return;
+        currentAddress = address || '';
+        currentTown = town || '';
+        currentAddressMeta = addressMeta || {};
+        setText('town', currentTown ? ('所属乡镇/街道：' + currentTown) : '未识别到乡镇/街道');
+        setText('addr', currentAddress || '未解析到地址，可返回后手动补充详细地址');
+      });
+    }
+
+    function syncCenter(shouldGeocode) {
+      if (!map) return;
+      var center = map.getCenter && map.getCenter();
+      if (!center) return;
+      currentLngLat = center;
+      updateCoordText(center);
+      if (shouldGeocode) reverseGeocode(center);
+    }
+
+    function centerTo(lng, lat, zoom) {
+      currentLngLat = new T.LngLat(lng, lat);
+      map.centerAndZoom(currentLngLat, zoom || DEFAULT_CENTER.zoom);
+      updateCoordText(currentLngLat);
+      reverseGeocode(currentLngLat);
+    }
+
+    function useDefaultCenter() {
+      centerTo(DEFAULT_CENTER.lng, DEFAULT_CENTER.lat, DEFAULT_CENTER.zoom);
+    }
+
+    function tryLocateCurrentPosition() {
+      if (!navigator.geolocation) {
+        useDefaultCenter();
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(function (pos) {
+        var lat = pos && pos.coords ? Number(pos.coords.latitude) : NaN;
+        var lng = pos && pos.coords ? Number(pos.coords.longitude) : NaN;
+        if (isNaN(lat) || isNaN(lng)) {
+          useDefaultCenter();
+          return;
+        }
+        centerTo(lng, lat, DEFAULT_CENTER.zoom);
+      }, function () {
+        useDefaultCenter();
+      }, {
+        enableHighAccuracy: true,
+        timeout: 8000,
+        maximumAge: 60000
+      });
+    }
+
+    function sendResult(data) {
+      var payload = data && typeof data === 'object' ? data : {};
+      var sent = false;
+      logStep('sendResult-enter', payload);
+      try {
+        if (typeof uni !== 'undefined' && typeof uni.postMessage === 'function') {
+          logStep('sendResult-before-uni.postMessage', payload);
+          uni.postMessage({ data: payload });
+          sent = true;
+          logStep('sendResult-after-uni.postMessage', { sent: sent });
+        } else {
+          logStep('sendResult-uni.postMessage-unavailable', {
+            hasUni: typeof uni !== 'undefined',
+            uniPostMessageType: typeof uni === 'undefined' ? 'undefined' : typeof uni.postMessage
+          });
+        }
+      } catch (e) {
+        logStep('sendResult-uni.postMessage-error', String((e && e.message) || e || ''));
+      }
+      try {
+        if (window.parent && typeof window.parent.postMessage === 'function') {
+          logStep('sendResult-before-window.parent.postMessage', payload);
+          window.parent.postMessage(payload, '*');
+          sent = true;
+          logStep('sendResult-after-window.parent.postMessage', { sent: sent });
+        }
+      } catch (e2) {
+        logStep('sendResult-window.parent.postMessage-error', String((e2 && e2.message) || e2 || ''));
+      }
+      logStep('sendResult-exit', { sent: sent });
+      return sent;
+    }
 
     function initMap() {
       if (typeof T === 'undefined') {
@@ -66,34 +390,69 @@
       var lat = parseFloat(getQuery('lat'));
       var lng = parseFloat(getQuery('lng'));
       if (isNaN(lat) || isNaN(lng)) {
-        lat = 32.168;
-        lng = 115.654;
+        lat = NaN;
+        lng = NaN;
       }
       map = new T.Map('map');
-      currentLngLat = new T.LngLat(lng, lat);
-      map.centerAndZoom(currentLngLat, 16);
-      marker = new T.Marker(currentLngLat);
-      map.addOverlay(marker);
+      if (initialAddress) {
+        setText('addr', initialAddress);
+      }
+      if (!isNaN(lat) && !isNaN(lng)) {
+        centerTo(lng, lat, DEFAULT_CENTER.zoom);
+      } else {
+        tryLocateCurrentPosition();
+      }
 
-      map.addEventListener('click', function (e) {
-        currentLngLat = e.lnglat || e.lngLat;
-        if (!currentLngLat) return;
-        map.clearOverlays();
-        marker = new T.Marker(currentLngLat);
-        map.addOverlay(marker);
+      map.addEventListener('move', function () {
+        syncCenter(false);
+      });
+      map.addEventListener('moveend', function () {
+        syncCenter(true);
+      });
+      map.addEventListener('zoomend', function () {
+        syncCenter(true);
       });
 
       document.getElementById('btn').addEventListener('click', function () {
+        logStep('confirm-click', {
+          hasCurrentLngLat: !!currentLngLat,
+          currentAddress: currentAddress || '',
+          currentTown: currentTown || ''
+        });
         if (!currentLngLat) return;
-        var la = typeof currentLngLat.getLat === 'function' ? currentLngLat.getLat() : currentLngLat.lat;
-        var ln = typeof currentLngLat.getLng === 'function' ? currentLngLat.getLng() : currentLngLat.lng;
-        if (typeof uni !== 'undefined' && uni.postMessage) {
-          uni.postMessage({
-            data: {
-              latitude: la,
-              longitude: ln
-            }
-          });
+        var la = getLat(currentLngLat);
+        var ln = getLng(currentLngLat);
+        var coordinatePair = getValidCoordinatePair(la, ln);
+        if (!coordinatePair) {
+          alert('当前地图坐标无效，请重新选点');
+          return;
+        }
+        logStep('confirm-payload-ready', {
+          latitude: coordinatePair.latitude,
+          longitude: coordinatePair.longitude,
+          address: currentAddress || '',
+          town: currentTown || ''
+        });
+        var ok = sendResult({
+          latitude: coordinatePair.latitude,
+          longitude: coordinatePair.longitude,
+          address: currentAddress || '',
+          town: currentTown || '',
+          delivery_address: {
+            province: String(currentAddressMeta.province || '').trim(),
+            city: String(currentAddressMeta.city || '').trim(),
+            district: String(currentAddressMeta.district || '').trim(),
+            town: String(currentAddressMeta.town || currentTown || '').trim(),
+            street: String(currentAddressMeta.street || '').trim(),
+            detail: String(currentAddress || '').trim(),
+            name: String(currentAddress || '').trim(),
+            longitude: coordinatePair.longitude,
+            latitude: coordinatePair.latitude
+          }
+        });
+        logStep('confirm-sendResult-return', { ok: ok });
+        if (!ok) {
+          alert('确认失败：地图结果暂时无法回传，请返回重试');
         }
       });
     }

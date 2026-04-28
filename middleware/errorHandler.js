@@ -41,10 +41,16 @@ const errorHandler = (err, req, res, next) => {
     });
   }
 
+  const isProduction = process.env.NODE_ENV === 'production';
+  const safeMessage =
+    responseCode >= 500 && isProduction
+      ? '服务器内部错误'
+      : (err.message || '服务器内部错误');
+
   // 默认错误
   res.status(responseCode).json({
     code: responseCode,
-    message: err.message || '服务器内部错误',
+    message: safeMessage,
     data: null
   });
 };

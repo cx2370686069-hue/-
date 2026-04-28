@@ -1,11 +1,11 @@
+const crypto = require('crypto');
 const { User } = require('../models');
 
 // 生成订单号
 const generateOrderNo = () => {
-  const date = new Date();
-  const timestamp = date.getTime().toString();
-  const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-  return timestamp + random;
+  const timestamp = Date.now().toString();
+  const random = crypto.randomBytes(4).toString('hex');
+  return `${timestamp}${random}`;
 };
 
 // 计算距离（单位：公里）

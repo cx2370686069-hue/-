@@ -52,6 +52,35 @@
   padding: 0.5rem 0.625rem;
   font-size: 0.875rem;
 }
+.picker-line[data-v-797be701] {
+  border: 0.03125rem solid #ddd;
+  border-radius: 0.25rem;
+  padding: 0.5rem 0.625rem;
+  font-size: 0.875rem;
+  color: #333;
+}
+.coord-line[data-v-797be701] {
+  display: flex;
+  align-items: center;
+  min-height: 2.75rem;
+  box-sizing: border-box;
+}
+.placeholder-text[data-v-797be701] {
+  color: #999;
+}
+.picker-tip[data-v-797be701] {
+  display: block;
+  margin-top: 0.3125rem;
+  font-size: 0.6875rem;
+  color: #999;
+}
+.picker-tip.error[data-v-797be701] {
+  color: #ff4d4f;
+}
+.location-btn[data-v-797be701] {
+  margin-top: 0.375rem;
+  font-size: 0.8125rem;
+}
 .btn[data-v-797be701] {
   margin-top: 1rem;
 }

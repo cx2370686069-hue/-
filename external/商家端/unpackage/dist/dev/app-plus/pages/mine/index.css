@@ -16,18 +16,6 @@
 }
 .user-phone[data-v-569e925a] { font-size: 0.8125rem; margin-top: 0.25rem;
 }
-.menu-item[data-v-569e925a] {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1rem 0;
-  font-size: 0.9375rem;
-  border-bottom: 0.03125rem solid #f5f5f5;
-}
-.menu-item[data-v-569e925a]:last-child { border-bottom: none;
-}
-.arrow[data-v-569e925a] { color: #ccc; font-size: 1.125rem;
-}
 .logout-btn[data-v-569e925a] {
   width: 100%;
   background: transparent;

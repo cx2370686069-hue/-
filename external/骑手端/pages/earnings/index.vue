@@ -2,8 +2,8 @@
   <view class="container">
     <view class="empty-state">
       <text class="empty-icon">💰</text>
-      <text class="empty-text">收入明细</text>
-      <text class="empty-tip">功能开发中，敬请期待...</text>
+      <text class="empty-text">订单收入汇总</text>
+      <text class="empty-tip">当前未开放到账时间与收入流水展示，相关能力待结算接口完善后开放。</text>
     </view>
   </view>
 </template>

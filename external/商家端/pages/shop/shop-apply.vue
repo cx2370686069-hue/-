@@ -17,6 +17,10 @@
         <text class="val">{{ shopDisplay.address }}</text>
       </view>
       <view class="row">
+        <text class="label">主营类目</text>
+        <text class="val">{{ shopDisplay.category || '未填写' }}</text>
+      </view>
+      <view class="row">
         <text class="label">起送价</text>
         <text class="val">{{ shopDisplay.min_price }}</text>
       </view>
@@ -51,6 +55,24 @@
         <input class="input" v-model="form.address" placeholder="详细地址" />
       </view>
       <view class="field">
+        <text class="label">店铺位置</text>
+        <view class="picker-line coord-line" @click="openTiandituPicker">
+          <text v-if="hasCoords">纬度 {{ formatCoord(form.latitude) }}，经度 {{ formatCoord(form.longitude) }}</text>
+          <text v-else class="placeholder-text">请在地图上选择店铺位置</text>
+        </view>
+        <button class="location-btn" type="default" @click="openTiandituPicker">在地图上选择店铺位置</button>
+        <text class="picker-tip">使用天地图选点，提交真实 latitude / longitude</text>
+      </view>
+      <view class="field">
+        <text class="label">店铺主营类目</text>
+        <picker :range="categoryOptions" :value="currentCategoryIndex > -1 ? currentCategoryIndex : 0" :disabled="!categoryOptions.length" @change="onCategoryChange">
+          <view class="picker-line">{{ form.category || '请选择店铺主营类目' }}</view>
+        </picker>
+        <text v-if="categoryLoading" class="picker-tip">主营类目加载中...</text>
+        <text v-else-if="categoryLoadFailed" class="picker-tip error">主营类目加载失败，请稍后重试</text>
+        <text v-else-if="!categoryOptions.length" class="picker-tip error">暂无可选主营类目</text>
+      </view>
+      <view class="field">
         <text class="label">起送价</text>
         <input class="input" v-model="form.min_price" type="digit" placeholder="元" />
       </view>
@@ -72,9 +94,9 @@
         <image
           v-if="form.business_license"
           class="license-preview"
-          :src="form.business_license"
+          :src="form.business_license.startsWith('http://') || form.business_license.startsWith('https://') ? form.business_license : (form.business_license.startsWith('/') ? BASE_URL + form.business_license : BASE_URL + '/' + form.business_license)"
           mode="widthFix"
-          @click="previewUrl(form.business_license)"
+          @click="previewUrl(form.business_license.startsWith('http://') || form.business_license.startsWith('https://') ? form.business_license : (form.business_license.startsWith('/') ? BASE_URL + form.business_license : BASE_URL + '/' + form.business_license))"
         />
       </view>
       <button class="btn" type="primary" :loading="submitting" @click="submit">提交开店申请</button>
@@ -83,16 +105,32 @@
 </template>
 
 <script>
+import { getMerchantPrimaryCategories } from '@/api/common.js'
 import { getToken } from '@/utils/auth.js'
-import { BASE_URL } from '@/config/index.js'
-
-// 临时占位坐标（固始县一带），后续接入天地图拾取后替换
-const PLACEHOLDER_LAT = 32.14
-const PLACEHOLDER_LNG = 115.65
+import { BASE_URL, TIANDITU_TK } from '@/config/index.js'
 
 /** 与 config 中 BASE_URL 一致，避免走 utils/request.js（401 会误报「接口无权限或未实现」） */
 const MERCHANT_MY_URL = BASE_URL + '/api/merchant/my'
 const MERCHANT_CREATE_URL = BASE_URL + '/api/merchant/create'
+
+const normalizeCoordinateValue = (value) => {
+  if (value == null) return null
+  const raw = typeof value === 'string' ? value.trim() : value
+  if (raw === '') return null
+  const num = Number(raw)
+  return Number.isFinite(num) ? num : null
+}
+
+const getValidCoordinatePair = (latitude, longitude) => {
+  const lat = normalizeCoordinateValue(latitude)
+  const lng = normalizeCoordinateValue(longitude)
+  if (lat == null || lng == null) return null
+  if (lat === 0 && lng === 0) return null
+  return {
+    latitude: lat,
+    longitude: lng
+  }
+}
 
 export default {
   data() {
@@ -100,33 +138,86 @@ export default {
       loading: true,
       hasShop: false,
       shopDisplay: null,
+      categoryOptions: [],
+      categoryLoading: false,
+      categoryLoadFailed: false,
+      routeToken: '',
       submitting: false,
       uploadingLicense: false,
       form: {
         name: '',
         phone: '',
         address: '',
+        category: '',
         min_price: '',
         delivery_fee: '',
-        business_license: ''
+        business_license: '',
+        latitude: null,
+        longitude: null
       }
     }
   },
+  computed: {
+    currentCategoryIndex() {
+      return this.categoryOptions.indexOf(this.form.category)
+    },
+    hasCoords() {
+      return !!getValidCoordinatePair(this.form.latitude, this.form.longitude)
+    }
+  },
+  onLoad(options) {
+    const routeToken = options && options.token ? decodeURIComponent(options.token) : ''
+    if (routeToken) {
+      this.routeToken = routeToken
+      uni.setStorageSync('token', routeToken)
+    }
+  },
   onShow() {
-    if (!getToken()) {
+    const token = this.routeToken || getToken() || uni.getStorageSync('token') || ''
+    if (!token) {
       uni.redirectTo({ url: '/pages/login/index' })
       return
     }
+    uni.setStorageSync('token', token)
+    this.loadCategoryOptions()
     this.loadMerchant()
   },
   methods: {
+    normalizeCategoryOptions(res) {
+      const raw = res && typeof res === 'object' && res.data !== undefined ? res.data : res
+      const arr = Array.isArray(raw) ? raw : raw && Array.isArray(raw.data) ? raw.data : []
+      return arr.map((item) => String(item || '').trim()).filter(Boolean)
+    },
     normalizeRaw(resBody) {
       if (!resBody || typeof resBody !== 'object') return null
       return 'data' in resBody && resBody.data !== undefined ? resBody.data : resBody
     },
+    formatCoord(v) {
+      if (v == null || v === '') return '-'
+      const n = Number(v)
+      return Number.isFinite(n) ? n.toFixed(6) : String(v)
+    },
+    async loadCategoryOptions() {
+      this.categoryLoading = true
+      this.categoryLoadFailed = false
+      try {
+        const res = await getMerchantPrimaryCategories()
+        this.categoryOptions = this.normalizeCategoryOptions(res)
+      } catch (e) {
+        this.categoryOptions = []
+        this.categoryLoadFailed = true
+      } finally {
+        this.categoryLoading = false
+      }
+    },
     loadMerchant() {
       this.loading = true
-      const token = uni.getStorageSync('token') || ''
+      const token = this.routeToken || uni.getStorageSync('token') || getToken() || ''
+      if (!token) {
+        this.loading = false
+        uni.redirectTo({ url: '/pages/login/index' })
+        return
+      }
       uni.request({
         url: MERCHANT_MY_URL,
         method: 'GET',
@@ -168,6 +259,7 @@ export default {
               name: name != null ? String(name) : '',
               phone: raw.phone != null ? String(raw.phone) : '',
               address: raw.address != null ? String(raw.address) : '',
+              category: raw.category != null ? String(raw.category) : '',
               min_price: raw.min_price != null ? raw.min_price : '',
               delivery_fee: raw.delivery_fee != null ? raw.delivery_fee : '',
               business_license:
@@ -188,6 +280,41 @@ export default {
         }
       })
     },
+    openTiandituPicker() {
+      if (!TIANDITU_TK) {
+        uni.showModal({
+          title: '缺少天地图密钥',
+          content: '请在 config/index.js 中填写 TIANDITU_TK（浏览器端密钥），保存后重新编译运行。',
+          showCancel: false
+        })
+        return
+      }
+      const lat = this.form.latitude != null ? String(this.form.latitude) : ''
+      const lng = this.form.longitude != null ? String(this.form.longitude) : ''
+      const address = this.form.address != null ? String(this.form.address) : ''
+      uni.navigateTo({
+        url: `/pages/shop/tianditu-picker?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}&address=${encodeURIComponent(address)}`,
+        events: {
+          picked: (data) => {
+            if (!data) return
+            const coordinatePair = getValidCoordinatePair(data.latitude, data.longitude)
+            if (!coordinatePair) {
+              this.form.latitude = null
+              this.form.longitude = null
+              uni.showToast({ title: '地图选点无效，请重新选点', icon: 'none' })
+              return
+            }
+            this.form.latitude = coordinatePair.latitude
+            this.form.longitude = coordinatePair.longitude
+            if (data.address) {
+              this.form.address = data.address
+            } else if (data.town && !this.form.address) {
+              this.form.address = data.town
+            }
+          }
+        }
+      })
+    },
     goHome() {
       uni.reLaunch({ url: '/pages/index/index' })
     },
@@ -204,7 +331,7 @@ export default {
       uni.chooseImage({
         count: 1,
         sizeType: ['compressed'],
-        sourceType: ['album'],
+        sourceType: ['album', 'camera'],
         success: (res) => {
           this.uploadingLicense = true
           uni.uploadFile({
@@ -241,10 +368,16 @@ export default {
         }
       })
     },
+    onCategoryChange(e) {
+      if (!this.categoryOptions.length) return
+      const index = Number(e && e.detail && e.detail.value)
+      this.form.category = this.categoryOptions[index] || ''
+    },
     submit() {
       const name = (this.form.name || '').trim()
       const phone = (this.form.phone || '').trim()
       const address = (this.form.address || '').trim()
+      const category = (this.form.category || '').trim()
       const minPrice = parseFloat(this.form.min_price)
       const deliveryFee = parseFloat(this.form.delivery_fee)
       const business_license = (this.form.business_license || '').trim()
@@ -262,6 +395,26 @@ export default {
         uni.showToast({ title: '请填写详细地址', icon: 'none' })
         return
       }
+      if (!this.hasCoords) {
+        uni.showToast({ title: '请在地图上选择店铺位置', icon: 'none' })
+        return
+      }
+      if (this.categoryLoading) {
+        uni.showToast({ title: '主营类目加载中，请稍后', icon: 'none' })
+        return
+      }
+      if (!this.categoryOptions.length) {
+        uni.showToast({ title: '主营类目暂不可用，请稍后重试', icon: 'none' })
+        return
+      }
+      if (!category) {
+        uni.showToast({ title: '请选择店铺主营类目', icon: 'none' })
+        return
+      }
+      if (!this.categoryOptions.includes(category)) {
+        uni.showToast({ title: '请选择有效的主营类目', icon: 'none' })
+        return
+      }
       if (Number.isNaN(minPrice) || minPrice < 0) {
         uni.showToast({ title: '请填写有效起送价', icon: 'none' })
         return
@@ -274,16 +427,22 @@ export default {
         uni.showToast({ title: '请先登录', icon: 'none' })
         return
       }
+      const coordinatePair = getValidCoordinatePair(this.form.latitude, this.form.longitude)
+      if (!coordinatePair) {
+        uni.showToast({ title: '地图坐标无效，请重新选点', icon: 'none' })
+        return
+      }
 
       const data = {
         name,
         phone,
         address,
+        category,
         min_price: minPrice,
         delivery_fee: deliveryFee,
         business_license,
-        latitude: PLACEHOLDER_LAT,
-        longitude: PLACEHOLDER_LNG
+        latitude: coordinatePair.latitude,
+        longitude: coordinatePair.longitude
       }
 
       this.submitting = true
@@ -391,6 +550,35 @@ export default {
   border-radius: 8rpx;
   padding: 16rpx 20rpx;
   font-size: 28rpx;
+}
+.picker-line {
+  border: 1rpx solid #ddd;
+  border-radius: 8rpx;
+  padding: 16rpx 20rpx;
+  font-size: 28rpx;
+  color: #333;
+}
+.coord-line {
+  display: flex;
+  align-items: center;
+  min-height: 88rpx;
+  box-sizing: border-box;
+}
+.placeholder-text {
+  color: #999;
+}
+.picker-tip {
+  display: block;
+  margin-top: 10rpx;
+  font-size: 22rpx;
+  color: #999;
+}
+.picker-tip.error {
+  color: #ff4d4f;
+}
+.location-btn {
+  margin-top: 12rpx;
+  font-size: 26rpx;
 }
 .btn {
   margin-top: 32rpx;

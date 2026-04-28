@@ -42,7 +42,12 @@
 </template>
 
 <script>
-import request from '@/utils/request.js'
+import {
+  getMerchantCategoryList,
+  createCategory,
+  updateCategory,
+  deleteCategory
+} from '@/api/shop.js'
 
 export default {
   data() {
@@ -80,7 +85,7 @@ export default {
     },
     async loadList() {
       try {
-        const res = await request({ url: '/merchant/my-categories', method: 'GET' })
+        const res = await getMerchantCategoryList()
         this.list = this.normalizeList(res)
       } catch (e) {
         this.list = []
@@ -111,24 +116,17 @@ export default {
       }
       try {
         if (this.dialogMode === 'add') {
-          await request({
-            url: '/merchant/category',
-            method: 'POST',
-            data: { name, sort: 1 }
-          })
+          await createCategory({ name, sort: 1 })
           uni.showToast({ title: '已新增', icon: 'success' })
         } else {
-          await request({
-            url: '/merchant/category/' + this.editingId,
-            method: 'PUT',
-            data: { name }
-          })
+          await updateCategory(this.editingId, { name })
           uni.showToast({ title: '已保存', icon: 'success' })
         }
         this.closeDialog()
         await this.loadList()
       } catch (e) {
-        uni.showToast({ title: '操作失败', icon: 'none' })
+        const msg = (e && (e.message || e.detail || e.msg)) || '操作失败'
+        uni.showToast({ title: msg, icon: 'none' })
       }
     },
     confirmDelete(item) {
@@ -138,11 +136,12 @@ export default {
         success: async (res) => {
           if (!res.confirm) return
           try {
-            await request({ url: '/merchant/category/' + item.id, method: 'DELETE' })
+            await deleteCategory(item.id)
             uni.showToast({ title: '已删除', icon: 'success' })
             await this.loadList()
           } catch (e) {
-            uni.showToast({ title: '删除失败', icon: 'none' })
+            const msg = (e && (e.message || e.detail || e.msg)) || '删除失败'
+            uni.showToast({ title: msg, icon: 'none' })
           }
         }
       })

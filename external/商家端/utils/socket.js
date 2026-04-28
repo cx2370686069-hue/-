@@ -1,5 +1,6 @@
 import { io } from 'socket.io-client'
 import { SOCKET_URL } from '../config/index.js'
+import { playMerchantNewOrderNotify } from './merchant-notify.js'
 
 let socket = null
 const newOrderCallbacks = []
@@ -22,6 +23,21 @@ function bindSocketListeners() {
     console.log('[socket] disconnect', reason)
   })
   socket.on('new_order', (data) => {
+    console.log('[socket] new_order received', data)
+    try {
+      const played = playMerchantNewOrderNotify()
+      console.log('[socket] new_order notify played =', played)
+    } catch (e) {
+      console.error('[socket] playMerchantNewOrderNotify', e)
+    }
+    try {
+      uni.showToast({ title: '您有新的外卖订单！', icon: 'none' })
+    } catch (e) {}
+    try {
+      uni.$emit('merchant_new_order', data)
+    } catch (e) {
+      console.error('[socket] merchant_new_order emit failed', e)
+    }
     newOrderCallbacks.forEach((cb) => {
       try {
         cb(data)
@@ -52,6 +68,7 @@ function bindSocketListeners() {
 
 export function initSocket(token, userId) {
   if (!token) {
+    console.log('[socket] init skipped: missing token')
     return null
   }
   if (socket) {
@@ -61,6 +78,11 @@ export function initSocket(token, userId) {
 
   const tokenStr = typeof token === 'string' ? token : ''
   const bearer = tokenStr.startsWith('Bearer ') ? tokenStr : 'Bearer ' + tokenStr
+  console.log('[socket] initSocket', {
+    socketUrl: SOCKET_URL,
+    role: 'merchant',
+    userId: String(userId || '')
+  })
 
   socket = io(SOCKET_URL, {
     path: '/socket.io',

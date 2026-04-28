@@ -1,16 +1,25 @@
 const http = require('http');
 
-const data = JSON.stringify({
+const deliveryScope = 'county_delivery';
+const townCode = '';
+
+const payload = {
   phone: '13800138002',
   password: '123456',
   nickname: '测试骑手',
-  role: 'rider'
-});
+  delivery_scope: deliveryScope
+};
+
+if (deliveryScope === 'town_delivery' && townCode) {
+  payload.town_code = townCode;
+}
+
+const data = JSON.stringify(payload);
 
 const options = {
   hostname: 'localhost',
   port: 3000,
-  path: '/api/auth/register',
+  path: '/api/auth/register/rider',
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
@@ -28,12 +37,15 @@ const req = http.request(options, (res) => {
   res.on('end', () => {
     const result = JSON.parse(body);
     
-    if (res.statusCode === 200) {
+    if (res.statusCode === 200 || res.statusCode === 201) {
       console.log('✅ 骑手账号注册成功！');
       console.log('账号信息：');
       console.log('  手机号：13800138002');
       console.log('  密码：123456');
-      console.log('  角色：rider（骑手）');
+      console.log(`  配送业务线：${deliveryScope}`);
+      if (payload.town_code) {
+        console.log(`  乡镇编码：${payload.town_code}`);
+      }
       console.log('\n现在可以用这个账号登录了！');
     } else {
       console.log('❌ 注册失败:', result.message || result.msg);

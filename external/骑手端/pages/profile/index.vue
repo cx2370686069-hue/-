@@ -11,16 +11,22 @@
     </view>
 
     <view class="menu-list">
-      <view class="menu-item" @click="showTip('余额提现')">
+      <view class="menu-item" @click="showTip('账户余额')">
         <text class="menu-icon">💰</text>
-        <text class="menu-text">余额提现</text>
+        <text class="menu-text">账户余额</text>
         <text class="menu-value">¥{{ balance }}</text>
         <text class="menu-arrow">›</text>
       </view>
-      <view class="menu-item" @click="showStationPanel = !showStationPanel">
+      <view v-if="isTownStationRole" class="menu-item" @click="showStationPanel = !showStationPanel">
         <text class="menu-icon">📍</text>
         <text class="menu-text">站长乡镇</text>
         <text class="menu-value">{{ userInfo.rider_town || '未绑定' }}</text>
+        <text class="menu-arrow">›</text>
+      </view>
+      <view v-else class="menu-item" @click="showTip('配送范围')">
+        <text class="menu-icon">📍</text>
+        <text class="menu-text">配送范围</text>
+        <text class="menu-value">{{ deliveryScopeLabel }}</text>
         <text class="menu-arrow">›</text>
       </view>
       <view class="menu-item" @click="showTip('修改密码')">
@@ -66,6 +72,14 @@ export default {
       balance: '0.00',
       showStationPanel: false,
       stationTown: ''
+    }
+  },
+  computed: {
+    isTownStationRole() {
+      return this.userInfo.rider_kind === 'stationmaster' || this.userInfo.delivery_scope === 'town_delivery'
+    },
+    deliveryScopeLabel() {
+      return this.userInfo.delivery_scope === 'county_delivery' ? '县城配送' : '骑手配送'
     }
   },
   onLoad() {

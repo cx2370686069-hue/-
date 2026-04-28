@@ -26,10 +26,21 @@ export function getOrderDetail(id) {
 }
 
 /**
- * 确认送达
+ * 标准送达：POST /api/order/confirm-delivery
  */
 export function confirmDelivery(orderId) {
   return post('/order/confirm-delivery', { order_id: orderId })
+}
+
+export function riderPickup(orderId) {
+  return post('/rider/order/pickup', { order_id: orderId })
+}
+
+/**
+ * 特殊完结：POST /api/order/confirm-delivery-special
+ */
+export function confirmDeliverySpecial(orderId) {
+  return post('/order/confirm-delivery-special', { order_id: orderId })
 }
 
 /**

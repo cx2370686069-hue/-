@@ -23,6 +23,26 @@ export const ORDER_STATUS = {
   7: { text: '已取消', color: '#999' }
 }
 
+/**
+ * 是否显示「确认送达」按钮：骑手已接单后的阶段（2～5）。
+ * 与 canRiderCallConfirmDeliveryApi 分离：仅 status=5 时才会真正请求 confirm-delivery。
+ */
+export function canRiderShowConfirmDelivery(status) {
+  const s = Number(status)
+  return s >= 2 && s <= 5
+}
+
+/** 后端允许调用 POST /api/order/confirm-delivery 的订单状态（配送中） */
+export function canRiderCallConfirmDeliveryApi(status) {
+  return Number(status) === 5
+}
+
+/** 是否可走「特殊完结」：已接单～备货完成(2～4)，非标准配送中 */
+export function canRiderOfferSpecialComplete(status) {
+  const s = Number(status)
+  return s >= 2 && s <= 4
+}
+
 // 跑腿订单状态
 export const ERRAND_STATUS = {
   0: { text: '待支付', color: '#FF6B35' },
@@ -37,5 +57,8 @@ export default {
   TIANDITU_TK,
   RIDER,
   ORDER_STATUS,
+  canRiderShowConfirmDelivery,
+  canRiderCallConfirmDeliveryApi,
+  canRiderOfferSpecialComplete,
   ERRAND_STATUS
 }

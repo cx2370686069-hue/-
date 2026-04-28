@@ -36,7 +36,7 @@ function request(options) {
           reject(res.data);
           return;
         }
-        if (res.statusCode === 200) {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
           resolve(res.data);
         } else if (options.allow404 && res.statusCode === 404) {
           resolve(null);

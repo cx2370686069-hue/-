@@ -50,6 +50,17 @@ if (uni.restoreGlobal) {
     6: { text: "已完成", color: "#52C41A" },
     7: { text: "已取消", color: "#999" }
   };
+  function canRiderShowConfirmDelivery(status) {
+    const s = Number(status);
+    return s >= 2 && s <= 5;
+  }
+  function canRiderCallConfirmDeliveryApi(status) {
+    return Number(status) === 5;
+  }
+  function canRiderOfferSpecialComplete(status) {
+    const s = Number(status);
+    return s >= 2 && s <= 4;
+  }
   const API_BASE_URL = BASE_URL + "/api";
   function request({ url: url2, method = "GET", data = {} }) {
     return new Promise((resolve, reject) => {
@@ -71,7 +82,7 @@ if (uni.restoreGlobal) {
             reject({ code: 401, msg: "请先登录" });
             return;
           }
-          if (res.statusCode === 200) {
+          if (res.statusCode >= 200 && res.statusCode < 300) {
             resolve(res.data);
           } else {
             const msg = ((_a = res.data) == null ? void 0 : _a.msg) || ((_b = res.data) == null ? void 0 : _b.message) || ((_c = res.data) == null ? void 0 : _c.detail) || "请求失败";
@@ -100,8 +111,11 @@ if (uni.restoreGlobal) {
   function login(data) {
     return post("/auth/login", data);
   }
-  function register(data) {
-    return post("/auth/register", data);
+  function registerRider(data) {
+    return post("/auth/register/rider", data);
+  }
+  function getTownServiceAreas() {
+    return get("/common/service-areas", { area_type: "town" });
   }
   const STORAGE_KEY = {
     TOKEN: "token",
@@ -110,6 +124,9 @@ if (uni.restoreGlobal) {
   };
   function setToken(token) {
     uni.setStorageSync(STORAGE_KEY.TOKEN, token);
+  }
+  function getToken() {
+    return uni.getStorageSync(STORAGE_KEY.TOKEN) || "";
   }
   function removeToken() {
     uni.removeStorageSync(STORAGE_KEY.TOKEN);
@@ -130,6 +147,16 @@ if (uni.restoreGlobal) {
   function getRiderStatus() {
     return uni.getStorageSync(STORAGE_KEY.RIDER_STATUS) || 0;
   }
+  const RIDER_DELIVERY_SCOPE_OPTIONS = [
+    {
+      label: "固始县城外卖司机",
+      value: "county_delivery"
+    },
+    {
+      label: "乡镇外卖站长",
+      value: "town_delivery"
+    }
+  ];
   const _export_sfc = (sfc, props) => {
     const target = sfc.__vccOpts || sfc;
     for (const [key, val] of props) {
@@ -137,27 +164,131 @@ if (uni.restoreGlobal) {
     }
     return target;
   };
-  const _sfc_main$b = {
+  const LOGIN_PAGE_MODE_KEY = "rider_login_page_mode";
+  const _sfc_main$d = {
+    onLoad() {
+      this.restoreMode();
+    },
+    onShow() {
+      this.restoreMode();
+    },
     data() {
       return {
         form: {
           phone: "",
           password: "",
           confirmPassword: "",
-          nickname: ""
+          nickname: "",
+          delivery_scope: "",
+          town_code: ""
         },
+        deliveryScopeOptions: RIDER_DELIVERY_SCOPE_OPTIONS,
+        townOptions: [],
+        townOptionsLoaded: false,
+        townOptionsLoading: false,
+        townOptionsLoadFailed: false,
         isRegisterMode: false,
         loading: false
       };
     },
+    computed: {
+      isTownDelivery() {
+        return this.form.delivery_scope === "town_delivery";
+      },
+      selectedTownIndex() {
+        return Math.max(this.townOptions.findIndex((item) => item.value === this.form.town_code), 0);
+      },
+      selectedTownLabel() {
+        const selectedTown = this.townOptions.find((item) => item.value === this.form.town_code);
+        return selectedTown ? selectedTown.label : "";
+      },
+      townPickerText() {
+        if (this.selectedTownLabel) {
+          return this.selectedTownLabel;
+        }
+        if (this.townOptionsLoading) {
+          return "乡镇列表加载中...";
+        }
+        if (this.townOptionsLoadFailed) {
+          return "乡镇列表加载失败，请重试";
+        }
+        return "请选择所属乡镇";
+      }
+    },
     methods: {
+      restoreMode() {
+        this.isRegisterMode = uni.getStorageSync(LOGIN_PAGE_MODE_KEY) === "register";
+      },
+      setMode(isRegisterMode) {
+        this.isRegisterMode = !!isRegisterMode;
+        uni.setStorageSync(LOGIN_PAGE_MODE_KEY, this.isRegisterMode ? "register" : "login");
+      },
+      getAuditPendingLoginMessage(error) {
+        const msg = String((error == null ? void 0 : error.msg) || (error == null ? void 0 : error.message) || "").trim();
+        if (!msg) {
+          return "";
+        }
+        if (msg.includes("禁用") || msg.includes("停用") || msg.includes("审核") || msg.includes("未通过") || msg.includes("未启用")) {
+          return "账号正在审核中，审核通过后才可登录接单";
+        }
+        return "";
+      },
       toggleMode() {
-        this.isRegisterMode = !this.isRegisterMode;
+        this.setMode(!this.isRegisterMode);
         this.form.confirmPassword = "";
         this.form.nickname = "";
+        this.form.delivery_scope = "";
+        this.form.town_code = "";
+      },
+      resetRegisterForm() {
+        this.form.password = "";
+        this.form.confirmPassword = "";
+        this.form.nickname = "";
+        this.form.delivery_scope = "";
+        this.form.town_code = "";
+      },
+      async selectDeliveryScope(deliveryScope) {
+        this.form.delivery_scope = deliveryScope;
+        if (deliveryScope !== "town_delivery") {
+          this.form.town_code = "";
+          return;
+        }
+        if (!this.townOptionsLoaded && !this.townOptionsLoading) {
+          await this.loadTownOptions();
+        }
+      },
+      handleTownChange(event) {
+        const selectedTown = this.townOptions[Number(event.detail.value)];
+        this.form.town_code = selectedTown ? selectedTown.value : "";
+      },
+      async loadTownOptions() {
+        this.townOptionsLoading = true;
+        try {
+          const res = await getTownServiceAreas();
+          const townOptions = Array.isArray(res.data) ? res.data.map((item) => ({
+            value: item.area_code,
+            label: item.area_name
+          })) : [];
+          this.townOptions = townOptions;
+          this.townOptionsLoaded = townOptions.length > 0;
+          this.townOptionsLoadFailed = false;
+          if (this.form.town_code && !townOptions.some((item) => item.value === this.form.town_code)) {
+            this.form.town_code = "";
+          }
+          if (!townOptions.length) {
+            uni.showToast({ title: "暂无可选乡镇", icon: "none" });
+          }
+        } catch (e) {
+          this.townOptions = [];
+          this.townOptionsLoaded = false;
+          this.townOptionsLoadFailed = true;
+          formatAppLog("error", "at pages/login/index.vue:237", "乡镇列表加载失败:", e);
+        } finally {
+          this.townOptionsLoading = false;
+        }
       },
       validateForm() {
-        const { phone, password, confirmPassword, nickname } = this.form;
+        const { phone, password, confirmPassword, delivery_scope, town_code } = this.form;
         if (!phone || phone.length !== 11) {
           uni.showToast({ title: "请输入正确的手机号", icon: "none" });
           return false;
@@ -167,6 +298,14 @@ if (uni.restoreGlobal) {
           return false;
         }
         if (this.isRegisterMode) {
+          if (!delivery_scope) {
+            uni.showToast({ title: "请选择配送业务线", icon: "none" });
+            return false;
+          }
+          if (delivery_scope === "town_delivery" && !town_code) {
+            uni.showToast({ title: "请选择所属乡镇", icon: "none" });
+            return false;
+          }
           if (password !== confirmPassword) {
             uni.showToast({ title: "两次密码不一致", icon: "none" });
             return false;
@@ -185,17 +324,35 @@ if (uni.restoreGlobal) {
             await this.handleLogin();
           }
         } catch (e) {
-          formatAppLog("error", "at pages/login/index.vue:120", "操作失败:", e);
+          formatAppLog("error", "at pages/login/index.vue:288", "操作失败:", e);
         } finally {
           this.loading = false;
         }
       },
       async handleLogin() {
         const { phone, password } = this.form;
-        const res = await login({ phone, password });
+        let res;
+        try {
+          res = await login({ phone, password });
+        } catch (e) {
+          const auditPendingMessage = this.getAuditPendingLoginMessage(e);
+          if (auditPendingMessage) {
+            setTimeout(() => {
+              uni.showToast({
+                title: auditPendingMessage,
+                icon: "none",
+                duration: 2500
+              });
+            }, 100);
+          }
+          throw e;
+        }
         if (res.data) {
           setToken(res.data.token);
           setUserInfo(res.data.user);
+          if (res.data.user.delivery_scope === "county_delivery" && res.data.user.rider_kind === "rider") {
+            setRiderStatus(1);
+          }
           if (res.data.user.role !== "rider") {
             uni.showToast({
               title: "该账号不是骑手账号",
@@ -214,27 +371,29 @@ if (uni.restoreGlobal) {
         }
       },
       async handleRegister() {
-        const { phone, password, nickname } = this.form;
+        const { phone, password, nickname, delivery_scope, town_code } = this.form;
         const registerData = {
           phone,
           password,
           nickname: nickname || `骑手${phone.slice(-4)}`,
-          role: "rider",
-          rider_kind: "county"
+          delivery_scope
         };
-        await register(registerData);
-        uni.showToast({
-          title: "注册成功，请登录",
-          icon: "success",
-          duration: 2e3
+        if (delivery_scope === "town_delivery") {
+          registerData.town_code = town_code;
+        }
+        await registerRider(registerData);
+        this.setMode(false);
+        this.resetRegisterForm();
+        uni.showModal({
+          title: "申请已提交",
+          content: "注册申请已提交，请等待平台审核。\n审核通过后才可登录接单。",
+          showCancel: false,
+          confirmText: "我知道了"
         });
-        this.isRegisterMode = false;
-        this.form.password = "";
-        this.form.confirmPassword = "";
       }
     }
   };
-  function _sfc_render$a(_ctx, _cache, $props, $setup, $data, $options) {
+  function _sfc_render$c(_ctx, _cache, $props, $setup, $data, $options) {
     return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
       vue.createElementVNode("view", { class: "header" }, [
         vue.createElementVNode(
@@ -321,11 +480,65 @@ if (uni.restoreGlobal) {
             [vue.vModelText, $data.form.nickname]
           ])
         ])) : vue.createCommentVNode("v-if", true),
+        $data.isRegisterMode ? (vue.openBlock(), vue.createElementBlock("view", {
+          key: 2,
+          class: "form-item"
+        }, [
+          vue.createElementVNode("text", { class: "form-label" }, "配送业务线"),
+          vue.createElementVNode("view", { class: "scope-options" }, [
+            (vue.openBlock(true), vue.createElementBlock(
+              vue.Fragment,
+              null,
+              vue.renderList($data.deliveryScopeOptions, (item) => {
+                return vue.openBlock(), vue.createElementBlock("view", {
+                  key: item.value,
+                  class: vue.normalizeClass(["scope-option", { active: $data.form.delivery_scope === item.value }]),
+                  onClick: ($event) => $options.selectDeliveryScope(item.value)
+                }, [
+                  vue.createElementVNode(
+                    "text",
+                    {
+                      class: vue.normalizeClass(["scope-option-text", { active: $data.form.delivery_scope === item.value }])
+                    },
+                    vue.toDisplayString(item.label),
+                    3
+                    /* TEXT, CLASS */
+                  )
+                ], 10, ["onClick"]);
+              }),
+              128
+              /* KEYED_FRAGMENT */
+            ))
+          ])
+        ])) : vue.createCommentVNode("v-if", true),
+        $data.isRegisterMode && $options.isTownDelivery ? (vue.openBlock(), vue.createElementBlock("view", {
+          key: 3,
+          class: "form-item"
+        }, [
+          vue.createElementVNode("text", { class: "form-label" }, "所属乡镇"),
+          vue.createElementVNode("picker", {
+            mode: "selector",
+            range: $data.townOptions,
+            "range-key": "label",
+            value: $options.selectedTownIndex,
+            onChange: _cache[4] || (_cache[4] = (...args) => $options.handleTownChange && $options.handleTownChange(...args))
+          }, [
+            vue.createElementVNode(
+              "view",
+              {
+                class: vue.normalizeClass(["picker-input", { placeholder: !$options.selectedTownLabel }])
+              },
+              vue.toDisplayString($options.townPickerText),
+              3
+              /* TEXT, CLASS */
+            )
+          ], 40, ["range", "value"])
+        ])) : vue.createCommentVNode("v-if", true),
         vue.createElementVNode(
           "button",
           {
             class: "submit-btn",
-            onClick: _cache[4] || (_cache[4] = (...args) => $options.handleSubmit && $options.handleSubmit(...args))
+            onClick: _cache[5] || (_cache[5] = (...args) => $options.handleSubmit && $options.handleSubmit(...args))
           },
           vue.toDisplayString($data.isRegisterMode ? "注册" : "登录"),
           1
@@ -343,7 +556,7 @@ if (uni.restoreGlobal) {
             "text",
             {
               class: "tip-link",
-              onClick: _cache[5] || (_cache[5] = (...args) => $options.toggleMode && $options.toggleMode(...args))
+              onClick: _cache[6] || (_cache[6] = (...args) => $options.toggleMode && $options.toggleMode(...args))
             },
             vue.toDisplayString($data.isRegisterMode ? "立即登录" : "立即注册"),
             1
@@ -353,10 +566,7 @@ if (uni.restoreGlobal) {
       ])
     ]);
   }
-  const PagesLoginIndex = /* @__PURE__ */ _export_sfc(_sfc_main$b, [["render", _sfc_render$a], ["__scopeId", "data-v-d08ef7d4"], ["__file", "E:/固始县外卖骑手端/pages/login/index.vue"]]);
-  function getAvailableOrders(params = {}) {
-    return get("/order/available", params);
-  }
+  const PagesLoginIndex = /* @__PURE__ */ _export_sfc(_sfc_main$d, [["render", _sfc_render$c], ["__scopeId", "data-v-d08ef7d4"], ["__file", "E:/固始县外卖骑手端/pages/login/index.vue"]]);
   function getRiderOrders(params = {}) {
     return get("/order/rider-orders", params);
   }
@@ -366,8 +576,26 @@ if (uni.restoreGlobal) {
   function confirmDelivery(orderId) {
     return post("/order/confirm-delivery", { order_id: orderId });
   }
+  function riderPickup(orderId) {
+    return post("/rider/order/pickup", { order_id: orderId });
+  }
+  function confirmDeliverySpecial(orderId) {
+    return post("/order/confirm-delivery-special", { order_id: orderId });
+  }
+  function updateRiderStatus(status) {
+    return post("/order/rider-status", { status });
+  }
   function getErrandList(params = {}) {
     return get("/order/errand/list", params);
+  }
+  function getTownErrandConversations(params = {}) {
+    return get("/town-errand/conversations", params);
+  }
+  function getTownErrandMessages(conversationId, params = {}) {
+    return get(`/town-errand/conversations/${conversationId}/messages`, params);
+  }
+  function sendTownErrandMessage(conversationId, content) {
+    return post(`/town-errand/conversations/${conversationId}/messages`, { content });
   }
   function getUserInfo() {
     return get("/auth/me");
@@ -378,1039 +606,6 @@ if (uni.restoreGlobal) {
   function reportLocation(latitude, longitude) {
     return post("/rider/location/report", { latitude, longitude });
   }
-  function formatTime(time, format = "YYYY-MM-DD HH:mm") {
-    if (!time)
-      return "";
-    const date = new Date(time);
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    const hours = String(date.getHours()).padStart(2, "0");
-    const minutes = String(date.getMinutes()).padStart(2, "0");
-    const seconds = String(date.getSeconds()).padStart(2, "0");
-    return format.replace("YYYY", year).replace("MM", month).replace("DD", day).replace("HH", hours).replace("mm", minutes).replace("ss", seconds);
-  }
-  const _sfc_main$a = {
-    data() {
-      return {
-        isOnline: true,
-        nickname: "骑手",
-        allOrders: [],
-        errandOrders: [],
-        stats: {
-          todayDone: 0,
-          delivering: 0,
-          todayEarning: "0.00",
-          pending: 0,
-          errandPending: 0
-        },
-        // 确认弹窗相关
-        showConfirmDialog: false,
-        countdown: 5,
-        countdownTimer: null
-      };
-    },
-    computed: {
-      pendingOrders() {
-        return this.allOrders.filter((o) => o.status === 5);
-      }
-    },
-    onLoad() {
-      const savedStatus = getRiderStatus();
-      this.isOnline = savedStatus === 1;
-    },
-    onShow() {
-      this.loadData();
-    },
-    methods: {
-      formatTime,
-      async loadData() {
-        await Promise.all([
-          this.loadUserInfo(),
-          this.loadOrders(),
-          this.loadErrands()
-        ]);
-        this.calculateStats();
-      },
-      async loadUserInfo() {
-        try {
-          const res = await getUserInfo();
-          if (res.data) {
-            this.nickname = res.data.nickname || "骑手";
-          }
-        } catch (e) {
-          formatAppLog("error", "at pages/index/index.vue:223", "加载用户信息失败", e);
-        }
-      },
-      async loadOrders() {
-        try {
-          const res = await getAvailableOrders();
-          this.allOrders = res.data || [];
-        } catch (e) {
-          formatAppLog("error", "at pages/index/index.vue:232", "加载订单失败", e);
-          this.allOrders = [];
-        }
-      },
-      async loadErrands() {
-        try {
-          const res = await getErrandList({ status: 1 });
-          this.errandOrders = res.data || [];
-        } catch (e) {
-          formatAppLog("error", "at pages/index/index.vue:242", "加载跑腿订单失败", e);
-          this.errandOrders = [];
-        }
-      },
-      calculateStats() {
-        const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-        const todayDoneList = this.allOrders.filter(
-          (o) => o.status === 6 && o.delivered_at && o.delivered_at.startsWith(today)
-        );
-        const deliveringList = this.allOrders.filter((o) => o.status === 5);
-        this.stats.todayDone = todayDoneList.length;
-        this.stats.delivering = deliveringList.length;
-        this.stats.todayEarning = todayDoneList.reduce((sum, o) => {
-          return sum + (parseFloat(o.rider_fee) || 0);
-        }, 0).toFixed(2);
-        this.stats.pending = this.pendingOrders.length;
-        this.stats.errandPending = this.errandOrders.length;
-      },
-      toggleOnline() {
-        if (this.isOnline) {
-          this.showConfirmDialog = true;
-          this.countdown = 5;
-          this.countdownTimer = setInterval(() => {
-            this.countdown--;
-            if (this.countdown <= 0) {
-              clearInterval(this.countdownTimer);
-            }
-          }, 1e3);
-        } else {
-          this.isOnline = true;
-          const newStatus = 1;
-          setRiderStatus(newStatus);
-          uni.showToast({
-            title: "已开始接单",
-            icon: "none"
-          });
-        }
-      },
-      // 确认下班
-      confirmOffWork() {
-        if (this.countdown > 0) {
-          uni.showToast({
-            title: "请等待倒计时结束",
-            icon: "none"
-          });
-          return;
-        }
-        const newStatus = 0;
-        setRiderStatus(newStatus);
-        this.isOnline = false;
-        this.showConfirmDialog = false;
-        uni.showToast({
-          title: "已暂停接单",
-          icon: "none"
-        });
-      },
-      // 取消下班
-      cancelOffWork() {
-        this.showConfirmDialog = false;
-        clearInterval(this.countdownTimer);
-      },
-      getBriefAddress(order) {
-        try {
-          const addr = typeof order.delivery_address === "string" ? JSON.parse(order.delivery_address) : order.delivery_address;
-          return addr.district + addr.street || "未知地址";
-        } catch (e) {
-          return "未知地址";
-        }
-      },
-      goOrders() {
-        uni.switchTab({ url: "/pages/orders/index" });
-      },
-      goErrands() {
-        uni.navigateTo({ url: "/pages/errands/index" });
-      },
-      goTodayOrders() {
-        uni.switchTab({ url: "/pages/orders/index" });
-      },
-      goEarnings() {
-        uni.navigateTo({ url: "/pages/earnings/index" });
-      },
-      goWeekStats() {
-        uni.navigateTo({ url: "/pages/earnings/index?period=week" });
-      },
-      goMonthStats() {
-        uni.navigateTo({ url: "/pages/earnings/index?period=month" });
-      },
-      goProfile() {
-        uni.switchTab({ url: "/pages/profile/index" });
-      },
-      goSettings() {
-        uni.showToast({ title: "设置功能开发中", icon: "none" });
-      },
-      goHelp() {
-        uni.showToast({ title: "帮助中心开发中", icon: "none" });
-      },
-      goOrderDetail(order) {
-        const type = order.type === "errand" ? "errand" : "order";
-        uni.navigateTo({
-          url: `/pages/${type}/detail?id=${order.id}`
-        });
-      }
-    }
-  };
-  function _sfc_render$9(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      vue.createElementVNode("view", { class: "header" }, [
-        vue.createElementVNode("view", { class: "header-left" }, [
-          vue.createElementVNode("text", { class: "header-emoji" }, "🛵"),
-          vue.createElementVNode("view", { class: "header-info" }, [
-            vue.createElementVNode("text", { class: "header-title" }, "骑手工作台"),
-            vue.createElementVNode(
-              "text",
-              { class: "header-sub" },
-              vue.toDisplayString($data.nickname) + "，今天也辛苦了",
-              1
-              /* TEXT */
-            )
-          ])
-        ]),
-        vue.createElementVNode("view", {
-          class: "status-switch",
-          onClick: _cache[0] || (_cache[0] = (...args) => $options.toggleOnline && $options.toggleOnline(...args))
-        }, [
-          vue.createElementVNode(
-            "text",
-            {
-              class: vue.normalizeClass(["switch-text", { "highlight-online": $data.isOnline }])
-            },
-            vue.toDisplayString($data.isOnline ? "接单中" : "已休息"),
-            3
-            /* TEXT, CLASS */
-          ),
-          vue.createElementVNode(
-            "view",
-            {
-              class: vue.normalizeClass(["switch-dot", { online: $data.isOnline }])
-            },
-            null,
-            2
-            /* CLASS */
-          )
-        ])
-      ]),
-      vue.createElementVNode("view", { class: "stats-grid" }, [
-        vue.createElementVNode("view", { class: "stat-card" }, [
-          vue.createElementVNode(
-            "text",
-            { class: "stat-num" },
-            vue.toDisplayString($data.stats.todayDone),
-            1
-            /* TEXT */
-          ),
-          vue.createElementVNode("text", { class: "stat-label" }, "今日完成")
-        ]),
-        vue.createElementVNode("view", { class: "stat-card" }, [
-          vue.createElementVNode(
-            "text",
-            { class: "stat-num" },
-            vue.toDisplayString($data.stats.delivering),
-            1
-            /* TEXT */
-          ),
-          vue.createElementVNode("text", { class: "stat-label" }, "配送中")
-        ]),
-        vue.createElementVNode("view", { class: "stat-card" }, [
-          vue.createElementVNode(
-            "text",
-            { class: "stat-num" },
-            "¥" + vue.toDisplayString($data.stats.todayEarning),
-            1
-            /* TEXT */
-          ),
-          vue.createElementVNode("text", { class: "stat-label" }, "今日收入")
-        ])
-      ]),
-      vue.createElementVNode("view", { class: "menu-section" }, [
-        vue.createElementVNode("view", { class: "section-title-small" }, "📦 订单管理"),
-        vue.createElementVNode("view", { class: "menu-grid" }, [
-          vue.createElementVNode("view", {
-            class: "menu-item",
-            onClick: _cache[1] || (_cache[1] = (...args) => $options.goOrders && $options.goOrders(...args))
-          }, [
-            vue.createElementVNode("view", {
-              class: "menu-icon-wrap",
-              style: { "background-color": "#E6F7FF" }
-            }, [
-              vue.createElementVNode("text", { class: "menu-icon" }, "📋")
-            ]),
-            vue.createElementVNode("text", { class: "menu-text" }, "外卖订单"),
-            $data.stats.pending > 0 ? (vue.openBlock(), vue.createElementBlock(
-              "text",
-              {
-                key: 0,
-                class: "menu-badge"
-              },
-              vue.toDisplayString($data.stats.pending),
-              1
-              /* TEXT */
-            )) : vue.createCommentVNode("v-if", true)
-          ]),
-          vue.createElementVNode("view", {
-            class: "menu-item",
-            onClick: _cache[2] || (_cache[2] = (...args) => $options.goErrands && $options.goErrands(...args))
-          }, [
-            vue.createElementVNode("view", {
-              class: "menu-icon-wrap",
-              style: { "background-color": "#FFF7E6" }
-            }, [
-              vue.createElementVNode("text", { class: "menu-icon" }, "🏃")
-            ]),
-            vue.createElementVNode("text", { class: "menu-text" }, "跑腿订单"),
-            $data.stats.errandPending > 0 ? (vue.openBlock(), vue.createElementBlock(
-              "text",
-              {
-                key: 0,
-                class: "menu-badge"
-              },
-              vue.toDisplayString($data.stats.errandPending),
-              1
-              /* TEXT */
-            )) : vue.createCommentVNode("v-if", true)
-          ]),
-          vue.createElementVNode("view", {
-            class: "menu-item",
-            onClick: _cache[3] || (_cache[3] = (...args) => $options.goTodayOrders && $options.goTodayOrders(...args))
-          }, [
-            vue.createElementVNode("view", {
-              class: "menu-icon-wrap",
-              style: { "background-color": "#F0F5FF" }
-            }, [
-              vue.createElementVNode("text", { class: "menu-icon" }, "📊")
-            ]),
-            vue.createElementVNode("text", { class: "menu-text" }, "今日订单"),
-            $data.stats.todayDone > 0 ? (vue.openBlock(), vue.createElementBlock(
-              "text",
-              {
-                key: 0,
-                class: "menu-badge"
-              },
-              vue.toDisplayString($data.stats.todayDone),
-              1
-              /* TEXT */
-            )) : vue.createCommentVNode("v-if", true)
-          ])
-        ])
-      ]),
-      vue.createElementVNode("view", { class: "menu-section" }, [
-        vue.createElementVNode("view", { class: "section-title-small" }, "💰 收入统计"),
-        vue.createElementVNode("view", { class: "menu-grid" }, [
-          vue.createElementVNode("view", {
-            class: "menu-item",
-            onClick: _cache[4] || (_cache[4] = (...args) => $options.goEarnings && $options.goEarnings(...args))
-          }, [
-            vue.createElementVNode("view", {
-              class: "menu-icon-wrap",
-              style: { "background-color": "#F6FFED" }
-            }, [
-              vue.createElementVNode("text", { class: "menu-icon" }, "💰")
-            ]),
-            vue.createElementVNode("text", { class: "menu-text" }, "收入明细")
-          ]),
-          vue.createElementVNode("view", {
-            class: "menu-item",
-            onClick: _cache[5] || (_cache[5] = (...args) => $options.goWeekStats && $options.goWeekStats(...args))
-          }, [
-            vue.createElementVNode("view", {
-              class: "menu-icon-wrap",
-              style: { "background-color": "#FFF0F6" }
-            }, [
-              vue.createElementVNode("text", { class: "menu-icon" }, "📈")
-            ]),
-            vue.createElementVNode("text", { class: "menu-text" }, "本周统计")
-          ]),
-          vue.createElementVNode("view", {
-            class: "menu-item",
-            onClick: _cache[6] || (_cache[6] = (...args) => $options.goMonthStats && $options.goMonthStats(...args))
-          }, [
-            vue.createElementVNode("view", {
-              class: "menu-icon-wrap",
-              style: { "background-color": "#FCF0FF" }
-            }, [
-              vue.createElementVNode("text", { class: "menu-icon" }, "📅")
-            ]),
-            vue.createElementVNode("text", { class: "menu-text" }, "本月统计")
-          ])
-        ])
-      ]),
-      vue.createElementVNode("view", { class: "menu-section" }, [
-        vue.createElementVNode("view", { class: "section-title-small" }, "🛠️ 我的服务"),
-        vue.createElementVNode("view", { class: "menu-grid" }, [
-          vue.createElementVNode("view", {
-            class: "menu-item",
-            onClick: _cache[7] || (_cache[7] = (...args) => $options.goProfile && $options.goProfile(...args))
-          }, [
-            vue.createElementVNode("view", {
-              class: "menu-icon-wrap",
-              style: { "background-color": "#E6FFFB" }
-            }, [
-              vue.createElementVNode("text", { class: "menu-icon" }, "👤")
-            ]),
-            vue.createElementVNode("text", { class: "menu-text" }, "个人中心")
-          ]),
-          vue.createElementVNode("view", {
-            class: "menu-item",
-            onClick: _cache[8] || (_cache[8] = (...args) => $options.goSettings && $options.goSettings(...args))
-          }, [
-            vue.createElementVNode("view", {
-              class: "menu-icon-wrap",
-              style: { "background-color": "#FFF7E6" }
-            }, [
-              vue.createElementVNode("text", { class: "menu-icon" }, "⚙️")
-            ]),
-            vue.createElementVNode("text", { class: "menu-text" }, "设置")
-          ]),
-          vue.createElementVNode("view", {
-            class: "menu-item",
-            onClick: _cache[9] || (_cache[9] = (...args) => $options.goHelp && $options.goHelp(...args))
-          }, [
-            vue.createElementVNode("view", {
-              class: "menu-icon-wrap",
-              style: { "background-color": "#F0F5FF" }
-            }, [
-              vue.createElementVNode("text", { class: "menu-icon" }, "❓")
-            ]),
-            vue.createElementVNode("text", { class: "menu-text" }, "帮助中心")
-          ])
-        ])
-      ]),
-      $options.pendingOrders.length > 0 ? (vue.openBlock(), vue.createElementBlock("view", {
-        key: 0,
-        class: "section"
-      }, [
-        vue.createElementVNode("view", { class: "section-header" }, [
-          vue.createElementVNode("text", { class: "section-title" }, "� 配送中订单"),
-          vue.createElementVNode("text", {
-            class: "section-action",
-            onClick: _cache[10] || (_cache[10] = (...args) => $options.goOrders && $options.goOrders(...args))
-          }, "查看全部")
-        ]),
-        (vue.openBlock(true), vue.createElementBlock(
-          vue.Fragment,
-          null,
-          vue.renderList($options.pendingOrders.slice(0, 3), (order) => {
-            return vue.openBlock(), vue.createElementBlock("view", {
-              class: "order-card",
-              key: order.id,
-              onClick: ($event) => $options.goOrderDetail(order)
-            }, [
-              vue.createElementVNode("view", { class: "order-top" }, [
-                vue.createElementVNode(
-                  "text",
-                  { class: "order-type" },
-                  vue.toDisplayString(order.type === "takeout" ? "外卖" : "跑腿"),
-                  1
-                  /* TEXT */
-                ),
-                vue.createElementVNode(
-                  "text",
-                  { class: "order-price" },
-                  "¥" + vue.toDisplayString(order.rider_fee || 0),
-                  1
-                  /* TEXT */
-                )
-              ]),
-              vue.createElementVNode("view", { class: "order-addr" }, [
-                vue.createElementVNode("text", { class: "addr-icon" }, "📍"),
-                vue.createElementVNode(
-                  "text",
-                  { class: "addr-text" },
-                  vue.toDisplayString($options.getBriefAddress(order)),
-                  1
-                  /* TEXT */
-                )
-              ]),
-              vue.createElementVNode("view", { class: "order-bottom" }, [
-                vue.createElementVNode(
-                  "text",
-                  { class: "order-time" },
-                  vue.toDisplayString($options.formatTime(order.created_at)),
-                  1
-                  /* TEXT */
-                )
-              ])
-            ], 8, ["onClick"]);
-          }),
-          128
-          /* KEYED_FRAGMENT */
-        ))
-      ])) : vue.createCommentVNode("v-if", true),
-      $options.pendingOrders.length === 0 && $data.isOnline ? (vue.openBlock(), vue.createElementBlock("view", {
-        key: 1,
-        class: "empty-state"
-      }, [
-        vue.createElementVNode("text", { class: "empty-icon" }, "☕"),
-        vue.createElementVNode("text", { class: "empty-text" }, "暂无可接订单"),
-        vue.createElementVNode("text", { class: "empty-tip" }, "休息一下，新订单快来了~")
-      ])) : vue.createCommentVNode("v-if", true),
-      $data.showConfirmDialog ? (vue.openBlock(), vue.createElementBlock("view", {
-        key: 2,
-        class: "confirm-dialog"
-      }, [
-        vue.createElementVNode("view", {
-          class: "dialog-mask",
-          onClick: _cache[11] || (_cache[11] = (...args) => $options.cancelOffWork && $options.cancelOffWork(...args))
-        }),
-        vue.createElementVNode("view", { class: "dialog-content" }, [
-          vue.createElementVNode("view", { class: "dialog-title" }, "提示"),
-          vue.createElementVNode("view", { class: "dialog-message" }, "确定现在下班吗？"),
-          vue.createElementVNode("view", { class: "dialog-buttons" }, [
-            vue.createElementVNode(
-              "button",
-              {
-                class: vue.normalizeClass(["dialog-btn confirm-btn", { disabled: $data.countdown > 0 }]),
-                onClick: _cache[12] || (_cache[12] = (...args) => $options.confirmOffWork && $options.confirmOffWork(...args))
-              },
-              vue.toDisplayString($data.countdown > 0 ? `确定 (${$data.countdown}s)` : "确定"),
-              3
-              /* TEXT, CLASS */
-            ),
-            vue.createElementVNode("button", {
-              class: "dialog-btn cancel-btn",
-              onClick: _cache[13] || (_cache[13] = (...args) => $options.cancelOffWork && $options.cancelOffWork(...args))
-            }, " 取消 ")
-          ])
-        ])
-      ])) : vue.createCommentVNode("v-if", true)
-    ]);
-  }
-  const PagesIndexIndex = /* @__PURE__ */ _export_sfc(_sfc_main$a, [["render", _sfc_render$9], ["__scopeId", "data-v-1cf27b2a"], ["__file", "E:/固始县外卖骑手端/pages/index/index.vue"]]);
-  const _sfc_main$9 = {
-    data() {
-      return {
-        currentStatus: "",
-        statusTabs: [
-          { key: "", label: "全部", count: 0 },
-          { key: "1", label: "待接单", count: 0 },
-          { key: "4", label: "备货完成", count: 0 },
-          { key: "5", label: "配送中", count: 0 },
-          { key: "6", label: "已完成", count: 0 }
-        ],
-        orderList: [],
-        page: 1,
-        pageSize: 10,
-        refreshing: false,
-        loadingMore: false
-      };
-    },
-    onLoad() {
-      this.loadOrderList();
-    },
-    onShow() {
-      this.loadOrderList();
-    },
-    methods: {
-      formatTime,
-      getStatusText(status) {
-        var _a;
-        return ((_a = ORDER_STATUS[status]) == null ? void 0 : _a.text) || "未知";
-      },
-      getStatusColor(status) {
-        var _a;
-        return ((_a = ORDER_STATUS[status]) == null ? void 0 : _a.color) || "#999";
-      },
-      getFullAddress(order) {
-        try {
-          const addr = typeof order.delivery_address === "string" ? JSON.parse(order.delivery_address) : order.delivery_address;
-          return addr.province + addr.city + addr.district + addr.street + addr.detail;
-        } catch (e) {
-          return "未知地址";
-        }
-      },
-      getBriefAddress(order) {
-        try {
-          const addr = typeof order.delivery_address === "string" ? JSON.parse(order.delivery_address) : order.delivery_address;
-          return (addr.district || "") + (addr.street || "") || "未知地址";
-        } catch (e) {
-          return "未知地址";
-        }
-      },
-      switchStatus(status) {
-        this.currentStatus = status;
-        this.page = 1;
-        this.loadOrderList();
-      },
-      async loadOrderList() {
-        try {
-          const params = {};
-          if (this.currentStatus !== "") {
-            params.status = this.currentStatus;
-          }
-          const res = await getRiderOrders(params);
-          const list = res.data || [];
-          this.orderList = list;
-          this.updateStatusCounts();
-        } catch (e) {
-          formatAppLog("error", "at pages/orders/index.vue:185", "加载订单失败", e);
-          this.orderList = [];
-        }
-      },
-      updateStatusCounts() {
-        const counter = {};
-        this.orderList.forEach((order) => {
-          counter[order.status] = (counter[order.status] || 0) + 1;
-        });
-        this.statusTabs = this.statusTabs.map((tab) => ({
-          ...tab,
-          count: tab.key === "" ? this.orderList.length : counter[tab.key] || 0
-        }));
-      },
-      async onRefresh() {
-        this.refreshing = true;
-        this.page = 1;
-        await this.loadOrderList();
-        this.refreshing = false;
-      },
-      loadMore() {
-        if (this.loadingMore)
-          return;
-        this.loadingMore = true;
-        this.page++;
-        this.loadingMore = false;
-      },
-      async confirmDelivery(order) {
-        uni.showModal({
-          title: "确认送达",
-          content: "请确认已将餐品送达顾客手中",
-          confirmText: "确认送达",
-          success: async (res) => {
-            if (res.confirm) {
-              try {
-                await confirmDelivery({ order_id: order.id });
-                uni.showToast({ title: "送达成功", icon: "success" });
-                this.loadOrderList();
-              } catch (e) {
-                formatAppLog("error", "at pages/orders/index.vue:229", "确认送达失败", e);
-              }
-            }
-          }
-        });
-      },
-      callMerchant(phone) {
-        if (phone) {
-          uni.makePhoneCall({ phoneNumber: phone });
-        }
-      },
-      goDetail(order) {
-        uni.navigateTo({
-          url: `/pages/orders/detail?id=${order.id}`
-        });
-      }
-    }
-  };
-  function _sfc_render$8(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      vue.createElementVNode("view", { class: "status-tabs" }, [
-        vue.createElementVNode("scroll-view", {
-          "scroll-x": "",
-          class: "tabs-scroll"
-        }, [
-          (vue.openBlock(true), vue.createElementBlock(
-            vue.Fragment,
-            null,
-            vue.renderList($data.statusTabs, (item) => {
-              return vue.openBlock(), vue.createElementBlock("view", {
-                key: item.key,
-                class: vue.normalizeClass(["tab-item", { active: $data.currentStatus === item.key }]),
-                onClick: ($event) => $options.switchStatus(item.key)
-              }, vue.toDisplayString(item.label), 11, ["onClick"]);
-            }),
-            128
-            /* KEYED_FRAGMENT */
-          ))
-        ])
-      ]),
-      vue.createElementVNode("scroll-view", {
-        "scroll-y": "",
-        class: "order-scroll",
-        onScrolltolower: _cache[0] || (_cache[0] = (...args) => $options.loadMore && $options.loadMore(...args)),
-        "refresher-enabled": true,
-        "refresher-triggered": $data.refreshing,
-        onRefresherrefresh: _cache[1] || (_cache[1] = (...args) => $options.onRefresh && $options.onRefresh(...args))
-      }, [
-        $data.orderList.length ? (vue.openBlock(), vue.createElementBlock("view", {
-          key: 0,
-          class: "order-list"
-        }, [
-          (vue.openBlock(true), vue.createElementBlock(
-            vue.Fragment,
-            null,
-            vue.renderList($data.orderList, (order) => {
-              var _a;
-              return vue.openBlock(), vue.createElementBlock("view", {
-                key: order.id,
-                class: vue.normalizeClass(["order-card", { "highlight-card": order.status === 1 || order.status === 4 }]),
-                onClick: ($event) => $options.goDetail(order)
-              }, [
-                vue.createElementVNode("view", { class: "order-header" }, [
-                  vue.createElementVNode("view", { class: "header-left" }, [
-                    vue.createElementVNode("view", { class: "order-info-row" }, [
-                      vue.createElementVNode(
-                        "text",
-                        { class: "order-no" },
-                        vue.toDisplayString(order.order_no),
-                        1
-                        /* TEXT */
-                      ),
-                      vue.createElementVNode(
-                        "view",
-                        {
-                          class: "status-tag",
-                          style: vue.normalizeStyle({ backgroundColor: $options.getStatusColor(order.status) })
-                        },
-                        vue.toDisplayString($options.getStatusText(order.status)),
-                        5
-                        /* TEXT, STYLE */
-                      )
-                    ]),
-                    vue.createElementVNode(
-                      "text",
-                      { class: "order-time" },
-                      vue.toDisplayString($options.formatTime(order.created_at)),
-                      1
-                      /* TEXT */
-                    )
-                  ])
-                ]),
-                vue.createElementVNode("view", { class: "delivery-fee-section" }, [
-                  vue.createElementVNode("text", { class: "fee-label" }, "💰 配送费"),
-                  vue.createElementVNode(
-                    "text",
-                    { class: "fee-num" },
-                    "¥" + vue.toDisplayString(order.rider_fee || 0),
-                    1
-                    /* TEXT */
-                  )
-                ]),
-                vue.createElementVNode("view", { class: "simple-info" }, [
-                  vue.createElementVNode("text", { class: "info-icon" }, "🏪"),
-                  vue.createElementVNode(
-                    "text",
-                    { class: "info-text" },
-                    vue.toDisplayString(((_a = order.merchant) == null ? void 0 : _a.name) || "未知商家"),
-                    1
-                    /* TEXT */
-                  ),
-                  vue.createElementVNode("text", {
-                    class: "call-btn",
-                    onClick: vue.withModifiers(($event) => {
-                      var _a2;
-                      return $options.callMerchant((_a2 = order.merchant) == null ? void 0 : _a2.phone);
-                    }, ["stop"])
-                  }, "📞 打电话", 8, ["onClick"])
-                ]),
-                vue.createElementVNode("view", { class: "simple-info" }, [
-                  vue.createElementVNode("text", { class: "info-icon" }, "📍"),
-                  vue.createElementVNode(
-                    "text",
-                    { class: "info-text address-text" },
-                    vue.toDisplayString($options.getBriefAddress(order)),
-                    1
-                    /* TEXT */
-                  )
-                ]),
-                vue.createElementVNode("view", { class: "order-actions" }, [
-                  order.status === 5 ? (vue.openBlock(), vue.createElementBlock("button", {
-                    key: 0,
-                    class: "btn btn-success",
-                    onClick: vue.withModifiers(($event) => $options.confirmDelivery(order), ["stop"])
-                  }, " 确认送达 ", 8, ["onClick"])) : vue.createCommentVNode("v-if", true),
-                  vue.createElementVNode("button", {
-                    class: "btn btn-default",
-                    onClick: vue.withModifiers(($event) => $options.goDetail(order), ["stop"])
-                  }, " 查看详情 ", 8, ["onClick"])
-                ])
-              ], 10, ["onClick"]);
-            }),
-            128
-            /* KEYED_FRAGMENT */
-          ))
-        ])) : (vue.openBlock(), vue.createElementBlock("view", {
-          key: 1,
-          class: "empty-state"
-        }, [
-          vue.createElementVNode("text", { class: "empty-icon" }, "📋"),
-          vue.createElementVNode("text", { class: "empty-text" }, "暂无订单"),
-          vue.createElementVNode(
-            "text",
-            { class: "empty-tip" },
-            vue.toDisplayString($data.currentStatus === "" ? "暂无可接订单" : "该状态下暂无订单"),
-            1
-            /* TEXT */
-          )
-        ])),
-        $data.loadingMore ? (vue.openBlock(), vue.createElementBlock("view", {
-          key: 2,
-          class: "load-more"
-        }, [
-          vue.createElementVNode("text", null, "加载中...")
-        ])) : vue.createCommentVNode("v-if", true)
-      ], 40, ["refresher-triggered"])
-    ]);
-  }
-  const PagesOrdersIndex = /* @__PURE__ */ _export_sfc(_sfc_main$9, [["render", _sfc_render$8], ["__scopeId", "data-v-e1e6274e"], ["__file", "E:/固始县外卖骑手端/pages/orders/index.vue"]]);
-  const _sfc_main$8 = {
-    data() {
-      return {
-        orderId: null,
-        order: {}
-      };
-    },
-    computed: {
-      canDeliver() {
-        return this.order.status === 5;
-      }
-    },
-    onLoad(options) {
-      this.orderId = options.id;
-      this.loadOrderDetail();
-    },
-    methods: {
-      formatTime,
-      getStatusText(status) {
-        var _a;
-        return ((_a = ORDER_STATUS[status]) == null ? void 0 : _a.text) || "未知";
-      },
-      getStatusColor(status) {
-        var _a;
-        return ((_a = ORDER_STATUS[status]) == null ? void 0 : _a.color) || "#999";
-      },
-      getFullAddress(order) {
-        try {
-          const addr = typeof order.delivery_address === "string" ? JSON.parse(order.delivery_address) : order.delivery_address;
-          return addr.province + addr.city + addr.district + addr.street + addr.detail;
-        } catch (e) {
-          return "未知地址";
-        }
-      },
-      async loadOrderDetail() {
-        try {
-          const res = await getOrderDetail(this.orderId);
-          this.order = res.data || {};
-        } catch (e) {
-          formatAppLog("error", "at pages/orders/detail.vue:107", "加载订单详情失败", e);
-        }
-      },
-      async handleConfirmDelivery() {
-        try {
-          await confirmDelivery({ order_id: this.orderId });
-          uni.showToast({ title: "送达成功", icon: "success" });
-          this.loadOrderDetail();
-        } catch (e) {
-          formatAppLog("error", "at pages/orders/detail.vue:116", "确认送达失败", e);
-        }
-      },
-      getRiderId() {
-        const userInfoStr = uni.getStorageSync("userInfo");
-        if (!userInfoStr) {
-          return "";
-        }
-        try {
-          const userInfo = JSON.parse(userInfoStr);
-          return userInfo.id || "";
-        } catch (e) {
-          formatAppLog("error", "at pages/orders/detail.vue:128", "解析用户信息失败", e);
-          return "";
-        }
-      },
-      parseAddress() {
-        try {
-          return typeof this.order.delivery_address === "string" ? JSON.parse(this.order.delivery_address) : this.order.delivery_address || {};
-        } catch (e) {
-          return {};
-        }
-      },
-      getCoordinateByKeys(source, keys) {
-        for (let i = 0; i < keys.length; i++) {
-          const value2 = source[keys[i]];
-          if (value2 !== void 0 && value2 !== null && value2 !== "") {
-            return value2;
-          }
-        }
-        return "";
-      },
-      getMerchantCoords() {
-        const address = this.parseAddress();
-        const merchant = this.order.merchant || {};
-        const lng = this.getCoordinateByKeys(merchant, ["lng", "lat_lng", "longitude", "lon", "map_lng", "merchant_lng", "merchantLng"]) || this.getCoordinateByKeys(this.order || {}, ["merchant_lng", "merchantLng", "shop_lng", "shopLng", "store_lng", "storeLng", "pickup_lng", "pickupLng", "from_lng", "fromLng"]) || this.getCoordinateByKeys(address, ["merchant_lng", "shop_lng", "store_lng", "pickup_lng", "from_lng"]);
-        const lat = this.getCoordinateByKeys(merchant, ["lat", "latitude", "map_lat", "merchant_lat", "merchantLat"]) || this.getCoordinateByKeys(this.order || {}, ["merchant_lat", "merchantLat", "shop_lat", "shopLat", "store_lat", "storeLat", "pickup_lat", "pickupLat", "from_lat", "fromLat"]) || this.getCoordinateByKeys(address, ["merchant_lat", "shop_lat", "store_lat", "pickup_lat", "from_lat"]);
-        return { lng, lat };
-      },
-      getCustomerCoords() {
-        const address = this.parseAddress();
-        const fallback = this.order || {};
-        const lng = this.getCoordinateByKeys(address, ["lng", "longitude", "lon", "map_lng", "delivery_lng", "deliveryLng", "user_lng", "receiver_lng", "to_lng", "dest_lng", "customer_lng", "customerLng"]) || this.getCoordinateByKeys(fallback, ["delivery_lng", "deliveryLng", "delivery_longitude", "user_lng", "userLng", "contact_lng", "receiver_lng", "to_lng", "dest_lng", "customer_lng", "customerLng"]);
-        const lat = this.getCoordinateByKeys(address, ["lat", "latitude", "map_lat", "delivery_lat", "deliveryLat", "user_lat", "receiver_lat", "to_lat", "dest_lat", "customer_lat", "customerLat"]) || this.getCoordinateByKeys(fallback, ["delivery_lat", "deliveryLat", "delivery_latitude", "user_lat", "userLat", "contact_lat", "receiver_lat", "to_lat", "dest_lat", "customer_lat", "customerLat"]);
-        return { lng, lat };
-      },
-      navigateToMap(payload) {
-        const riderId = this.getRiderId() || this.getCoordinateByKeys(this.order || {}, ["rider_id", "riderId", "user_id", "userId"]) || "test-rider";
-        const token = uni.getStorageSync("token") || "";
-        const stage = payload && payload.stage === "delivery" ? "delivery" : "pickup";
-        const safeTk = TIANDITU_TK;
-        const safeMerchantLng = payload && payload.merchantLng !== void 0 && payload.merchantLng !== null && payload.merchantLng !== "" ? String(payload.merchantLng) : "";
-        const safeMerchantLat = payload && payload.merchantLat !== void 0 && payload.merchantLat !== null && payload.merchantLat !== "" ? String(payload.merchantLat) : "";
-        const safeCustomerLng = payload && payload.customerLng !== void 0 && payload.customerLng !== null && payload.customerLng !== "" ? String(payload.customerLng) : "";
-        const safeCustomerLat = payload && payload.customerLat !== void 0 && payload.customerLat !== null && payload.customerLat !== "" ? String(payload.customerLat) : "";
-        uni.navigateTo({
-          url: `/pages/map/nav?riderId=${encodeURIComponent(riderId)}&token=${encodeURIComponent(token)}&stage=${encodeURIComponent(stage)}&tk=${encodeURIComponent(safeTk)}&merchantLng=${encodeURIComponent(safeMerchantLng)}&merchantLat=${encodeURIComponent(safeMerchantLat)}&customerLng=${encodeURIComponent(safeCustomerLng)}&customerLat=${encodeURIComponent(safeCustomerLat)}`
-        });
-      },
-      goPickup() {
-        const merchant = this.getMerchantCoords();
-        const customer = this.getCustomerCoords();
-        this.navigateToMap({
-          stage: "pickup",
-          merchantLng: merchant.lng,
-          merchantLat: merchant.lat,
-          customerLng: customer.lng,
-          customerLat: customer.lat
-        });
-      },
-      goDelivery() {
-        const merchant = this.getMerchantCoords();
-        const customer = this.getCustomerCoords();
-        this.navigateToMap({
-          stage: "delivery",
-          merchantLng: merchant.lng,
-          merchantLat: merchant.lat,
-          customerLng: customer.lng,
-          customerLat: customer.lat
-        });
-      },
-      callUser(phone) {
-        if (phone) {
-          uni.makePhoneCall({ phoneNumber: phone });
-        }
-      }
-    }
-  };
-  function _sfc_render$7(_ctx, _cache, $props, $setup, $data, $options) {
-    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
-      vue.createElementVNode("view", { class: "card" }, [
-        vue.createElementVNode("text", { class: "section-title" }, "订单信息"),
-        vue.createElementVNode("view", { class: "info-row" }, [
-          vue.createElementVNode("text", { class: "label" }, "订单号"),
-          vue.createElementVNode(
-            "text",
-            { class: "value" },
-            vue.toDisplayString($data.order.order_no),
-            1
-            /* TEXT */
-          )
-        ]),
-        vue.createElementVNode("view", { class: "info-row" }, [
-          vue.createElementVNode("text", { class: "label" }, "订单状态"),
-          vue.createElementVNode(
-            "text",
-            {
-              class: "value status",
-              style: vue.normalizeStyle({ color: $options.getStatusColor($data.order.status) })
-            },
-            vue.toDisplayString($options.getStatusText($data.order.status)),
-            5
-            /* TEXT, STYLE */
-          )
-        ]),
-        vue.createElementVNode("view", { class: "info-row" }, [
-          vue.createElementVNode("text", { class: "label" }, "下单时间"),
-          vue.createElementVNode(
-            "text",
-            { class: "value" },
-            vue.toDisplayString($options.formatTime($data.order.created_at)),
-            1
-            /* TEXT */
-          )
-        ])
-      ]),
-      vue.createElementVNode("view", { class: "card" }, [
-        vue.createElementVNode("text", { class: "section-title" }, "配送信息"),
-        vue.createElementVNode("view", { class: "info-row" }, [
-          vue.createElementVNode("text", { class: "label" }, "配送地址"),
-          vue.createElementVNode(
-            "text",
-            { class: "value" },
-            vue.toDisplayString($options.getFullAddress($data.order)),
-            1
-            /* TEXT */
-          )
-        ]),
-        vue.createElementVNode("view", { class: "info-row" }, [
-          vue.createElementVNode("text", { class: "label" }, "联系人"),
-          vue.createElementVNode(
-            "text",
-            { class: "value" },
-            vue.toDisplayString($data.order.contact_name),
-            1
-            /* TEXT */
-          )
-        ]),
-        vue.createElementVNode("view", { class: "info-row" }, [
-          vue.createElementVNode("text", { class: "label" }, "联系电话"),
-          vue.createElementVNode(
-            "text",
-            {
-              class: "value",
-              onClick: _cache[0] || (_cache[0] = ($event) => $options.callUser($data.order.contact_phone))
-            },
-            vue.toDisplayString($data.order.contact_phone),
-            1
-            /* TEXT */
-          )
-        ])
-      ]),
-      vue.createElementVNode("view", { class: "card" }, [
-        vue.createElementVNode("text", { class: "section-title" }, "费用信息"),
-        vue.createElementVNode("view", { class: "info-row" }, [
-          vue.createElementVNode("text", { class: "label" }, "订单总额"),
-          vue.createElementVNode(
-            "text",
-            { class: "value" },
-            "¥" + vue.toDisplayString($data.order.pay_amount),
-            1
-            /* TEXT */
-          )
-        ]),
-        vue.createElementVNode("view", { class: "info-row" }, [
-          vue.createElementVNode("text", { class: "label" }, "配送费"),
-          vue.createElementVNode(
-            "text",
-            { class: "value highlight" },
-            "¥" + vue.toDisplayString($data.order.rider_fee),
-            1
-            /* TEXT */
-          )
-        ])
-      ]),
-      vue.createElementVNode("view", { class: "action-bar" }, [
-        vue.createElementVNode("button", {
-          class: "btn btn-primary",
-          onClick: _cache[1] || (_cache[1] = (...args) => $options.goPickup && $options.goPickup(...args))
-        }, " 去取餐 "),
-        vue.createElementVNode("button", {
-          class: "btn btn-primary",
-          onClick: _cache[2] || (_cache[2] = (...args) => $options.goDelivery && $options.goDelivery(...args))
-        }, " 去送餐 "),
-        $options.canDeliver ? (vue.openBlock(), vue.createElementBlock("button", {
-          key: 0,
-          class: "btn btn-success",
-          onClick: _cache[3] || (_cache[3] = (...args) => $options.handleConfirmDelivery && $options.handleConfirmDelivery(...args))
-        }, " 确认送达 ")) : vue.createCommentVNode("v-if", true)
-      ])
-    ]);
-  }
-  const PagesOrdersDetail = /* @__PURE__ */ _export_sfc(_sfc_main$8, [["render", _sfc_render$7], ["__scopeId", "data-v-bc4602bd"], ["__file", "E:/固始县外卖骑手端/pages/orders/detail.vue"]]);
   const PACKET_TYPES = /* @__PURE__ */ Object.create(null);
   PACKET_TYPES["open"] = "0";
   PACKET_TYPES["close"] = "1";
@@ -4941,11 +4136,11 @@ if (uni.restoreGlobal) {
       if (~this._readyState.indexOf("open"))
         return this;
       this.engine = new Socket$1(this.uri, this.opts);
-      const socket = this.engine;
+      const socket2 = this.engine;
       const self2 = this;
       this._readyState = "opening";
       this.skipReconnect = false;
-      const openSubDestroy = on(socket, "open", function() {
+      const openSubDestroy = on(socket2, "open", function() {
         self2.onopen();
         fn && fn();
       });
@@ -4959,13 +4154,13 @@ if (uni.restoreGlobal) {
           this.maybeReconnectOnOpen();
         }
       };
-      const errorSub = on(socket, "error", onError);
+      const errorSub = on(socket2, "error", onError);
       if (false !== this._timeout) {
         const timeout = this._timeout;
         const timer = this.setTimeoutFn(() => {
           openSubDestroy();
           onError(new Error("timeout"));
-          socket.close();
+          socket2.close();
         }, timeout);
         if (this.opts.autoUnref) {
           timer.unref();
@@ -4996,12 +4191,12 @@ if (uni.restoreGlobal) {
       this.cleanup();
       this._readyState = "open";
       this.emitReserved("open");
-      const socket = this.engine;
+      const socket2 = this.engine;
       this.subs.push(
-        on(socket, "ping", this.onping.bind(this)),
-        on(socket, "data", this.ondata.bind(this)),
-        on(socket, "error", this.onerror.bind(this)),
-        on(socket, "close", this.onclose.bind(this)),
+        on(socket2, "ping", this.onping.bind(this)),
+        on(socket2, "data", this.ondata.bind(this)),
+        on(socket2, "error", this.onerror.bind(this)),
+        on(socket2, "close", this.onclose.bind(this)),
         // @ts-ignore
         on(this.decoder, "decoded", this.ondecoded.bind(this))
       );
@@ -5051,14 +4246,14 @@ if (uni.restoreGlobal) {
      * @public
      */
     socket(nsp, opts) {
-      let socket = this.nsps[nsp];
-      if (!socket) {
-        socket = new Socket(this, nsp, opts);
-        this.nsps[nsp] = socket;
-      } else if (this._autoConnect && !socket.active) {
-        socket.connect();
+      let socket2 = this.nsps[nsp];
+      if (!socket2) {
+        socket2 = new Socket(this, nsp, opts);
+        this.nsps[nsp] = socket2;
+      } else if (this._autoConnect && !socket2.active) {
+        socket2.connect();
       }
-      return socket;
+      return socket2;
     }
     /**
      * Called upon a socket close.
@@ -5066,11 +4261,11 @@ if (uni.restoreGlobal) {
      * @param socket
      * @private
      */
-    _destroy(socket) {
+    _destroy(socket2) {
       const nsps = Object.keys(this.nsps);
       for (const nsp of nsps) {
-        const socket2 = this.nsps[nsp];
-        if (socket2.active) {
+        const socket3 = this.nsps[nsp];
+        if (socket3.active) {
           return;
         }
       }
@@ -5221,7 +4416,1576 @@ if (uni.restoreGlobal) {
     io: lookup,
     connect: lookup
   });
-  const _sfc_main$7 = {
+  let socket = null;
+  function initSocket(token) {
+    if (socket) {
+      socket.disconnect();
+    }
+    socket = lookup(BASE_URL, {
+      auth: { token },
+      transports: ["websocket", "polling"]
+    });
+    socket.on("connect", () => {
+      formatAppLog("log", "at utils/socket.js:17", "Socket 已连接");
+    });
+    socket.on("disconnect", () => {
+      formatAppLog("log", "at utils/socket.js:21", "Socket 已断开");
+    });
+    return socket;
+  }
+  function disconnectSocket() {
+    if (socket) {
+      socket.disconnect();
+      socket = null;
+    }
+  }
+  function onNewDelivery(callback) {
+    if (socket) {
+      socket.on("new_delivery", callback);
+    }
+  }
+  function offAllListeners() {
+    if (socket) {
+      socket.removeAllListeners();
+    }
+  }
+  function formatTime(time, format = "YYYY-MM-DD HH:mm") {
+    if (!time)
+      return "";
+    const date = new Date(time);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    const hours = String(date.getHours()).padStart(2, "0");
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+    const seconds = String(date.getSeconds()).padStart(2, "0");
+    return format.replace("YYYY", year).replace("MM", month).replace("DD", day).replace("HH", hours).replace("mm", minutes).replace("ss", seconds);
+  }
+  const _sfc_main$c = {
+    data() {
+      return {
+        isOnline: true,
+        nickname: "骑手",
+        userProfile: null,
+        stationMessageUnread: 0,
+        stationMessagePollTimer: null,
+        lastStationMessageUnread: null,
+        allOrders: [],
+        errandOrders: [],
+        stats: {
+          todayDone: 0,
+          delivering: 0,
+          todayEarning: "0.00",
+          pending: 0,
+          errandPending: 0
+        },
+        // 确认弹窗相关
+        showConfirmDialog: false,
+        countdown: 5,
+        countdownTimer: null
+      };
+    },
+    computed: {
+      pendingOrders() {
+        return this.allOrders.filter((o) => [4, 5].includes(Number(o.status)));
+      },
+      showStationMessageEntry() {
+        const profile = this.userProfile || {};
+        return profile.rider_kind === "stationmaster" || profile.delivery_scope === "town_delivery";
+      }
+    },
+    onLoad() {
+      const savedStatus = getRiderStatus();
+      this.isOnline = savedStatus === 1;
+      const storedUser = getUserInfo$1();
+      if (storedUser) {
+        this.userProfile = storedUser;
+        this.nickname = storedUser.nickname || "骑手";
+      }
+    },
+    onShow() {
+      this.initOrderSocket();
+      this.loadData();
+    },
+    onHide() {
+      this.destroyOrderSocket();
+      this.stopStationMessagePolling();
+    },
+    onUnload() {
+      this.destroyOrderSocket();
+      this.stopStationMessagePolling();
+    },
+    methods: {
+      formatTime,
+      formatBadgeCount(count) {
+        return count > 99 ? "99+" : String(count);
+      },
+      getStatusText(status) {
+        var _a;
+        return ((_a = ORDER_STATUS[status]) == null ? void 0 : _a.text) || "未知状态";
+      },
+      isTownOrder(order = {}) {
+        return order.order_type === "town" || order.delivery_scope === "town_delivery" || !!this.getTownName(order);
+      },
+      getTownName(order = {}) {
+        return order.customer_town || order.town_name || order.rider_town || "";
+      },
+      async loadData() {
+        await this.loadUserInfo();
+        await Promise.all([
+          this.loadOrders(),
+          this.loadErrands(),
+          this.loadStationMessageSummary(true)
+        ]);
+        this.calculateStats();
+        this.startStationMessagePolling();
+      },
+      async loadUserInfo() {
+        try {
+          const res = await getUserInfo();
+          if (res.data) {
+            this.userProfile = res.data;
+            this.nickname = res.data.nickname || "骑手";
+          }
+        } catch (e) {
+          formatAppLog("error", "at pages/index/index.vue:280", "加载用户信息失败", e);
+        }
+      },
+      async loadOrders() {
+        try {
+          const res = await getRiderOrders();
+          this.allOrders = res.data || [];
+        } catch (e) {
+          formatAppLog("error", "at pages/index/index.vue:289", "加载订单失败", e);
+          this.allOrders = [];
+        }
+      },
+      async loadErrands() {
+        try {
+          const res = await getErrandList({ status: 1 });
+          this.errandOrders = res.data || [];
+        } catch (e) {
+          formatAppLog("error", "at pages/index/index.vue:299", "加载跑腿订单失败", e);
+          this.errandOrders = [];
+        }
+      },
+      async loadStationMessageSummary(isFirstLoad = false) {
+        var _a, _b, _c;
+        if (!this.showStationMessageEntry) {
+          this.stationMessageUnread = 0;
+          this.lastStationMessageUnread = 0;
+          return;
+        }
+        try {
+          const res = await getTownErrandConversations();
+          const source = Array.isArray(res == null ? void 0 : res.data) ? res.data : Array.isArray((_a = res == null ? void 0 : res.data) == null ? void 0 : _a.list) ? res.data.list : Array.isArray((_b = res == null ? void 0 : res.data) == null ? void 0 : _b.rows) ? res.data.rows : Array.isArray((_c = res == null ? void 0 : res.data) == null ? void 0 : _c.data) ? res.data.data : Array.isArray(res) ? res : [];
+          const unreadTotal = source.reduce((sum, item = {}) => {
+            const unread = Number(item.unread_count ?? item.unreadCount ?? item.unread_num ?? 0);
+            return sum + (unread > 0 ? unread : 0);
+          }, 0);
+          const previousUnread = this.lastStationMessageUnread;
+          this.stationMessageUnread = unreadTotal;
+          this.lastStationMessageUnread = unreadTotal;
+        } catch (error) {
+          formatAppLog("error", "at pages/index/index.vue:330", "加载站长消息未读数失败", error);
+        }
+      },
+      startStationMessagePolling() {
+        this.stopStationMessagePolling();
+        if (!this.showStationMessageEntry) {
+          return;
+        }
+        this.stationMessagePollTimer = setInterval(() => {
+          this.loadStationMessageSummary(false);
+        }, 3e3);
+      },
+      stopStationMessagePolling() {
+        if (this.stationMessagePollTimer) {
+          clearInterval(this.stationMessagePollTimer);
+          this.stationMessagePollTimer = null;
+        }
+      },
+      calculateStats() {
+        const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        const todayDoneList = this.allOrders.filter(
+          (o) => o.status === 6 && o.delivered_at && o.delivered_at.startsWith(today)
+        );
+        const deliveringList = this.allOrders.filter((o) => o.status === 5);
+        this.stats.todayDone = todayDoneList.length;
+        this.stats.delivering = deliveringList.length;
+        this.stats.todayEarning = todayDoneList.reduce((sum, o) => {
+          return sum + (parseFloat(o.rider_fee) || 0);
+        }, 0).toFixed(2);
+        this.stats.pending = this.pendingOrders.length;
+        this.stats.errandPending = this.errandOrders.length;
+      },
+      async toggleOnline() {
+        if (this.isOnline) {
+          this.showConfirmDialog = true;
+          this.countdown = 5;
+          this.countdownTimer = setInterval(() => {
+            this.countdown--;
+            if (this.countdown <= 0) {
+              clearInterval(this.countdownTimer);
+            }
+          }, 1e3);
+        } else {
+          try {
+            const newStatus = 1;
+            await updateRiderStatus(newStatus);
+            this.isOnline = true;
+            setRiderStatus(newStatus);
+            uni.showToast({
+              title: "已开始接单",
+              icon: "none"
+            });
+          } catch (error) {
+            formatAppLog("error", "at pages/index/index.vue:396", "切换接单状态失败", error);
+          }
+        }
+      },
+      // 确认下班
+      async confirmOffWork() {
+        if (this.countdown > 0) {
+          uni.showToast({
+            title: "请等待倒计时结束",
+            icon: "none"
+          });
+          return;
+        }
+        try {
+          const newStatus = 0;
+          await updateRiderStatus(newStatus);
+          setRiderStatus(newStatus);
+          this.isOnline = false;
+          this.showConfirmDialog = false;
+          uni.showToast({
+            title: "已暂停接单",
+            icon: "none"
+          });
+        } catch (error) {
+          formatAppLog("error", "at pages/index/index.vue:423", "切换休息状态失败", error);
+        }
+      },
+      // 取消下班
+      cancelOffWork() {
+        this.showConfirmDialog = false;
+        clearInterval(this.countdownTimer);
+      },
+      getBriefAddress(order) {
+        try {
+          const addr = typeof order.delivery_address === "string" ? JSON.parse(order.delivery_address) : order.delivery_address;
+          return addr.detail || addr.address || `${addr.district || ""}${addr.street || ""}` || order.address || "未知地址";
+        } catch (e) {
+          return order.address || "未知地址";
+        }
+      },
+      initOrderSocket() {
+        const token = uni.getStorageSync("token") || "";
+        if (!token) {
+          return;
+        }
+        initSocket(token);
+        offAllListeners();
+        onNewDelivery(async (payload = {}) => {
+          const order = payload.data || {};
+          if (!order.id) {
+            return;
+          }
+          uni.showToast({
+            title: this.isTownOrder(order) ? "收到乡镇配送任务" : "收到新的配送任务",
+            icon: "none",
+            duration: 2e3
+          });
+          await this.loadOrders();
+          this.calculateStats();
+        });
+      },
+      destroyOrderSocket() {
+        offAllListeners();
+        disconnectSocket();
+      },
+      goOrders() {
+        uni.switchTab({ url: "/pages/orders/index" });
+      },
+      goErrands() {
+        uni.navigateTo({ url: "/pages/errands/index" });
+      },
+      goTodayOrders() {
+        uni.switchTab({ url: "/pages/orders/index" });
+      },
+      goEarnings() {
+        uni.navigateTo({ url: "/pages/earnings/index" });
+      },
+      goWeekStats() {
+        uni.navigateTo({ url: "/pages/earnings/index?period=week" });
+      },
+      goMonthStats() {
+        uni.navigateTo({ url: "/pages/earnings/index?period=month" });
+      },
+      goProfile() {
+        uni.switchTab({ url: "/pages/profile/index" });
+      },
+      goStationMessages() {
+        uni.navigateTo({ url: "/pages/station-messages/index" });
+      },
+      goSettings() {
+        uni.showToast({ title: "设置功能开发中", icon: "none" });
+      },
+      goHelp() {
+        uni.showToast({ title: "帮助中心开发中", icon: "none" });
+      },
+      goOrderDetail(order) {
+        const target = order.type === "errand" ? "errands" : "orders";
+        uni.navigateTo({
+          url: `/pages/${target}/detail?id=${order.id}`
+        });
+      }
+    }
+  };
+  function _sfc_render$b(_ctx, _cache, $props, $setup, $data, $options) {
+    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
+      vue.createElementVNode("view", { class: "header" }, [
+        vue.createElementVNode("view", { class: "header-left" }, [
+          vue.createElementVNode("text", { class: "header-emoji" }, "🛵"),
+          vue.createElementVNode("view", { class: "header-info" }, [
+            vue.createElementVNode("text", { class: "header-title" }, "骑手工作台"),
+            vue.createElementVNode(
+              "text",
+              { class: "header-sub" },
+              vue.toDisplayString($data.nickname) + "，今天也辛苦了",
+              1
+              /* TEXT */
+            )
+          ])
+        ]),
+        vue.createElementVNode("view", {
+          class: "status-switch",
+          onClick: _cache[0] || (_cache[0] = (...args) => $options.toggleOnline && $options.toggleOnline(...args))
+        }, [
+          vue.createElementVNode(
+            "text",
+            {
+              class: vue.normalizeClass(["switch-text", { "highlight-online": $data.isOnline }])
+            },
+            vue.toDisplayString($data.isOnline ? "接单中" : "已休息"),
+            3
+            /* TEXT, CLASS */
+          ),
+          vue.createElementVNode(
+            "view",
+            {
+              class: vue.normalizeClass(["switch-dot", { online: $data.isOnline }])
+            },
+            null,
+            2
+            /* CLASS */
+          )
+        ])
+      ]),
+      vue.createElementVNode("view", { class: "stats-grid" }, [
+        vue.createElementVNode("view", { class: "stat-card" }, [
+          vue.createElementVNode(
+            "text",
+            { class: "stat-num" },
+            vue.toDisplayString($data.stats.todayDone),
+            1
+            /* TEXT */
+          ),
+          vue.createElementVNode("text", { class: "stat-label" }, "今日完成")
+        ]),
+        vue.createElementVNode("view", { class: "stat-card" }, [
+          vue.createElementVNode(
+            "text",
+            { class: "stat-num" },
+            vue.toDisplayString($data.stats.delivering),
+            1
+            /* TEXT */
+          ),
+          vue.createElementVNode("text", { class: "stat-label" }, "配送中")
+        ]),
+        vue.createElementVNode("view", { class: "stat-card" }, [
+          vue.createElementVNode(
+            "text",
+            { class: "stat-num" },
+            "¥" + vue.toDisplayString($data.stats.todayEarning),
+            1
+            /* TEXT */
+          ),
+          vue.createElementVNode("text", { class: "stat-label" }, "完成订单收入统计")
+        ])
+      ]),
+      vue.createElementVNode("view", { class: "menu-section" }, [
+        vue.createElementVNode("view", { class: "section-title-small" }, "📦 订单管理"),
+        vue.createElementVNode("view", { class: "menu-grid" }, [
+          vue.createElementVNode("view", {
+            class: "menu-item",
+            onClick: _cache[1] || (_cache[1] = (...args) => $options.goOrders && $options.goOrders(...args))
+          }, [
+            vue.createElementVNode("view", {
+              class: "menu-icon-wrap",
+              style: { "background-color": "#E6F7FF" }
+            }, [
+              vue.createElementVNode("text", { class: "menu-icon" }, "📋")
+            ]),
+            vue.createElementVNode("text", { class: "menu-text" }, "外卖订单"),
+            $data.stats.pending > 0 ? (vue.openBlock(), vue.createElementBlock(
+              "text",
+              {
+                key: 0,
+                class: "menu-badge"
+              },
+              vue.toDisplayString($data.stats.pending),
+              1
+              /* TEXT */
+            )) : vue.createCommentVNode("v-if", true)
+          ]),
+          vue.createElementVNode("view", {
+            class: "menu-item",
+            onClick: _cache[2] || (_cache[2] = (...args) => $options.goErrands && $options.goErrands(...args))
+          }, [
+            vue.createElementVNode("view", {
+              class: "menu-icon-wrap",
+              style: { "background-color": "#FFF7E6" }
+            }, [
+              vue.createElementVNode("text", { class: "menu-icon" }, "🏃")
+            ]),
+            vue.createElementVNode("text", { class: "menu-text" }, "跑腿订单"),
+            $data.stats.errandPending > 0 ? (vue.openBlock(), vue.createElementBlock(
+              "text",
+              {
+                key: 0,
+                class: "menu-badge"
+              },
+              vue.toDisplayString($data.stats.errandPending),
+              1
+              /* TEXT */
+            )) : vue.createCommentVNode("v-if", true)
+          ]),
+          vue.createElementVNode("view", {
+            class: "menu-item",
+            onClick: _cache[3] || (_cache[3] = (...args) => $options.goTodayOrders && $options.goTodayOrders(...args))
+          }, [
+            vue.createElementVNode("view", {
+              class: "menu-icon-wrap",
+              style: { "background-color": "#F0F5FF" }
+            }, [
+              vue.createElementVNode("text", { class: "menu-icon" }, "📊")
+            ]),
+            vue.createElementVNode("text", { class: "menu-text" }, "今日订单"),
+            $data.stats.todayDone > 0 ? (vue.openBlock(), vue.createElementBlock(
+              "text",
+              {
+                key: 0,
+                class: "menu-badge"
+              },
+              vue.toDisplayString($data.stats.todayDone),
+              1
+              /* TEXT */
+            )) : vue.createCommentVNode("v-if", true)
+          ])
+        ])
+      ]),
+      vue.createElementVNode("view", { class: "menu-section" }, [
+        vue.createElementVNode("view", { class: "section-title-small" }, "💰 订单收入统计"),
+        vue.createElementVNode("view", { class: "menu-grid" }, [
+          vue.createElementVNode("view", {
+            class: "menu-item",
+            onClick: _cache[4] || (_cache[4] = (...args) => $options.goEarnings && $options.goEarnings(...args))
+          }, [
+            vue.createElementVNode("view", {
+              class: "menu-icon-wrap",
+              style: { "background-color": "#F6FFED" }
+            }, [
+              vue.createElementVNode("text", { class: "menu-icon" }, "💰")
+            ]),
+            vue.createElementVNode("text", { class: "menu-text" }, "订单收入汇总")
+          ]),
+          vue.createElementVNode("view", {
+            class: "menu-item",
+            onClick: _cache[5] || (_cache[5] = (...args) => $options.goWeekStats && $options.goWeekStats(...args))
+          }, [
+            vue.createElementVNode("view", {
+              class: "menu-icon-wrap",
+              style: { "background-color": "#FFF0F6" }
+            }, [
+              vue.createElementVNode("text", { class: "menu-icon" }, "📈")
+            ]),
+            vue.createElementVNode("text", { class: "menu-text" }, "本周统计")
+          ]),
+          vue.createElementVNode("view", {
+            class: "menu-item",
+            onClick: _cache[6] || (_cache[6] = (...args) => $options.goMonthStats && $options.goMonthStats(...args))
+          }, [
+            vue.createElementVNode("view", {
+              class: "menu-icon-wrap",
+              style: { "background-color": "#FCF0FF" }
+            }, [
+              vue.createElementVNode("text", { class: "menu-icon" }, "📅")
+            ]),
+            vue.createElementVNode("text", { class: "menu-text" }, "本月统计")
+          ])
+        ])
+      ]),
+      vue.createElementVNode("view", { class: "menu-section" }, [
+        vue.createElementVNode("view", { class: "section-title-small" }, "🛠️ 我的服务"),
+        vue.createElementVNode("view", { class: "menu-grid" }, [
+          vue.createElementVNode("view", {
+            class: "menu-item",
+            onClick: _cache[7] || (_cache[7] = (...args) => $options.goProfile && $options.goProfile(...args))
+          }, [
+            vue.createElementVNode("view", {
+              class: "menu-icon-wrap",
+              style: { "background-color": "#E6FFFB" }
+            }, [
+              vue.createElementVNode("text", { class: "menu-icon" }, "👤")
+            ]),
+            vue.createElementVNode("text", { class: "menu-text" }, "个人中心")
+          ]),
+          $options.showStationMessageEntry ? (vue.openBlock(), vue.createElementBlock("view", {
+            key: 0,
+            class: "menu-item",
+            onClick: _cache[8] || (_cache[8] = (...args) => $options.goStationMessages && $options.goStationMessages(...args))
+          }, [
+            vue.createElementVNode("view", {
+              class: "menu-icon-wrap",
+              style: { "background-color": "#FFF1F0" }
+            }, [
+              vue.createElementVNode("text", { class: "menu-icon" }, "💬")
+            ]),
+            vue.createElementVNode("text", { class: "menu-text" }, "跑腿代购消息"),
+            $data.stationMessageUnread > 0 ? (vue.openBlock(), vue.createElementBlock(
+              "text",
+              {
+                key: 0,
+                class: "menu-badge"
+              },
+              vue.toDisplayString($options.formatBadgeCount($data.stationMessageUnread)),
+              1
+              /* TEXT */
+            )) : vue.createCommentVNode("v-if", true)
+          ])) : vue.createCommentVNode("v-if", true),
+          vue.createElementVNode("view", {
+            class: "menu-item",
+            onClick: _cache[9] || (_cache[9] = (...args) => $options.goSettings && $options.goSettings(...args))
+          }, [
+            vue.createElementVNode("view", {
+              class: "menu-icon-wrap",
+              style: { "background-color": "#FFF7E6" }
+            }, [
+              vue.createElementVNode("text", { class: "menu-icon" }, "⚙️")
+            ]),
+            vue.createElementVNode("text", { class: "menu-text" }, "设置")
+          ]),
+          vue.createElementVNode("view", {
+            class: "menu-item",
+            onClick: _cache[10] || (_cache[10] = (...args) => $options.goHelp && $options.goHelp(...args))
+          }, [
+            vue.createElementVNode("view", {
+              class: "menu-icon-wrap",
+              style: { "background-color": "#F0F5FF" }
+            }, [
+              vue.createElementVNode("text", { class: "menu-icon" }, "❓")
+            ]),
+            vue.createElementVNode("text", { class: "menu-text" }, "帮助中心")
+          ])
+        ])
+      ]),
+      $options.pendingOrders.length > 0 ? (vue.openBlock(), vue.createElementBlock("view", {
+        key: 0,
+        class: "section"
+      }, [
+        vue.createElementVNode("view", { class: "section-header" }, [
+          vue.createElementVNode("text", { class: "section-title" }, "配送任务"),
+          vue.createElementVNode("text", {
+            class: "section-action",
+            onClick: _cache[11] || (_cache[11] = (...args) => $options.goOrders && $options.goOrders(...args))
+          }, "查看全部")
+        ]),
+        (vue.openBlock(true), vue.createElementBlock(
+          vue.Fragment,
+          null,
+          vue.renderList($options.pendingOrders.slice(0, 3), (order) => {
+            var _a;
+            return vue.openBlock(), vue.createElementBlock("view", {
+              class: "order-card",
+              key: order.id,
+              onClick: ($event) => $options.goOrderDetail(order)
+            }, [
+              vue.createElementVNode("view", { class: "order-top" }, [
+                vue.createElementVNode("view", { class: "order-tags" }, [
+                  vue.createElementVNode(
+                    "text",
+                    {
+                      class: vue.normalizeClass(["order-type", { "town-type": $options.isTownOrder(order) }])
+                    },
+                    vue.toDisplayString($options.isTownOrder(order) ? "乡镇订单" : order.type === "takeout" ? "外卖" : "配送"),
+                    3
+                    /* TEXT, CLASS */
+                  ),
+                  $options.getTownName(order) ? (vue.openBlock(), vue.createElementBlock(
+                    "text",
+                    {
+                      key: 0,
+                      class: "order-town"
+                    },
+                    vue.toDisplayString($options.getTownName(order)),
+                    1
+                    /* TEXT */
+                  )) : vue.createCommentVNode("v-if", true)
+                ]),
+                vue.createElementVNode(
+                  "text",
+                  { class: "order-price" },
+                  "¥" + vue.toDisplayString(order.rider_fee || 0),
+                  1
+                  /* TEXT */
+                )
+              ]),
+              vue.createElementVNode("view", { class: "order-merchant" }, [
+                vue.createElementVNode("text", { class: "merchant-icon" }, "🏪"),
+                vue.createElementVNode(
+                  "text",
+                  { class: "merchant-text" },
+                  vue.toDisplayString(((_a = order.merchant) == null ? void 0 : _a.name) || "未知商家"),
+                  1
+                  /* TEXT */
+                )
+              ]),
+              vue.createElementVNode("view", { class: "order-addr" }, [
+                vue.createElementVNode("text", { class: "addr-icon" }, "📍"),
+                vue.createElementVNode(
+                  "text",
+                  { class: "addr-text" },
+                  vue.toDisplayString($options.getBriefAddress(order)),
+                  1
+                  /* TEXT */
+                )
+              ]),
+              vue.createElementVNode("view", { class: "order-bottom" }, [
+                vue.createElementVNode(
+                  "text",
+                  {
+                    class: vue.normalizeClass(["order-status", { "town-status": $options.isTownOrder(order) }])
+                  },
+                  vue.toDisplayString($options.getStatusText(order.status)),
+                  3
+                  /* TEXT, CLASS */
+                ),
+                vue.createElementVNode(
+                  "text",
+                  { class: "order-time" },
+                  vue.toDisplayString($options.formatTime(order.created_at)),
+                  1
+                  /* TEXT */
+                )
+              ])
+            ], 8, ["onClick"]);
+          }),
+          128
+          /* KEYED_FRAGMENT */
+        ))
+      ])) : vue.createCommentVNode("v-if", true),
+      $options.pendingOrders.length === 0 && $data.isOnline ? (vue.openBlock(), vue.createElementBlock("view", {
+        key: 1,
+        class: "empty-state"
+      }, [
+        vue.createElementVNode("text", { class: "empty-icon" }, "☕"),
+        vue.createElementVNode("text", { class: "empty-text" }, "暂无待处理订单"),
+        vue.createElementVNode("text", { class: "empty-tip" }, "当前没有分配到你的配送任务")
+      ])) : vue.createCommentVNode("v-if", true),
+      $data.showConfirmDialog ? (vue.openBlock(), vue.createElementBlock("view", {
+        key: 2,
+        class: "confirm-dialog"
+      }, [
+        vue.createElementVNode("view", {
+          class: "dialog-mask",
+          onClick: _cache[12] || (_cache[12] = (...args) => $options.cancelOffWork && $options.cancelOffWork(...args))
+        }),
+        vue.createElementVNode("view", { class: "dialog-content" }, [
+          vue.createElementVNode("view", { class: "dialog-title" }, "提示"),
+          vue.createElementVNode("view", { class: "dialog-message" }, "确定现在下班吗？"),
+          vue.createElementVNode("view", { class: "dialog-buttons" }, [
+            vue.createElementVNode(
+              "button",
+              {
+                class: vue.normalizeClass(["dialog-btn confirm-btn", { disabled: $data.countdown > 0 }]),
+                onClick: _cache[13] || (_cache[13] = (...args) => $options.confirmOffWork && $options.confirmOffWork(...args))
+              },
+              vue.toDisplayString($data.countdown > 0 ? `确定 (${$data.countdown}s)` : "确定"),
+              3
+              /* TEXT, CLASS */
+            ),
+            vue.createElementVNode("button", {
+              class: "dialog-btn cancel-btn",
+              onClick: _cache[14] || (_cache[14] = (...args) => $options.cancelOffWork && $options.cancelOffWork(...args))
+            }, " 取消 ")
+          ])
+        ])
+      ])) : vue.createCommentVNode("v-if", true)
+    ]);
+  }
+  const PagesIndexIndex = /* @__PURE__ */ _export_sfc(_sfc_main$c, [["render", _sfc_render$b], ["__scopeId", "data-v-1cf27b2a"], ["__file", "E:/固始县外卖骑手端/pages/index/index.vue"]]);
+  const _sfc_main$b = {
+    data() {
+      return {
+        currentStatus: "",
+        statusTabs: [
+          { key: "", label: "全部", count: 0 },
+          { key: "1", label: "待处理", count: 0 },
+          { key: "4", label: "备货完成", count: 0 },
+          { key: "5", label: "配送中", count: 0 },
+          { key: "6", label: "已完成", count: 0 }
+        ],
+        orderList: [],
+        page: 1,
+        pageSize: 10,
+        refreshing: false,
+        loadingMore: false
+      };
+    },
+    onLoad() {
+      this.loadOrderList();
+    },
+    onShow() {
+      this.initOrderSocket();
+      this.loadOrderList();
+    },
+    onHide() {
+      this.destroyOrderSocket();
+    },
+    onUnload() {
+      this.destroyOrderSocket();
+    },
+    methods: {
+      formatTime,
+      canRiderCallConfirmDeliveryApi,
+      canRiderOfferSpecialComplete,
+      getStatusText(status) {
+        var _a;
+        return ((_a = ORDER_STATUS[status]) == null ? void 0 : _a.text) || "未知";
+      },
+      getStatusColor(status, order = {}) {
+        var _a, _b;
+        if (this.isTownOrder(order)) {
+          const townStatusColors = {
+            4: "#1f6f43",
+            5: "#2b8a57",
+            6: "#2b8a57"
+          };
+          return townStatusColors[Number(status)] || ((_a = ORDER_STATUS[status]) == null ? void 0 : _a.color) || "#999";
+        }
+        return ((_b = ORDER_STATUS[status]) == null ? void 0 : _b.color) || "#999";
+      },
+      isTownOrder(order = {}) {
+        return order.order_type === "town" || order.delivery_scope === "town_delivery" || !!this.getTownName(order);
+      },
+      getTownName(order = {}) {
+        return order.customer_town || order.town_name || order.rider_town || "";
+      },
+      getCoordinateByKeys(source = {}, keys = []) {
+        for (let i = 0; i < keys.length; i++) {
+          const value2 = source[keys[i]];
+          if (value2 !== void 0 && value2 !== null && value2 !== "") {
+            return value2;
+          }
+        }
+        return "";
+      },
+      getMerchantCoords(order = {}) {
+        const merchant = order.merchant || {};
+        return {
+          lng: this.getCoordinateByKeys(order, ["merchant_lng", "merchantLng"]) || this.getCoordinateByKeys(merchant, ["longitude", "lng"]),
+          lat: this.getCoordinateByKeys(order, ["merchant_lat", "merchantLat"]) || this.getCoordinateByKeys(merchant, ["latitude", "lat"])
+        };
+      },
+      getCustomerCoords(order = {}) {
+        return {
+          lng: this.getCoordinateByKeys(order, ["customer_lng", "delivery_longitude", "longitude", "lng"]),
+          lat: this.getCoordinateByKeys(order, ["customer_lat", "delivery_latitude", "latitude", "lat"])
+        };
+      },
+      formatCoordinate(coords = {}) {
+        if (coords.lng === "" || coords.lat === "") {
+          return "未提供坐标";
+        }
+        return `${coords.lng}, ${coords.lat}`;
+      },
+      canPickup(status) {
+        return Number(status) === 4;
+      },
+      getFullAddress(order) {
+        try {
+          const addr = typeof order.delivery_address === "string" ? JSON.parse(order.delivery_address) : order.delivery_address;
+          return addr.province + addr.city + addr.district + addr.street + addr.detail;
+        } catch (e) {
+          return "未知地址";
+        }
+      },
+      getBriefAddress(order) {
+        try {
+          const addr = typeof order.delivery_address === "string" ? JSON.parse(order.delivery_address) : order.delivery_address;
+          return (addr.district || "") + (addr.street || "") || "未知地址";
+        } catch (e) {
+          return "未知地址";
+        }
+      },
+      switchStatus(status) {
+        this.currentStatus = status;
+        this.page = 1;
+        this.loadOrderList();
+      },
+      async loadOrderList() {
+        try {
+          const params = {};
+          if (this.currentStatus !== "") {
+            params.status = this.currentStatus;
+          }
+          const res = await getRiderOrders(params);
+          const list = res.data || [];
+          this.orderList = list;
+          this.updateStatusCounts();
+        } catch (e) {
+          formatAppLog("error", "at pages/orders/index.vue:281", "加载订单失败", e);
+          this.orderList = [];
+        }
+      },
+      updateStatusCounts() {
+        const counter = {};
+        this.orderList.forEach((order) => {
+          counter[order.status] = (counter[order.status] || 0) + 1;
+        });
+        this.statusTabs = this.statusTabs.map((tab) => ({
+          ...tab,
+          count: tab.key === "" ? this.orderList.length : counter[tab.key] || 0
+        }));
+      },
+      async onRefresh() {
+        this.refreshing = true;
+        this.page = 1;
+        await this.loadOrderList();
+        this.refreshing = false;
+      },
+      loadMore() {
+        if (this.loadingMore)
+          return;
+        this.loadingMore = true;
+        this.page++;
+        this.loadingMore = false;
+      },
+      initOrderSocket() {
+        const token = uni.getStorageSync("token") || "";
+        if (!token) {
+          return;
+        }
+        initSocket(token);
+        offAllListeners();
+        onNewDelivery(async (payload = {}) => {
+          const order = payload.data || {};
+          if (!order.id) {
+            return;
+          }
+          uni.showToast({
+            title: this.isTownOrder(order) ? "收到乡镇配送任务" : "收到新的配送任务",
+            icon: "none",
+            duration: 2e3
+          });
+          await this.loadOrderList();
+        });
+      },
+      destroyOrderSocket() {
+        offAllListeners();
+        disconnectSocket();
+      },
+      handlePickup(order) {
+        uni.showModal({
+          title: "确认取餐",
+          content: "确认已到店取餐并开始配送？",
+          confirmText: "开始配送",
+          cancelText: "取消",
+          success: async (res) => {
+            if (!res.confirm)
+              return;
+            const fresh = this.orderList.find((o) => o.id === order.id) || order;
+            if (!this.canPickup(fresh.status)) {
+              uni.showToast({ title: "订单状态已变更，请刷新后重试", icon: "none" });
+              return;
+            }
+            try {
+              await riderPickup(fresh.id);
+              uni.showToast({ title: "已开始配送", icon: "success" });
+              await this.loadOrderList();
+            } catch (e) {
+              formatAppLog("error", "at pages/orders/index.vue:354", "取餐失败", e);
+            }
+          }
+        });
+      },
+      handleStandardDelivery(order) {
+        uni.showModal({
+          title: "确认送达",
+          content: "确认订单已送达？",
+          confirmText: "确认送达",
+          cancelText: "取消",
+          success: async (res) => {
+            if (!res.confirm)
+              return;
+            const fresh = this.orderList.find((o) => o.id === order.id) || order;
+            if (!canRiderCallConfirmDeliveryApi(fresh.status)) {
+              uni.showToast({ title: "订单状态已变更，请刷新后重试", icon: "none" });
+              return;
+            }
+            try {
+              await confirmDelivery(fresh.id);
+              uni.showToast({ title: "送达成功", icon: "success" });
+              await this.loadOrderList();
+            } catch (e) {
+              formatAppLog("error", "at pages/orders/index.vue:378", "确认送达失败", e);
+            }
+          }
+        });
+      },
+      handleSpecialComplete(order) {
+        uni.showModal({
+          title: "特殊完结",
+          content: "确认按「特殊完结」处理该订单？",
+          confirmText: "特殊完结",
+          cancelText: "取消",
+          success: async (res) => {
+            if (!res.confirm)
+              return;
+            const fresh = this.orderList.find((o) => o.id === order.id) || order;
+            if (!canRiderOfferSpecialComplete(fresh.status)) {
+              uni.showToast({ title: "订单状态已变更，请刷新后重试", icon: "none" });
+              return;
+            }
+            try {
+              await confirmDeliverySpecial(fresh.id);
+              uni.showToast({ title: "操作成功", icon: "success" });
+              await this.loadOrderList();
+            } catch (e) {
+              formatAppLog("error", "at pages/orders/index.vue:401", "特殊完结失败", e);
+            }
+          }
+        });
+      },
+      callMerchant(phone) {
+        if (phone) {
+          uni.makePhoneCall({ phoneNumber: phone });
+        }
+      },
+      goDetail(order) {
+        uni.navigateTo({
+          url: `/pages/orders/detail?id=${order.id}`
+        });
+      }
+    }
+  };
+  function _sfc_render$a(_ctx, _cache, $props, $setup, $data, $options) {
+    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
+      vue.createElementVNode("view", { class: "status-tabs" }, [
+        vue.createElementVNode("scroll-view", {
+          "scroll-x": "",
+          class: "tabs-scroll"
+        }, [
+          (vue.openBlock(true), vue.createElementBlock(
+            vue.Fragment,
+            null,
+            vue.renderList($data.statusTabs, (item) => {
+              return vue.openBlock(), vue.createElementBlock("view", {
+                key: item.key,
+                class: vue.normalizeClass(["tab-item", { active: $data.currentStatus === item.key }]),
+                onClick: ($event) => $options.switchStatus(item.key)
+              }, vue.toDisplayString(item.label), 11, ["onClick"]);
+            }),
+            128
+            /* KEYED_FRAGMENT */
+          ))
+        ])
+      ]),
+      vue.createElementVNode("scroll-view", {
+        "scroll-y": "",
+        class: "order-scroll",
+        onScrolltolower: _cache[0] || (_cache[0] = (...args) => $options.loadMore && $options.loadMore(...args)),
+        "refresher-enabled": true,
+        "refresher-triggered": $data.refreshing,
+        onRefresherrefresh: _cache[1] || (_cache[1] = (...args) => $options.onRefresh && $options.onRefresh(...args))
+      }, [
+        $data.orderList.length ? (vue.openBlock(), vue.createElementBlock("view", {
+          key: 0,
+          class: "order-list"
+        }, [
+          (vue.openBlock(true), vue.createElementBlock(
+            vue.Fragment,
+            null,
+            vue.renderList($data.orderList, (order) => {
+              var _a;
+              return vue.openBlock(), vue.createElementBlock("view", {
+                key: order.id,
+                class: vue.normalizeClass(["order-card", { "highlight-card": order.status === 1 || order.status === 4, "town-order-card": $options.isTownOrder(order) }]),
+                onClick: ($event) => $options.goDetail(order)
+              }, [
+                vue.createElementVNode("view", { class: "order-header" }, [
+                  vue.createElementVNode("view", { class: "header-left" }, [
+                    vue.createElementVNode("view", { class: "order-info-row" }, [
+                      vue.createElementVNode(
+                        "text",
+                        { class: "order-no" },
+                        vue.toDisplayString(order.order_no),
+                        1
+                        /* TEXT */
+                      ),
+                      vue.createElementVNode("view", { class: "header-tags" }, [
+                        $options.isTownOrder(order) ? (vue.openBlock(), vue.createElementBlock("view", {
+                          key: 0,
+                          class: "scope-tag"
+                        }, "乡镇订单")) : vue.createCommentVNode("v-if", true),
+                        vue.createElementVNode(
+                          "view",
+                          {
+                            class: "status-tag",
+                            style: vue.normalizeStyle({ backgroundColor: $options.getStatusColor(order.status, order) })
+                          },
+                          vue.toDisplayString($options.getStatusText(order.status)),
+                          5
+                          /* TEXT, STYLE */
+                        )
+                      ])
+                    ]),
+                    vue.createElementVNode(
+                      "text",
+                      { class: "order-time" },
+                      vue.toDisplayString($options.formatTime(order.created_at)),
+                      1
+                      /* TEXT */
+                    )
+                  ])
+                ]),
+                vue.createElementVNode("view", { class: "delivery-fee-section" }, [
+                  vue.createElementVNode("text", { class: "fee-label" }, "💰 配送费"),
+                  vue.createElementVNode(
+                    "text",
+                    { class: "fee-num" },
+                    "¥" + vue.toDisplayString(order.rider_fee || 0),
+                    1
+                    /* TEXT */
+                  )
+                ]),
+                vue.createElementVNode("view", { class: "simple-info" }, [
+                  vue.createElementVNode("text", { class: "info-icon" }, "🏪"),
+                  vue.createElementVNode(
+                    "text",
+                    { class: "info-text" },
+                    vue.toDisplayString(((_a = order.merchant) == null ? void 0 : _a.name) || "未知商家"),
+                    1
+                    /* TEXT */
+                  ),
+                  vue.createElementVNode("text", {
+                    class: "call-btn",
+                    onClick: vue.withModifiers(($event) => {
+                      var _a2;
+                      return $options.callMerchant((_a2 = order.merchant) == null ? void 0 : _a2.phone);
+                    }, ["stop"])
+                  }, "📞 打电话", 8, ["onClick"])
+                ]),
+                vue.createElementVNode("view", { class: "simple-info" }, [
+                  vue.createElementVNode("text", { class: "info-icon" }, "📍"),
+                  vue.createElementVNode(
+                    "text",
+                    { class: "info-text address-text" },
+                    vue.toDisplayString($options.getBriefAddress(order)),
+                    1
+                    /* TEXT */
+                  )
+                ]),
+                $options.getTownName(order) ? (vue.openBlock(), vue.createElementBlock("view", {
+                  key: 0,
+                  class: "simple-info"
+                }, [
+                  vue.createElementVNode("text", { class: "info-icon" }, "🌲"),
+                  vue.createElementVNode(
+                    "text",
+                    { class: "info-text" },
+                    vue.toDisplayString($options.getTownName(order)),
+                    1
+                    /* TEXT */
+                  )
+                ])) : vue.createCommentVNode("v-if", true),
+                vue.createElementVNode("view", { class: "simple-info" }, [
+                  vue.createElementVNode("text", { class: "info-icon" }, "🧭"),
+                  vue.createElementVNode(
+                    "text",
+                    { class: "info-text" },
+                    "商家 " + vue.toDisplayString($options.formatCoordinate($options.getMerchantCoords(order))),
+                    1
+                    /* TEXT */
+                  )
+                ]),
+                vue.createElementVNode("view", { class: "simple-info" }, [
+                  vue.createElementVNode("text", { class: "info-icon" }, "📌"),
+                  vue.createElementVNode(
+                    "text",
+                    { class: "info-text" },
+                    "用户 " + vue.toDisplayString($options.formatCoordinate($options.getCustomerCoords(order))),
+                    1
+                    /* TEXT */
+                  )
+                ]),
+                vue.createElementVNode("view", { class: "order-actions" }, [
+                  $options.canPickup(order.status) ? (vue.openBlock(), vue.createElementBlock("button", {
+                    key: 0,
+                    class: "btn btn-primary",
+                    onClick: vue.withModifiers(($event) => $options.handlePickup(order), ["stop"])
+                  }, " 取餐配送 ", 8, ["onClick"])) : vue.createCommentVNode("v-if", true),
+                  $options.canRiderCallConfirmDeliveryApi(order.status) ? (vue.openBlock(), vue.createElementBlock("button", {
+                    key: 1,
+                    class: "btn btn-success",
+                    onClick: vue.withModifiers(($event) => $options.handleStandardDelivery(order), ["stop"])
+                  }, " 确认送达 ", 8, ["onClick"])) : $options.canRiderOfferSpecialComplete(order.status) ? (vue.openBlock(), vue.createElementBlock("button", {
+                    key: 2,
+                    class: "btn btn-special",
+                    onClick: vue.withModifiers(($event) => $options.handleSpecialComplete(order), ["stop"])
+                  }, " 特殊完结 ", 8, ["onClick"])) : vue.createCommentVNode("v-if", true),
+                  vue.createElementVNode("button", {
+                    class: "btn btn-default",
+                    onClick: vue.withModifiers(($event) => $options.goDetail(order), ["stop"])
+                  }, " 查看详情 ", 8, ["onClick"])
+                ])
+              ], 10, ["onClick"]);
+            }),
+            128
+            /* KEYED_FRAGMENT */
+          ))
+        ])) : (vue.openBlock(), vue.createElementBlock("view", {
+          key: 1,
+          class: "empty-state"
+        }, [
+          vue.createElementVNode("text", { class: "empty-icon" }, "📋"),
+          vue.createElementVNode("text", { class: "empty-text" }, "暂无订单"),
+          vue.createElementVNode(
+            "text",
+            { class: "empty-tip" },
+            vue.toDisplayString($data.currentStatus === "" ? "当前没有分配到你的配送订单" : "该状态下暂无订单"),
+            1
+            /* TEXT */
+          )
+        ])),
+        $data.loadingMore ? (vue.openBlock(), vue.createElementBlock("view", {
+          key: 2,
+          class: "load-more"
+        }, [
+          vue.createElementVNode("text", null, "加载中...")
+        ])) : vue.createCommentVNode("v-if", true)
+      ], 40, ["refresher-triggered"])
+    ]);
+  }
+  const PagesOrdersIndex = /* @__PURE__ */ _export_sfc(_sfc_main$b, [["render", _sfc_render$a], ["__scopeId", "data-v-e1e6274e"], ["__file", "E:/固始县外卖骑手端/pages/orders/index.vue"]]);
+  const _sfc_main$a = {
+    data() {
+      return {
+        orderId: null,
+        order: {}
+      };
+    },
+    onLoad(options) {
+      this.orderId = options.id;
+      this.loadOrderDetail();
+    },
+    onShow() {
+      if (this.orderId) {
+        this.loadOrderDetail();
+      }
+    },
+    methods: {
+      formatTime,
+      canRiderShowConfirmDelivery,
+      canRiderCallConfirmDeliveryApi,
+      canRiderOfferSpecialComplete,
+      getStatusText(status) {
+        var _a;
+        return ((_a = ORDER_STATUS[status]) == null ? void 0 : _a.text) || "未知";
+      },
+      getStatusColor(status) {
+        var _a, _b;
+        if (this.isTownOrder(this.order)) {
+          const townStatusColors = {
+            4: "#1f6f43",
+            5: "#2b8a57",
+            6: "#2b8a57"
+          };
+          return townStatusColors[Number(status)] || ((_a = ORDER_STATUS[status]) == null ? void 0 : _a.color) || "#999";
+        }
+        return ((_b = ORDER_STATUS[status]) == null ? void 0 : _b.color) || "#999";
+      },
+      isTownOrder(order = {}) {
+        return order.order_type === "town" || order.delivery_scope === "town_delivery" || !!this.getTownName(order);
+      },
+      getTownName(order = {}) {
+        return order.customer_town || order.town_name || order.rider_town || "";
+      },
+      canPickup(status) {
+        return Number(status) === 4;
+      },
+      getFullAddress(order) {
+        try {
+          const addr = typeof order.delivery_address === "string" ? JSON.parse(order.delivery_address) : order.delivery_address;
+          return addr.province + addr.city + addr.district + addr.street + addr.detail;
+        } catch (e) {
+          return "未知地址";
+        }
+      },
+      async loadOrderDetail() {
+        try {
+          const res = await getOrderDetail(this.orderId);
+          this.order = res.data || {};
+        } catch (e) {
+          formatAppLog("error", "at pages/orders/detail.vue:163", "加载订单详情失败", e);
+        }
+      },
+      handleConfirmDeliveryAction() {
+        const st = Number(this.order.status);
+        if (canRiderCallConfirmDeliveryApi(st)) {
+          uni.showModal({
+            title: "确认送达",
+            content: "确认订单已送达？",
+            confirmText: "确认送达",
+            cancelText: "取消",
+            success: async (res) => {
+              if (!res.confirm)
+                return;
+              if (!canRiderCallConfirmDeliveryApi(this.order.status)) {
+                uni.showToast({ title: "订单状态已变更，请刷新后重试", icon: "none" });
+                return;
+              }
+              try {
+                await confirmDelivery(this.orderId);
+                uni.showToast({ title: "送达成功", icon: "success" });
+                await this.loadOrderDetail();
+              } catch (e) {
+                formatAppLog("error", "at pages/orders/detail.vue:185", "确认送达失败", e);
+              }
+            }
+          });
+          return;
+        }
+        if (canRiderOfferSpecialComplete(st)) {
+          uni.showModal({
+            title: "确认送达",
+            content: "当前订单未进入配送中，将按特殊完结处理，确认继续？",
+            confirmText: "确认送达",
+            cancelText: "取消",
+            success: async (res) => {
+              if (!res.confirm)
+                return;
+              if (!canRiderOfferSpecialComplete(this.order.status)) {
+                uni.showToast({ title: "订单状态已变更，请刷新后重试", icon: "none" });
+                return;
+              }
+              try {
+                await confirmDeliverySpecial(this.orderId);
+                uni.showToast({ title: "操作成功", icon: "success" });
+                await this.loadOrderDetail();
+              } catch (e) {
+                formatAppLog("error", "at pages/orders/detail.vue:208", "特殊完结失败", e);
+              }
+            }
+          });
+          return;
+        }
+        uni.showToast({
+          title: "当前订单无法确认送达",
+          icon: "none",
+          duration: 2500
+        });
+      },
+      getRiderId() {
+        const userInfoStr = uni.getStorageSync("userInfo");
+        if (!userInfoStr) {
+          return "";
+        }
+        try {
+          const userInfo = JSON.parse(userInfoStr);
+          return userInfo.id || "";
+        } catch (e) {
+          formatAppLog("error", "at pages/orders/detail.vue:229", "解析用户信息失败", e);
+          return "";
+        }
+      },
+      parseAddress() {
+        try {
+          return typeof this.order.delivery_address === "string" ? JSON.parse(this.order.delivery_address) : this.order.delivery_address || {};
+        } catch (e) {
+          return {};
+        }
+      },
+      getCoordinateByKeys(source, keys) {
+        for (let i = 0; i < keys.length; i++) {
+          const value2 = source[keys[i]];
+          if (value2 !== void 0 && value2 !== null && value2 !== "") {
+            return value2;
+          }
+        }
+        return "";
+      },
+      getMerchantCoords() {
+        const address = this.parseAddress();
+        const merchant = this.order.merchant || {};
+        const lng = this.getCoordinateByKeys(merchant, ["lng", "lat_lng", "longitude", "lon", "map_lng", "merchant_lng", "merchantLng"]) || this.getCoordinateByKeys(this.order || {}, ["merchant_lng", "merchantLng", "shop_lng", "shopLng", "store_lng", "storeLng", "pickup_lng", "pickupLng", "from_lng", "fromLng"]) || this.getCoordinateByKeys(address, ["merchant_lng", "shop_lng", "store_lng", "pickup_lng", "from_lng"]);
+        const lat = this.getCoordinateByKeys(merchant, ["lat", "latitude", "map_lat", "merchant_lat", "merchantLat"]) || this.getCoordinateByKeys(this.order || {}, ["merchant_lat", "merchantLat", "shop_lat", "shopLat", "store_lat", "storeLat", "pickup_lat", "pickupLat", "from_lat", "fromLat"]) || this.getCoordinateByKeys(address, ["merchant_lat", "shop_lat", "store_lat", "pickup_lat", "from_lat"]);
+        return { lng, lat };
+      },
+      getCustomerCoords() {
+        const address = this.parseAddress();
+        const fallback = this.order || {};
+        const lng = this.getCoordinateByKeys(address, ["lng", "longitude", "lon", "map_lng", "delivery_lng", "deliveryLng", "user_lng", "receiver_lng", "to_lng", "dest_lng", "customer_lng", "customerLng"]) || this.getCoordinateByKeys(fallback, ["delivery_lng", "deliveryLng", "delivery_longitude", "user_lng", "userLng", "contact_lng", "receiver_lng", "to_lng", "dest_lng", "customer_lng", "customerLng"]);
+        const lat = this.getCoordinateByKeys(address, ["lat", "latitude", "map_lat", "delivery_lat", "deliveryLat", "user_lat", "receiver_lat", "to_lat", "dest_lat", "customer_lat", "customerLat"]) || this.getCoordinateByKeys(fallback, ["delivery_lat", "deliveryLat", "delivery_latitude", "user_lat", "userLat", "contact_lat", "receiver_lat", "to_lat", "dest_lat", "customer_lat", "customerLat"]);
+        return { lng, lat };
+      },
+      navigateToMap(payload) {
+        const riderId = this.getRiderId() || this.getCoordinateByKeys(this.order || {}, ["rider_id", "riderId", "user_id", "userId"]) || "test-rider";
+        const token = uni.getStorageSync("token") || "";
+        const stage = payload && payload.stage === "delivery" ? "delivery" : "pickup";
+        const safeTk = TIANDITU_TK;
+        const safeMerchantLng = payload && payload.merchantLng !== void 0 && payload.merchantLng !== null && payload.merchantLng !== "" ? String(payload.merchantLng) : "";
+        const safeMerchantLat = payload && payload.merchantLat !== void 0 && payload.merchantLat !== null && payload.merchantLat !== "" ? String(payload.merchantLat) : "";
+        const safeCustomerLng = payload && payload.customerLng !== void 0 && payload.customerLng !== null && payload.customerLng !== "" ? String(payload.customerLng) : "";
+        const safeCustomerLat = payload && payload.customerLat !== void 0 && payload.customerLat !== null && payload.customerLat !== "" ? String(payload.customerLat) : "";
+        uni.navigateTo({
+          url: `/pages/map/nav?riderId=${encodeURIComponent(riderId)}&token=${encodeURIComponent(token)}&stage=${encodeURIComponent(stage)}&tk=${encodeURIComponent(safeTk)}&merchantLng=${encodeURIComponent(safeMerchantLng)}&merchantLat=${encodeURIComponent(safeMerchantLat)}&customerLng=${encodeURIComponent(safeCustomerLng)}&customerLat=${encodeURIComponent(safeCustomerLat)}`
+        });
+      },
+      goPickup() {
+        const merchant = this.getMerchantCoords();
+        const customer = this.getCustomerCoords();
+        this.navigateToMap({
+          stage: "pickup",
+          merchantLng: merchant.lng,
+          merchantLat: merchant.lat,
+          customerLng: customer.lng,
+          customerLat: customer.lat
+        });
+      },
+      goDelivery() {
+        const merchant = this.getMerchantCoords();
+        const customer = this.getCustomerCoords();
+        this.navigateToMap({
+          stage: "delivery",
+          merchantLng: merchant.lng,
+          merchantLat: merchant.lat,
+          customerLng: customer.lng,
+          customerLat: customer.lat
+        });
+      },
+      callUser(phone) {
+        if (phone) {
+          uni.makePhoneCall({ phoneNumber: phone });
+        }
+      },
+      formatCoordinate(coords = {}) {
+        if (coords.lng === "" || coords.lat === "") {
+          return "未提供坐标";
+        }
+        return `${coords.lng}, ${coords.lat}`;
+      },
+      async handlePickup() {
+        if (!this.canPickup(this.order.status)) {
+          uni.showToast({ title: "当前订单不可取餐", icon: "none" });
+          return;
+        }
+        uni.showModal({
+          title: "确认取餐",
+          content: "确认已取餐并开始配送？",
+          confirmText: "开始配送",
+          cancelText: "取消",
+          success: async (res) => {
+            if (!res.confirm)
+              return;
+            try {
+              await riderPickup(this.orderId);
+              uni.showToast({ title: "已开始配送", icon: "success" });
+              await this.loadOrderDetail();
+            } catch (e) {
+              formatAppLog("error", "at pages/orders/detail.vue:334", "取餐失败", e);
+            }
+          }
+        });
+      }
+    }
+  };
+  function _sfc_render$9(_ctx, _cache, $props, $setup, $data, $options) {
+    var _a;
+    return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
+      vue.createElementVNode("view", { class: "card" }, [
+        vue.createElementVNode("text", { class: "section-title" }, "订单信息"),
+        vue.createElementVNode(
+          "view",
+          {
+            class: vue.normalizeClass(["scope-banner", { "town-banner": $options.isTownOrder($data.order) }])
+          },
+          vue.toDisplayString($options.isTownOrder($data.order) ? `乡镇配送｜${$options.getTownName($data.order) || "未标注乡镇"}` : "县城配送"),
+          3
+          /* TEXT, CLASS */
+        ),
+        vue.createElementVNode("view", { class: "info-row" }, [
+          vue.createElementVNode("text", { class: "label" }, "订单号"),
+          vue.createElementVNode(
+            "text",
+            { class: "value" },
+            vue.toDisplayString($data.order.order_no),
+            1
+            /* TEXT */
+          )
+        ]),
+        vue.createElementVNode("view", { class: "info-row" }, [
+          vue.createElementVNode("text", { class: "label" }, "订单状态"),
+          vue.createElementVNode(
+            "text",
+            {
+              class: "value status",
+              style: vue.normalizeStyle({ color: $options.getStatusColor($data.order.status) })
+            },
+            vue.toDisplayString($options.getStatusText($data.order.status)),
+            5
+            /* TEXT, STYLE */
+          )
+        ]),
+        vue.createElementVNode("view", { class: "info-row" }, [
+          vue.createElementVNode("text", { class: "label" }, "下单时间"),
+          vue.createElementVNode(
+            "text",
+            { class: "value" },
+            vue.toDisplayString($options.formatTime($data.order.created_at)),
+            1
+            /* TEXT */
+          )
+        ])
+      ]),
+      vue.createElementVNode("view", { class: "card" }, [
+        vue.createElementVNode("text", { class: "section-title" }, "配送信息"),
+        vue.createElementVNode("view", { class: "info-row" }, [
+          vue.createElementVNode("text", { class: "label" }, "商家名称"),
+          vue.createElementVNode(
+            "text",
+            { class: "value" },
+            vue.toDisplayString(((_a = $data.order.merchant) == null ? void 0 : _a.name) || "未知商家"),
+            1
+            /* TEXT */
+          )
+        ]),
+        vue.createElementVNode("view", { class: "info-row" }, [
+          vue.createElementVNode("text", { class: "label" }, "配送地址"),
+          vue.createElementVNode(
+            "text",
+            { class: "value" },
+            vue.toDisplayString($options.getFullAddress($data.order)),
+            1
+            /* TEXT */
+          )
+        ]),
+        $options.getTownName($data.order) ? (vue.openBlock(), vue.createElementBlock("view", {
+          key: 0,
+          class: "info-row"
+        }, [
+          vue.createElementVNode("text", { class: "label" }, "所属乡镇"),
+          vue.createElementVNode(
+            "text",
+            { class: "value" },
+            vue.toDisplayString($options.getTownName($data.order)),
+            1
+            /* TEXT */
+          )
+        ])) : vue.createCommentVNode("v-if", true),
+        vue.createElementVNode("view", { class: "info-row" }, [
+          vue.createElementVNode("text", { class: "label" }, "联系人"),
+          vue.createElementVNode(
+            "text",
+            { class: "value" },
+            vue.toDisplayString($data.order.contact_name),
+            1
+            /* TEXT */
+          )
+        ]),
+        vue.createElementVNode("view", { class: "info-row" }, [
+          vue.createElementVNode("text", { class: "label" }, "联系电话"),
+          vue.createElementVNode(
+            "text",
+            {
+              class: "value",
+              onClick: _cache[0] || (_cache[0] = ($event) => $options.callUser($data.order.contact_phone))
+            },
+            vue.toDisplayString($data.order.contact_phone),
+            1
+            /* TEXT */
+          )
+        ]),
+        vue.createElementVNode("view", { class: "info-row" }, [
+          vue.createElementVNode("text", { class: "label" }, "商家坐标"),
+          vue.createElementVNode(
+            "text",
+            { class: "value" },
+            vue.toDisplayString($options.formatCoordinate($options.getMerchantCoords())),
+            1
+            /* TEXT */
+          )
+        ]),
+        vue.createElementVNode("view", { class: "info-row" }, [
+          vue.createElementVNode("text", { class: "label" }, "用户坐标"),
+          vue.createElementVNode(
+            "text",
+            { class: "value" },
+            vue.toDisplayString($options.formatCoordinate($options.getCustomerCoords())),
+            1
+            /* TEXT */
+          )
+        ])
+      ]),
+      vue.createElementVNode("view", { class: "card" }, [
+        vue.createElementVNode("text", { class: "section-title" }, "费用信息"),
+        vue.createElementVNode("view", { class: "info-row" }, [
+          vue.createElementVNode("text", { class: "label" }, "订单总额"),
+          vue.createElementVNode(
+            "text",
+            { class: "value" },
+            "¥" + vue.toDisplayString($data.order.pay_amount),
+            1
+            /* TEXT */
+          )
+        ]),
+        vue.createElementVNode("view", { class: "info-row" }, [
+          vue.createElementVNode("text", { class: "label" }, "配送费"),
+          vue.createElementVNode(
+            "text",
+            { class: "value highlight" },
+            "¥" + vue.toDisplayString($data.order.rider_fee),
+            1
+            /* TEXT */
+          )
+        ])
+      ]),
+      vue.createElementVNode("view", { class: "action-bar" }, [
+        $options.canPickup($data.order.status) ? (vue.openBlock(), vue.createElementBlock("button", {
+          key: 0,
+          class: "btn btn-primary",
+          onClick: _cache[1] || (_cache[1] = (...args) => $options.handlePickup && $options.handlePickup(...args))
+        }, " 取餐并开始配送 ")) : vue.createCommentVNode("v-if", true),
+        vue.createElementVNode("button", {
+          class: "btn btn-primary",
+          onClick: _cache[2] || (_cache[2] = (...args) => $options.goPickup && $options.goPickup(...args))
+        }, " 去取餐 "),
+        vue.createElementVNode("button", {
+          class: "btn btn-primary",
+          onClick: _cache[3] || (_cache[3] = (...args) => $options.goDelivery && $options.goDelivery(...args))
+        }, " 去送餐 "),
+        $options.canRiderShowConfirmDelivery($data.order.status) ? (vue.openBlock(), vue.createElementBlock("button", {
+          key: 1,
+          class: "btn btn-success",
+          onClick: _cache[4] || (_cache[4] = (...args) => $options.handleConfirmDeliveryAction && $options.handleConfirmDeliveryAction(...args))
+        }, " 确认送达 ")) : vue.createCommentVNode("v-if", true)
+      ])
+    ]);
+  }
+  const PagesOrdersDetail = /* @__PURE__ */ _export_sfc(_sfc_main$a, [["render", _sfc_render$9], ["__scopeId", "data-v-bc4602bd"], ["__file", "E:/固始县外卖骑手端/pages/orders/detail.vue"]]);
+  const _sfc_main$9 = {
     data() {
       return {
         webViewSrc: "",
@@ -5238,6 +6002,8 @@ if (uni.restoreGlobal) {
         watchId: null,
         trackingTimer: null,
         lastSent: { lng: null, lat: null, ts: 0 },
+        mapBridgeReady: false,
+        pendingBridgePayload: null,
         fallbackPos: { lng: 115.66638, lat: 32.18385 },
         isDestroyed: false
       };
@@ -5300,6 +6066,8 @@ if (uni.restoreGlobal) {
     },
     onUnload() {
       this.isDestroyed = true;
+      this.mapBridgeReady = false;
+      this.pendingBridgePayload = null;
       this.stopLocationTracking();
       this.destroySocket();
       if (this.isH5) {
@@ -5315,13 +6083,27 @@ if (uni.restoreGlobal) {
       }
     },
     methods: {
-      onMapMessage(e) {
-        const d = e && e.data ? e.data : null;
-        if (!d || d.type !== "sim_location") {
+      normalizeHeadingValue(value2) {
+        const n = Number(value2);
+        return Number.isFinite(n) ? n : null;
+      },
+      handleMapBridgeMessage(d) {
+        if (!d || !d.type) {
+          return;
+        }
+        if (d.type === "map_ready") {
+          this.mapBridgeReady = true;
+          if (this.pendingBridgePayload) {
+            this.sendBridgePayloadToMap(this.pendingBridgePayload);
+            this.pendingBridgePayload = null;
+          }
+          return;
+        }
+        if (d.type !== "sim_location") {
           return;
         }
         this.stopLocationTracking();
-        formatAppLog("log", "at pages/map/nav.vue:128", "收到模拟导航坐标:", d.lng, d.lat);
+        formatAppLog("log", "at pages/map/nav.vue:146", "收到模拟导航坐标:", d.lng, d.lat);
         const pos = {
           lng: d.lng,
           lat: d.lat,
@@ -5331,9 +6113,70 @@ if (uni.restoreGlobal) {
         };
         this.emitLocationForce(pos);
       },
+      onAppMapMessage(event) {
+        const list = event && event.detail && Array.isArray(event.detail.data) ? event.detail.data : [];
+        list.forEach((item) => {
+          const payload = item && item.data ? item.data : item;
+          this.handleMapBridgeMessage(payload);
+        });
+      },
+      sendBridgePayloadToMap(payload) {
+        if (!payload || this.isDestroyed) {
+          return;
+        }
+        if (this.isH5) {
+          const frame = this.$refs.mapFrame;
+          const win = frame && frame.contentWindow ? frame.contentWindow : null;
+          if (win && typeof win.postMessage === "function") {
+            win.postMessage(payload, "*");
+          }
+          return;
+        }
+        try {
+          if (!this.$scope || typeof this.$scope.$getAppWebview !== "function") {
+            return;
+          }
+          const currentWebview = this.$scope.$getAppWebview();
+          const children = currentWebview && typeof currentWebview.children === "function" ? currentWebview.children() : [];
+          const targetWebview = children && children.length ? children[children.length - 1] : null;
+          if (targetWebview && typeof targetWebview.evalJS === "function") {
+            const payloadStr = JSON.stringify(payload);
+            targetWebview.evalJS(`window.receiveRiderLocation && window.receiveRiderLocation(${payloadStr})`);
+          }
+        } catch (e) {
+          formatAppLog("warn", "at pages/map/nav.vue:189", "桥接地图页定位失败:", e);
+        }
+      },
+      bridgeLocationToMap(pos) {
+        if (!pos || this.isDestroyed) {
+          return;
+        }
+        const lng = Number(pos.lng);
+        const lat = Number(pos.lat);
+        if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
+          return;
+        }
+        const payload = {
+          type: "rider_location",
+          lng,
+          lat,
+          speed: Number(pos.speed) || 0,
+          heading: this.normalizeHeadingValue(pos.heading),
+          ts: Date.now()
+        };
+        if (!this.mapBridgeReady) {
+          this.pendingBridgePayload = payload;
+          return;
+        }
+        this.sendBridgePayloadToMap(payload);
+      },
+      onMapMessage(e) {
+        const d = e && e.data ? e.data : null;
+        this.handleMapBridgeMessage(d);
+      },
       initSocket() {
         const SOCKET_URL = "http://121.43.190.218:3000";
-        formatAppLog("log", "at pages/map/nav.vue:140", "开始初始化 Socket.io，目标地址:", SOCKET_URL);
+        formatAppLog("log", "at pages/map/nav.vue:221", "开始初始化 Socket.io，目标地址:", SOCKET_URL);
         try {
           this.socket = lookup(SOCKET_URL, {
             transports: ["websocket", "polling"],
@@ -5353,26 +6196,26 @@ if (uni.restoreGlobal) {
             timeout: 1e4
           });
           this.socket.on("connect", () => {
-            formatAppLog("log", "at pages/map/nav.vue:162", "✅ Socket 已成功连接到:", SOCKET_URL);
-            formatAppLog("log", "at pages/map/nav.vue:163", "Socket ID:", this.socket.id);
-            formatAppLog("log", "at pages/map/nav.vue:164", "当前角色: rider, userId:", this.riderId);
+            formatAppLog("log", "at pages/map/nav.vue:243", "✅ Socket 已成功连接到:", SOCKET_URL);
+            formatAppLog("log", "at pages/map/nav.vue:244", "Socket ID:", this.socket.id);
+            formatAppLog("log", "at pages/map/nav.vue:245", "当前角色: rider, userId:", this.riderId);
           });
           this.socket.on("connect_error", (err) => {
-            formatAppLog("error", "at pages/map/nav.vue:168", "❌ Socket 连接失败:", err.message);
-            formatAppLog("error", "at pages/map/nav.vue:169", "错误详情:", err);
+            formatAppLog("error", "at pages/map/nav.vue:249", "❌ Socket 连接失败:", err.message);
+            formatAppLog("error", "at pages/map/nav.vue:250", "错误详情:", err);
           });
           this.socket.on("disconnect", (reason) => {
-            formatAppLog("warn", "at pages/map/nav.vue:173", "⚠️ Socket 已断开，原因:", reason);
+            formatAppLog("warn", "at pages/map/nav.vue:254", "⚠️ Socket 已断开，原因:", reason);
           });
           this.socket.on("reconnect", (attemptNumber) => {
-            formatAppLog("log", "at pages/map/nav.vue:177", "🔄 Socket 重连成功，尝试次数:", attemptNumber);
+            formatAppLog("log", "at pages/map/nav.vue:258", "🔄 Socket 重连成功，尝试次数:", attemptNumber);
           });
           this.socket.on("reconnect_error", (err) => {
-            formatAppLog("error", "at pages/map/nav.vue:181", "❌ Socket 重连失败:", err.message);
+            formatAppLog("error", "at pages/map/nav.vue:262", "❌ Socket 重连失败:", err.message);
           });
-          formatAppLog("log", "at pages/map/nav.vue:184", "Socket.io 实例已创建:", this.socket ? "成功" : "失败");
+          formatAppLog("log", "at pages/map/nav.vue:265", "Socket.io 实例已创建:", this.socket ? "成功" : "失败");
         } catch (e) {
-          formatAppLog("error", "at pages/map/nav.vue:186", "❌ Socket 初始化异常:", e);
+          formatAppLog("error", "at pages/map/nav.vue:267", "❌ Socket 初始化异常:", e);
           this.socket = null;
         }
       },
@@ -5408,7 +6251,7 @@ if (uni.restoreGlobal) {
                   lng: p.coords.longitude,
                   lat: p.coords.latitude,
                   speed: p.coords.speed || 0,
-                  heading: p.coords.heading || 0,
+                  heading: this.normalizeHeadingValue(p.coords.heading),
                   source: "real"
                 };
                 this.emitLocation(pos);
@@ -5447,22 +6290,22 @@ if (uni.restoreGlobal) {
               isHighAccuracy: true,
               highAccuracyExpireTime: 3e3,
               success: (res) => {
-                formatAppLog("log", "at pages/map/nav.vue:257", "✅ uni.getLocation 成功:", res.longitude, res.latitude);
+                formatAppLog("log", "at pages/map/nav.vue:338", "✅ uni.getLocation 成功:", res.longitude, res.latitude);
                 resolve({
                   lng: res.longitude,
                   lat: res.latitude,
                   speed: res.speed || 0,
-                  heading: res.direction || 0,
+                  heading: this.normalizeHeadingValue(res.direction),
                   source: "real"
                 });
               },
               fail: (err) => {
-                formatAppLog("warn", "at pages/map/nav.vue:267", "⚠️ uni.getLocation 失败:", err);
+                formatAppLog("warn", "at pages/map/nav.vue:348", "⚠️ uni.getLocation 失败:", err);
                 resolve(null);
               }
             });
           } catch (e) {
-            formatAppLog("warn", "at pages/map/nav.vue:272", "⚠️ uni.getLocation 异常:", e);
+            formatAppLog("warn", "at pages/map/nav.vue:353", "⚠️ uni.getLocation 异常:", e);
             resolve(null);
           }
         });
@@ -5477,30 +6320,30 @@ if (uni.restoreGlobal) {
             }
             navigator.geolocation.getCurrentPosition(
               (p) => {
-                formatAppLog("log", "at pages/map/nav.vue:288", "✅ navigator.geolocation 成功:", p.coords.longitude, p.coords.latitude);
+                formatAppLog("log", "at pages/map/nav.vue:369", "✅ navigator.geolocation 成功:", p.coords.longitude, p.coords.latitude);
                 resolve({
                   lng: p.coords.longitude,
                   lat: p.coords.latitude,
                   speed: p.coords.speed || 0,
-                  heading: p.coords.heading || 0,
+                  heading: this.normalizeHeadingValue(p.coords.heading),
                   source: "real"
                 });
               },
               (err) => {
-                formatAppLog("warn", "at pages/map/nav.vue:298", "⚠️ navigator.geolocation 失败:", err);
+                formatAppLog("warn", "at pages/map/nav.vue:379", "⚠️ navigator.geolocation 失败:", err);
                 resolve(null);
               },
               { enableHighAccuracy: true, timeout: 3e3, maximumAge: 1e3 }
             );
           } catch (e) {
-            formatAppLog("warn", "at pages/map/nav.vue:304", "⚠️ navigator.geolocation 异常:", e);
+            formatAppLog("warn", "at pages/map/nav.vue:385", "⚠️ navigator.geolocation 异常:", e);
             resolve(null);
           }
         });
         if (navPos && navPos.lng && navPos.lat) {
           return navPos;
         }
-        formatAppLog("warn", "at pages/map/nav.vue:312", "🔄 所有定位方式失败，使用固始县兜底坐标:", this.fallbackPos);
+        formatAppLog("warn", "at pages/map/nav.vue:393", "🔄 所有定位方式失败，使用固始县兜底坐标:", this.fallbackPos);
         uni.showToast({ title: "使用模拟测试坐标", icon: "none" });
         return {
           lng: this.fallbackPos.lng,
@@ -5541,6 +6384,12 @@ if (uni.restoreGlobal) {
           return;
         }
         this.lastSent = { lng, lat, ts: Date.now() };
+        this.bridgeLocationToMap({
+          lng,
+          lat,
+          speed: pos.speed || 0,
+          heading: this.normalizeHeadingValue(pos.heading)
+        });
         this.doEmitLocation(lng, lat, pos);
       },
       emitLocationForce(pos) {
@@ -5559,11 +6408,11 @@ if (uni.restoreGlobal) {
       },
       doEmitLocation(lng, lat, pos) {
         if (!this.socket) {
-          formatAppLog("warn", "at pages/map/nav.vue:370", "Socket 未初始化，无法上报坐标");
+          formatAppLog("warn", "at pages/map/nav.vue:457", "Socket 未初始化，无法上报坐标");
           return;
         }
         if (!this.socket.connected) {
-          formatAppLog("warn", "at pages/map/nav.vue:374", "Socket 未连接，尝试重连...");
+          formatAppLog("warn", "at pages/map/nav.vue:461", "Socket 未连接，尝试重连...");
           this.socket.connect();
         }
         try {
@@ -5577,9 +6426,9 @@ if (uni.restoreGlobal) {
             timestamp: Date.now()
           };
           this.socket.emit("location_update", payload);
-          formatAppLog("log", "at pages/map/nav.vue:388", "✅ 坐标已上报:", lng.toFixed(6), lat.toFixed(6), "vehicleId:", this.riderId);
+          formatAppLog("log", "at pages/map/nav.vue:475", "✅ 坐标已上报:", lng.toFixed(6), lat.toFixed(6), "vehicleId:", this.riderId);
         } catch (e) {
-          formatAppLog("error", "at pages/map/nav.vue:390", "坐标上报失败:", e);
+          formatAppLog("error", "at pages/map/nav.vue:477", "坐标上报失败:", e);
         }
       },
       handlePickup() {
@@ -5613,6 +6462,8 @@ if (uni.restoreGlobal) {
         const pos = await this.getLocationWithFallback();
         const timestamp = Date.now();
         const htmlPath = this.isH5 ? "/static/driver_map.html" : "/hybrid/html/driver_map.html";
+        this.mapBridgeReady = false;
+        this.pendingBridgePayload = null;
         const url2 = `${htmlPath}?t=${timestamp}&stage=${encodeURIComponent(this.stage)}&tk=${encodeURIComponent(this.tk)}&startLng=${encodeURIComponent(String(pos.lng))}&startLat=${encodeURIComponent(String(pos.lat))}&destLng=${encodeURIComponent(destLng)}&destLat=${encodeURIComponent(destLat)}`;
         this.webViewSrc = url2;
         this.emitLocation(pos);
@@ -5635,7 +6486,7 @@ if (uni.restoreGlobal) {
       }
     }
   };
-  function _sfc_render$6(_ctx, _cache, $props, $setup, $data, $options) {
+  function _sfc_render$8(_ctx, _cache, $props, $setup, $data, $options) {
     return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
       $options.isH5 && $data.webViewSrc ? (vue.openBlock(), vue.createElementBlock("iframe", {
         key: 0,
@@ -5645,8 +6496,9 @@ if (uni.restoreGlobal) {
       }, null, 8, ["src"])) : $data.webViewSrc ? (vue.openBlock(), vue.createElementBlock("web-view", {
         key: 1,
         class: "web-view",
-        src: $data.webViewSrc
-      }, null, 8, ["src"])) : (vue.openBlock(), vue.createElementBlock("view", {
+        src: $data.webViewSrc,
+        onMessage: _cache[0] || (_cache[0] = (...args) => $options.onAppMapMessage && $options.onAppMapMessage(...args))
+      }, null, 40, ["src"])) : (vue.openBlock(), vue.createElementBlock("view", {
         key: 2,
         class: "map-placeholder"
       }, [
@@ -5657,7 +6509,7 @@ if (uni.restoreGlobal) {
           "button",
           {
             class: vue.normalizeClass(["btn btn-primary", { active: $data.stage === "pickup" }]),
-            onClick: _cache[0] || (_cache[0] = (...args) => $options.handlePickup && $options.handlePickup(...args))
+            onClick: _cache[1] || (_cache[1] = (...args) => $options.handlePickup && $options.handlePickup(...args))
           },
           "去取餐",
           2
@@ -5667,7 +6519,7 @@ if (uni.restoreGlobal) {
           "button",
           {
             class: vue.normalizeClass(["btn btn-primary", { active: $data.stage === "delivery" }]),
-            onClick: _cache[1] || (_cache[1] = (...args) => $options.handleDelivery && $options.handleDelivery(...args))
+            onClick: _cache[2] || (_cache[2] = (...args) => $options.handleDelivery && $options.handleDelivery(...args))
           },
           "去送餐",
           2
@@ -5678,7 +6530,7 @@ if (uni.restoreGlobal) {
           {
             key: 0,
             class: "btn btn-sim",
-            onClick: _cache[2] || (_cache[2] = (...args) => $options.toggleSimulate && $options.toggleSimulate(...args))
+            onClick: _cache[3] || (_cache[3] = (...args) => $options.toggleSimulate && $options.toggleSimulate(...args))
           },
           vue.toDisplayString($data.simRunning ? "停止模拟" : "模拟送货"),
           1
@@ -5687,13 +6539,13 @@ if (uni.restoreGlobal) {
       ])
     ]);
   }
-  const PagesMapNav = /* @__PURE__ */ _export_sfc(_sfc_main$7, [["render", _sfc_render$6], ["__scopeId", "data-v-0827d2c9"], ["__file", "E:/固始县外卖骑手端/pages/map/nav.vue"]]);
-  const _sfc_main$6 = {
+  const PagesMapNav = /* @__PURE__ */ _export_sfc(_sfc_main$9, [["render", _sfc_render$8], ["__scopeId", "data-v-0827d2c9"], ["__file", "E:/固始县外卖骑手端/pages/map/nav.vue"]]);
+  const _sfc_main$8 = {
     data() {
       return {};
     }
   };
-  function _sfc_render$5(_ctx, _cache, $props, $setup, $data, $options) {
+  function _sfc_render$7(_ctx, _cache, $props, $setup, $data, $options) {
     return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
       vue.createElementVNode("view", { class: "empty-state" }, [
         vue.createElementVNode("text", { class: "empty-icon" }, "🏃"),
@@ -5702,13 +6554,13 @@ if (uni.restoreGlobal) {
       ])
     ]);
   }
-  const PagesErrandsIndex = /* @__PURE__ */ _export_sfc(_sfc_main$6, [["render", _sfc_render$5], ["__scopeId", "data-v-04967d3f"], ["__file", "E:/固始县外卖骑手端/pages/errands/index.vue"]]);
-  const _sfc_main$5 = {
+  const PagesErrandsIndex = /* @__PURE__ */ _export_sfc(_sfc_main$8, [["render", _sfc_render$7], ["__scopeId", "data-v-04967d3f"], ["__file", "E:/固始县外卖骑手端/pages/errands/index.vue"]]);
+  const _sfc_main$7 = {
     data() {
       return {};
     }
   };
-  function _sfc_render$4(_ctx, _cache, $props, $setup, $data, $options) {
+  function _sfc_render$6(_ctx, _cache, $props, $setup, $data, $options) {
     return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
       vue.createElementVNode("view", { class: "empty-state" }, [
         vue.createElementVNode("text", { class: "empty-icon" }, "📝"),
@@ -5717,22 +6569,450 @@ if (uni.restoreGlobal) {
       ])
     ]);
   }
-  const PagesErrandsDetail = /* @__PURE__ */ _export_sfc(_sfc_main$5, [["render", _sfc_render$4], ["__scopeId", "data-v-bf14a200"], ["__file", "E:/固始县外卖骑手端/pages/errands/detail.vue"]]);
-  const _sfc_main$4 = {
+  const PagesErrandsDetail = /* @__PURE__ */ _export_sfc(_sfc_main$7, [["render", _sfc_render$6], ["__scopeId", "data-v-bf14a200"], ["__file", "E:/固始县外卖骑手端/pages/errands/detail.vue"]]);
+  const _sfc_main$6 = {
     data() {
       return {};
     }
   };
-  function _sfc_render$3(_ctx, _cache, $props, $setup, $data, $options) {
+  function _sfc_render$5(_ctx, _cache, $props, $setup, $data, $options) {
     return vue.openBlock(), vue.createElementBlock("view", { class: "container" }, [
       vue.createElementVNode("view", { class: "empty-state" }, [
         vue.createElementVNode("text", { class: "empty-icon" }, "💰"),
-        vue.createElementVNode("text", { class: "empty-text" }, "收入明细"),
-        vue.createElementVNode("text", { class: "empty-tip" }, "功能开发中，敬请期待...")
+        vue.createElementVNode("text", { class: "empty-text" }, "订单收入汇总"),
+        vue.createElementVNode("text", { class: "empty-tip" }, "当前未开放到账时间与收入流水展示，相关能力待结算接口完善后开放。")
       ])
     ]);
   }
-  const PagesEarningsIndex = /* @__PURE__ */ _export_sfc(_sfc_main$4, [["render", _sfc_render$3], ["__scopeId", "data-v-0c33edd9"], ["__file", "E:/固始县外卖骑手端/pages/earnings/index.vue"]]);
+  const PagesEarningsIndex = /* @__PURE__ */ _export_sfc(_sfc_main$6, [["render", _sfc_render$5], ["__scopeId", "data-v-0c33edd9"], ["__file", "E:/固始县外卖骑手端/pages/earnings/index.vue"]]);
+  function pickList$2(payload) {
+    if (Array.isArray(payload))
+      return payload;
+    if (Array.isArray(payload == null ? void 0 : payload.list))
+      return payload.list;
+    if (Array.isArray(payload == null ? void 0 : payload.rows))
+      return payload.rows;
+    if (Array.isArray(payload == null ? void 0 : payload.data))
+      return payload.data;
+    return [];
+  }
+  function pickConversationId(item = {}) {
+    return item.id || item.conversation_id || item.conversationId || "";
+  }
+  function pickUserName(item = {}) {
+    var _a, _b;
+    return item.user_nickname || item.userName || item.user_name || ((_a = item.user) == null ? void 0 : _a.nickname) || ((_b = item.user) == null ? void 0 : _b.name) || "用户";
+  }
+  function pickTownName(item = {}) {
+    return item.town_name || item.townName || item.town || item.delivery_town || item.user_town || "未标注乡镇";
+  }
+  function pickPreview(item = {}) {
+    const lastMessage = item.last_message || item.latest_message || {};
+    return item.last_message_content || item.lastContent || lastMessage.content || "";
+  }
+  function pickLastTime(item = {}) {
+    const lastMessage = item.last_message || item.latest_message || {};
+    return item.last_message_time || item.updated_at || item.lastTime || lastMessage.created_at || item.created_at || "";
+  }
+  function pickUnreadCount$1(item = {}) {
+    const unread = item.unread_count ?? item.unreadCount ?? item.unread_num;
+    return Number(unread) > 0 ? Number(unread) : 0;
+  }
+  const _sfc_main$5 = {
+    data() {
+      return {
+        loading: false,
+        conversations: [],
+        conversationPollTimer: null
+      };
+    },
+    onShow() {
+      this.initConversationPolling();
+    },
+    onHide() {
+      this.stopConversationPolling();
+    },
+    onUnload() {
+      this.stopConversationPolling();
+    },
+    onPullDownRefresh() {
+      this.loadConversations(false);
+    },
+    methods: {
+      formatTime,
+      async initConversationPolling() {
+        await this.loadConversations(true);
+        this.startConversationPolling();
+      },
+      async loadConversations(showLoading = true) {
+        if (showLoading) {
+          this.loading = true;
+        }
+        try {
+          const res = await getTownErrandConversations();
+          const source = pickList$2((res == null ? void 0 : res.data) ?? res);
+          this.conversations = source.map((item) => {
+            const id = pickConversationId(item);
+            if (!id) {
+              return null;
+            }
+            return {
+              id,
+              raw: item,
+              userName: pickUserName(item),
+              townName: pickTownName(item),
+              preview: pickPreview(item),
+              lastTime: pickLastTime(item),
+              unreadCount: pickUnreadCount$1(item)
+            };
+          }).filter(Boolean);
+        } catch (error) {
+          formatAppLog("error", "at pages/station-messages/index.vue:129", "加载镇上跑腿代购会话失败", error);
+          this.conversations = [];
+        } finally {
+          this.loading = false;
+          uni.stopPullDownRefresh();
+        }
+      },
+      startConversationPolling() {
+        this.stopConversationPolling();
+        this.conversationPollTimer = setInterval(() => {
+          this.loadConversations(false);
+        }, 2e3);
+      },
+      stopConversationPolling() {
+        if (this.conversationPollTimer) {
+          clearInterval(this.conversationPollTimer);
+          this.conversationPollTimer = null;
+        }
+      },
+      openConversation(item) {
+        const title = encodeURIComponent(item.userName || "会话详情");
+        uni.navigateTo({
+          url: `/pages/station-messages/detail?id=${item.id}&title=${title}`
+        });
+      }
+    }
+  };
+  function _sfc_render$4(_ctx, _cache, $props, $setup, $data, $options) {
+    return vue.openBlock(), vue.createElementBlock("view", { class: "page" }, [
+      vue.createElementVNode("view", { class: "page-header" }, [
+        vue.createElementVNode("text", { class: "page-title" }, "跑腿代购消息"),
+        vue.createElementVNode("text", { class: "page-tip" }, "仅显示当前乡镇站长的真实会话")
+      ]),
+      $data.loading && $data.conversations.length === 0 ? (vue.openBlock(), vue.createElementBlock("view", {
+        key: 0,
+        class: "state-wrap"
+      }, [
+        vue.createElementVNode("text", { class: "state-text" }, "加载中...")
+      ])) : $data.conversations.length === 0 ? (vue.openBlock(), vue.createElementBlock("view", {
+        key: 1,
+        class: "state-wrap"
+      }, [
+        vue.createElementVNode("text", { class: "state-text" }, "暂无跑腿代购消息")
+      ])) : (vue.openBlock(), vue.createElementBlock("view", {
+        key: 2,
+        class: "conversation-list"
+      }, [
+        (vue.openBlock(true), vue.createElementBlock(
+          vue.Fragment,
+          null,
+          vue.renderList($data.conversations, (item) => {
+            return vue.openBlock(), vue.createElementBlock("view", {
+              key: item.id,
+              class: "conversation-card",
+              onClick: ($event) => $options.openConversation(item)
+            }, [
+              vue.createElementVNode("view", { class: "conversation-top" }, [
+                vue.createElementVNode("view", { class: "conversation-meta" }, [
+                  vue.createElementVNode(
+                    "text",
+                    { class: "user-name" },
+                    vue.toDisplayString(item.userName),
+                    1
+                    /* TEXT */
+                  ),
+                  vue.createElementVNode(
+                    "text",
+                    { class: "town-name" },
+                    vue.toDisplayString(item.townName),
+                    1
+                    /* TEXT */
+                  )
+                ]),
+                item.lastTime ? (vue.openBlock(), vue.createElementBlock(
+                  "text",
+                  {
+                    key: 0,
+                    class: "time-text"
+                  },
+                  vue.toDisplayString($options.formatTime(item.lastTime)),
+                  1
+                  /* TEXT */
+                )) : vue.createCommentVNode("v-if", true)
+              ]),
+              vue.createElementVNode("view", { class: "conversation-bottom" }, [
+                vue.createElementVNode(
+                  "text",
+                  { class: "preview-text" },
+                  vue.toDisplayString(item.preview || "暂无消息内容"),
+                  1
+                  /* TEXT */
+                ),
+                item.unreadCount > 0 ? (vue.openBlock(), vue.createElementBlock(
+                  "text",
+                  {
+                    key: 0,
+                    class: "unread-badge"
+                  },
+                  vue.toDisplayString(item.unreadCount),
+                  1
+                  /* TEXT */
+                )) : vue.createCommentVNode("v-if", true)
+              ])
+            ], 8, ["onClick"]);
+          }),
+          128
+          /* KEYED_FRAGMENT */
+        ))
+      ]))
+    ]);
+  }
+  const PagesStationMessagesIndex = /* @__PURE__ */ _export_sfc(_sfc_main$5, [["render", _sfc_render$4], ["__scopeId", "data-v-b1eca758"], ["__file", "E:/固始县外卖骑手端/pages/station-messages/index.vue"]]);
+  function pickList$1(payload) {
+    if (Array.isArray(payload))
+      return payload;
+    if (Array.isArray(payload == null ? void 0 : payload.list))
+      return payload.list;
+    if (Array.isArray(payload == null ? void 0 : payload.rows))
+      return payload.rows;
+    if (Array.isArray(payload == null ? void 0 : payload.data))
+      return payload.data;
+    return [];
+  }
+  function pickMessageId(item = {}, index = 0) {
+    return item.id || item.message_id || item.messageId || `${index}-${item.created_at || Date.now()}`;
+  }
+  function pickMessageContent(item = {}) {
+    return item.content || item.message || item.text || "";
+  }
+  function pickMessageTime(item = {}) {
+    return item.created_at || item.createdAt || item.sent_at || item.updated_at || "";
+  }
+  function pickSenderId(item = {}) {
+    return item.sender_id || item.user_id || item.from_user_id || item.fromUserId || "";
+  }
+  function pickSenderRole(item = {}) {
+    return String(item.sender_role || item.role || item.sender_type || item.user_role || "").toLowerCase();
+  }
+  const _sfc_main$4 = {
+    data() {
+      return {
+        conversationId: "",
+        pageTitle: "会话详情",
+        draft: "",
+        loading: false,
+        sending: false,
+        messages: [],
+        currentUserId: "",
+        scrollAnchor: "",
+        messagePollTimer: null
+      };
+    },
+    onLoad(options) {
+      this.conversationId = options.id || "";
+      this.pageTitle = decodeURIComponent(options.title || "会话详情");
+      const storedUser = getUserInfo$1();
+      this.currentUserId = (storedUser == null ? void 0 : storedUser.id) || "";
+    },
+    onShow() {
+      this.initMessagePolling();
+    },
+    onHide() {
+      this.stopMessagePolling();
+    },
+    onUnload() {
+      this.stopMessagePolling();
+    },
+    methods: {
+      formatTime,
+      async initMessagePolling() {
+        await this.loadMessages(true);
+        this.startMessagePolling();
+      },
+      isMineMessage(item = {}) {
+        const senderId = pickSenderId(item);
+        const senderRole = pickSenderRole(item);
+        if (this.currentUserId && String(senderId) === String(this.currentUserId)) {
+          return true;
+        }
+        return senderRole === "stationmaster" || senderRole === "rider";
+      },
+      async loadMessages(showLoading = true) {
+        if (!this.conversationId) {
+          uni.showToast({ title: "会话不存在", icon: "none" });
+          return;
+        }
+        if (showLoading) {
+          this.loading = true;
+        }
+        try {
+          const res = await getTownErrandMessages(this.conversationId);
+          const source = pickList$1((res == null ? void 0 : res.data) ?? res);
+          this.messages = source.map((item, index) => ({
+            id: pickMessageId(item, index),
+            content: pickMessageContent(item),
+            createdAt: pickMessageTime(item),
+            isMine: this.isMineMessage(item)
+          })).filter((item) => item.content);
+          this.scrollToBottom();
+        } catch (error) {
+          formatAppLog("error", "at pages/station-messages/detail.vue:155", "加载镇上跑腿代购消息失败", error);
+          this.messages = [];
+        } finally {
+          this.loading = false;
+        }
+      },
+      startMessagePolling() {
+        this.stopMessagePolling();
+        this.messagePollTimer = setInterval(() => {
+          this.loadMessages(false);
+        }, 1500);
+      },
+      stopMessagePolling() {
+        if (this.messagePollTimer) {
+          clearInterval(this.messagePollTimer);
+          this.messagePollTimer = null;
+        }
+      },
+      scrollToBottom() {
+        if (!this.messages.length) {
+          this.scrollAnchor = "";
+          return;
+        }
+        this.$nextTick(() => {
+          this.scrollAnchor = `msg-${this.messages[this.messages.length - 1].id}`;
+        });
+      },
+      async handleSend() {
+        const content = String(this.draft || "").trim();
+        if (!content || this.sending) {
+          if (!content) {
+            uni.showToast({ title: "请输入回复内容", icon: "none" });
+          }
+          return;
+        }
+        try {
+          this.sending = true;
+          await sendTownErrandMessage(this.conversationId, content);
+          this.draft = "";
+          await this.loadMessages(false);
+        } catch (error) {
+          formatAppLog("error", "at pages/station-messages/detail.vue:196", "发送镇上跑腿代购消息失败", error);
+        } finally {
+          this.sending = false;
+        }
+      }
+    }
+  };
+  function _sfc_render$3(_ctx, _cache, $props, $setup, $data, $options) {
+    return vue.openBlock(), vue.createElementBlock("view", { class: "page" }, [
+      vue.createElementVNode("view", { class: "chat-header" }, [
+        vue.createElementVNode(
+          "text",
+          { class: "chat-title" },
+          vue.toDisplayString($data.pageTitle),
+          1
+          /* TEXT */
+        ),
+        vue.createElementVNode("text", { class: "chat-tip" }, "仅支持文字回复，消息均来自真实接口")
+      ]),
+      vue.createElementVNode("scroll-view", {
+        class: "message-scroll",
+        "scroll-y": "",
+        "scroll-into-view": $data.scrollAnchor
+      }, [
+        $data.loading && $data.messages.length === 0 ? (vue.openBlock(), vue.createElementBlock("view", {
+          key: 0,
+          class: "state-wrap"
+        }, [
+          vue.createElementVNode("text", { class: "state-text" }, "加载中...")
+        ])) : $data.messages.length === 0 ? (vue.openBlock(), vue.createElementBlock("view", {
+          key: 1,
+          class: "state-wrap"
+        }, [
+          vue.createElementVNode("text", { class: "state-text" }, "暂无消息")
+        ])) : (vue.openBlock(), vue.createElementBlock("view", {
+          key: 2,
+          class: "message-list"
+        }, [
+          (vue.openBlock(true), vue.createElementBlock(
+            vue.Fragment,
+            null,
+            vue.renderList($data.messages, (item) => {
+              return vue.openBlock(), vue.createElementBlock("view", {
+                id: `msg-${item.id}`,
+                key: item.id,
+                class: vue.normalizeClass(["message-row", { mine: item.isMine }])
+              }, [
+                vue.createElementVNode(
+                  "view",
+                  {
+                    class: vue.normalizeClass(["message-bubble", { mine: item.isMine }])
+                  },
+                  [
+                    vue.createElementVNode(
+                      "text",
+                      { class: "message-content" },
+                      vue.toDisplayString(item.content),
+                      1
+                      /* TEXT */
+                    )
+                  ],
+                  2
+                  /* CLASS */
+                ),
+                vue.createElementVNode(
+                  "text",
+                  { class: "message-time" },
+                  vue.toDisplayString($options.formatTime(item.createdAt)),
+                  1
+                  /* TEXT */
+                )
+              ], 10, ["id"]);
+            }),
+            128
+            /* KEYED_FRAGMENT */
+          ))
+        ]))
+      ], 8, ["scroll-into-view"]),
+      vue.createElementVNode("view", { class: "composer" }, [
+        vue.withDirectives(vue.createElementVNode(
+          "input",
+          {
+            "onUpdate:modelValue": _cache[0] || (_cache[0] = ($event) => $data.draft = $event),
+            class: "composer-input",
+            type: "text",
+            maxlength: "500",
+            placeholder: "请输入回复内容",
+            "confirm-type": "send",
+            onConfirm: _cache[1] || (_cache[1] = (...args) => $options.handleSend && $options.handleSend(...args))
+          },
+          null,
+          544
+          /* NEED_HYDRATION, NEED_PATCH */
+        ), [
+          [vue.vModelText, $data.draft]
+        ]),
+        vue.createElementVNode("button", {
+          class: "send-btn",
+          disabled: $data.sending,
+          onClick: _cache[2] || (_cache[2] = (...args) => $options.handleSend && $options.handleSend(...args))
+        }, vue.toDisplayString($data.sending ? "发送中" : "发送"), 9, ["disabled"])
+      ])
+    ]);
+  }
+  const PagesStationMessagesDetail = /* @__PURE__ */ _export_sfc(_sfc_main$4, [["render", _sfc_render$3], ["__scopeId", "data-v-b080f879"], ["__file", "E:/固始县外卖骑手端/pages/station-messages/detail.vue"]]);
   const _sfc_main$3 = {
     data() {
       return {
@@ -5741,6 +7021,14 @@ if (uni.restoreGlobal) {
         showStationPanel: false,
         stationTown: ""
       };
+    },
+    computed: {
+      isTownStationRole() {
+        return this.userInfo.rider_kind === "stationmaster" || this.userInfo.delivery_scope === "town_delivery";
+      },
+      deliveryScopeLabel() {
+        return this.userInfo.delivery_scope === "county_delivery" ? "县城配送" : "骑手配送";
+      }
     },
     onLoad() {
       this.loadUserInfo();
@@ -5759,7 +7047,7 @@ if (uni.restoreGlobal) {
             this.stationTown = res.data.rider_town || "";
           }
         } catch (e) {
-          formatAppLog("error", "at pages/profile/index.vue:89", "加载用户信息失败", e);
+          formatAppLog("error", "at pages/profile/index.vue:103", "加载用户信息失败", e);
         }
       },
       async bindTown() {
@@ -5773,7 +7061,7 @@ if (uni.restoreGlobal) {
           uni.showToast({ title: "绑定成功", icon: "success" });
           this.loadUserInfo();
         } catch (e) {
-          formatAppLog("error", "at pages/profile/index.vue:104", "绑定失败", e);
+          formatAppLog("error", "at pages/profile/index.vue:118", "绑定失败", e);
         }
       },
       showTip(name) {
@@ -5820,10 +7108,10 @@ if (uni.restoreGlobal) {
       vue.createElementVNode("view", { class: "menu-list" }, [
         vue.createElementVNode("view", {
           class: "menu-item",
-          onClick: _cache[0] || (_cache[0] = ($event) => $options.showTip("余额提现"))
+          onClick: _cache[0] || (_cache[0] = ($event) => $options.showTip("账户余额"))
         }, [
           vue.createElementVNode("text", { class: "menu-icon" }, "💰"),
-          vue.createElementVNode("text", { class: "menu-text" }, "余额提现"),
+          vue.createElementVNode("text", { class: "menu-text" }, "账户余额"),
           vue.createElementVNode(
             "text",
             { class: "menu-value" },
@@ -5833,7 +7121,8 @@ if (uni.restoreGlobal) {
           ),
           vue.createElementVNode("text", { class: "menu-arrow" }, "›")
         ]),
-        vue.createElementVNode("view", {
+        $options.isTownStationRole ? (vue.openBlock(), vue.createElementBlock("view", {
+          key: 0,
           class: "menu-item",
           onClick: _cache[1] || (_cache[1] = ($event) => $data.showStationPanel = !$data.showStationPanel)
         }, [
@@ -5847,10 +7136,25 @@ if (uni.restoreGlobal) {
             /* TEXT */
           ),
           vue.createElementVNode("text", { class: "menu-arrow" }, "›")
-        ]),
+        ])) : (vue.openBlock(), vue.createElementBlock("view", {
+          key: 1,
+          class: "menu-item",
+          onClick: _cache[2] || (_cache[2] = ($event) => $options.showTip("配送范围"))
+        }, [
+          vue.createElementVNode("text", { class: "menu-icon" }, "📍"),
+          vue.createElementVNode("text", { class: "menu-text" }, "配送范围"),
+          vue.createElementVNode(
+            "text",
+            { class: "menu-value" },
+            vue.toDisplayString($options.deliveryScopeLabel),
+            1
+            /* TEXT */
+          ),
+          vue.createElementVNode("text", { class: "menu-arrow" }, "›")
+        ])),
         vue.createElementVNode("view", {
           class: "menu-item",
-          onClick: _cache[2] || (_cache[2] = ($event) => $options.showTip("修改密码"))
+          onClick: _cache[3] || (_cache[3] = ($event) => $options.showTip("修改密码"))
         }, [
           vue.createElementVNode("text", { class: "menu-icon" }, "🔒"),
           vue.createElementVNode("text", { class: "menu-text" }, "修改密码"),
@@ -5858,7 +7162,7 @@ if (uni.restoreGlobal) {
         ]),
         vue.createElementVNode("view", {
           class: "menu-item",
-          onClick: _cache[3] || (_cache[3] = ($event) => $options.showTip("联系客服"))
+          onClick: _cache[4] || (_cache[4] = ($event) => $options.showTip("联系客服"))
         }, [
           vue.createElementVNode("text", { class: "menu-icon" }, "📞"),
           vue.createElementVNode("text", { class: "menu-text" }, "联系客服"),
@@ -5866,7 +7170,7 @@ if (uni.restoreGlobal) {
         ]),
         vue.createElementVNode("view", {
           class: "menu-item",
-          onClick: _cache[4] || (_cache[4] = ($event) => $options.showTip("关于我们"))
+          onClick: _cache[5] || (_cache[5] = ($event) => $options.showTip("关于我们"))
         }, [
           vue.createElementVNode("text", { class: "menu-icon" }, "ℹ️"),
           vue.createElementVNode("text", { class: "menu-text" }, "关于我们"),
@@ -5883,7 +7187,7 @@ if (uni.restoreGlobal) {
             "input",
             {
               class: "station-input",
-              "onUpdate:modelValue": _cache[5] || (_cache[5] = ($event) => $data.stationTown = $event),
+              "onUpdate:modelValue": _cache[6] || (_cache[6] = ($event) => $data.stationTown = $event),
               placeholder: "例如：陈淋子镇"
             },
             null,
@@ -5895,13 +7199,13 @@ if (uni.restoreGlobal) {
         ]),
         vue.createElementVNode("button", {
           class: "station-btn",
-          onClick: _cache[6] || (_cache[6] = (...args) => $options.bindTown && $options.bindTown(...args))
+          onClick: _cache[7] || (_cache[7] = (...args) => $options.bindTown && $options.bindTown(...args))
         }, "绑定为站长"),
         vue.createElementVNode("text", { class: "station-tip" }, "每个乡镇只允许一个站长账号绑定")
       ])) : vue.createCommentVNode("v-if", true),
       vue.createElementVNode("view", {
         class: "logout-btn",
-        onClick: _cache[7] || (_cache[7] = (...args) => $options.handleLogout && $options.handleLogout(...args))
+        onClick: _cache[8] || (_cache[8] = (...args) => $options.handleLogout && $options.handleLogout(...args))
       }, [
         vue.createElementVNode("text", { class: "logout-text" }, "退出登录")
       ])
@@ -6376,31 +7680,300 @@ if (uni.restoreGlobal) {
   __definePage("pages/errands/index", PagesErrandsIndex);
   __definePage("pages/errands/detail", PagesErrandsDetail);
   __definePage("pages/earnings/index", PagesEarningsIndex);
+  __definePage("pages/station-messages/index", PagesStationMessagesIndex);
+  __definePage("pages/station-messages/detail", PagesStationMessagesDetail);
   __definePage("pages/profile/index", PagesProfileIndex);
   __definePage("pages/test/index", PagesTestIndex);
   __definePage("pages/test-nav/test-nav", PagesTestNavTestNav);
+  const NOTICE_TEXT = "您有跑腿消息，请及时回复";
+  const NOTICE_COOLDOWN_MS = 3e3;
+  const LOG_PREFIX = "[town-errand-voice]";
+  let lastSpeakAt = 0;
+  let plusReadyListening = false;
+  let plusReadyCallbacks = [];
+  let androidTtsInstance = null;
+  let androidTtsReady = false;
+  let androidTtsInitializing = false;
+  let androidTtsCallbacks = [];
+  function logInfo(message, extra) {
+    if (typeof extra === "undefined") {
+      formatAppLog("log", "at utils/town-errand-voice.js:15", LOG_PREFIX, message);
+      return;
+    }
+    formatAppLog("log", "at utils/town-errand-voice.js:18", LOG_PREFIX, message, extra);
+  }
+  function logWarn(message, extra) {
+    if (typeof extra === "undefined") {
+      formatAppLog("warn", "at utils/town-errand-voice.js:23", LOG_PREFIX, message);
+      return;
+    }
+    formatAppLog("warn", "at utils/town-errand-voice.js:26", LOG_PREFIX, message, extra);
+  }
+  function logError(message, extra) {
+    if (typeof extra === "undefined") {
+      formatAppLog("error", "at utils/town-errand-voice.js:31", LOG_PREFIX, message);
+      return;
+    }
+    formatAppLog("error", "at utils/town-errand-voice.js:34", LOG_PREFIX, message, extra);
+  }
+  function isAppPlusRuntime() {
+    return true;
+  }
+  function showVisualNotice() {
+    uni.showToast({
+      title: NOTICE_TEXT,
+      icon: "none",
+      duration: 2e3
+    });
+    if (typeof uni.vibrateShort === "function") {
+      uni.vibrateShort();
+    }
+  }
+  function fallbackToBeep(reason) {
+    logWarn("语音播报失败，降级为 beep", reason);
+    if (typeof plus !== "undefined" && plus.device && typeof plus.device.beep === "function") {
+      plus.device.beep(1);
+      return true;
+    }
+    return false;
+  }
+  function flushPlusReadyCallbacks() {
+    const callbacks = plusReadyCallbacks.slice();
+    plusReadyCallbacks = [];
+    callbacks.forEach((callback) => {
+      try {
+        callback();
+      } catch (error) {
+        logError("执行 plusready 队列回调失败", error);
+      }
+    });
+  }
+  function ensurePlusReady(callback) {
+    if (!isAppPlusRuntime()) {
+      logWarn("当前不是 APP-PLUS 环境，跳过真机语音播报");
+      return false;
+    }
+    if (typeof plus !== "undefined") {
+      logInfo("plus 已就绪，可直接执行语音播报", {
+        plusExists: true,
+        windowPlusExists: typeof window !== "undefined" && !!window.plus,
+        plusSpeechExists: !!plus.speech,
+        plusSpeechSpeakExists: !!(plus.speech && typeof plus.speech.speak === "function")
+      });
+      callback();
+      return true;
+    }
+    plusReadyCallbacks.push(callback);
+    logWarn("plus 尚未就绪，等待 plusready 后再播报", {
+      queueLength: plusReadyCallbacks.length
+    });
+    if (!plusReadyListening && typeof document !== "undefined" && document.addEventListener) {
+      plusReadyListening = true;
+      const onPlusReady = () => {
+        document.removeEventListener("plusready", onPlusReady, false);
+        plusReadyListening = false;
+        logInfo("收到 plusready 事件，开始执行等待中的语音播报");
+        flushPlusReadyCallbacks();
+      };
+      document.addEventListener("plusready", onPlusReady, false);
+    }
+    return false;
+  }
+  function flushAndroidTtsCallbacks(success, payload) {
+    const callbacks = androidTtsCallbacks.slice();
+    androidTtsCallbacks = [];
+    callbacks.forEach((callback) => {
+      try {
+        callback(success, payload);
+      } catch (error) {
+        logError("执行 Android TTS 队列回调失败", error);
+      }
+    });
+  }
+  function ensureAndroidTtsReady(callback) {
+    if (androidTtsReady && androidTtsInstance) {
+      callback(true);
+      return;
+    }
+    androidTtsCallbacks.push(callback);
+    if (androidTtsInitializing) {
+      logInfo("Android TTS 正在初始化，加入等待队列", {
+        queueLength: androidTtsCallbacks.length
+      });
+      return;
+    }
+    androidTtsInitializing = true;
+    try {
+      if (!plus.os || plus.os.name !== "Android") {
+        const reason = { message: "当前 APP 平台不是 Android，未接入原生 TextToSpeech" };
+        logWarn("Android TTS 不可用", reason);
+        androidTtsInitializing = false;
+        flushAndroidTtsCallbacks(false, reason);
+        return;
+      }
+      const mainActivity = plus.android.runtimeMainActivity();
+      const TextToSpeech = plus.android.importClass("android.speech.tts.TextToSpeech");
+      const Locale = plus.android.importClass("java.util.Locale");
+      logInfo("开始初始化 Android TextToSpeech", {
+        plusSpeechExists: !!plus.speech,
+        plusSpeechSpeakExists: !!(plus.speech && typeof plus.speech.speak === "function")
+      });
+      const initListener = plus.android.implements("android.speech.tts.TextToSpeech$OnInitListener", {
+        onInit: function(status) {
+          try {
+            const successCode = Number(TextToSpeech.SUCCESS);
+            const initSuccess = Number(status) === successCode || Number(status) === 0;
+            logInfo("Android TextToSpeech onInit 回调", {
+              status: Number(status),
+              successCode
+            });
+            if (!initSuccess) {
+              androidTtsReady = false;
+              androidTtsInitializing = false;
+              flushAndroidTtsCallbacks(false, {
+                message: "Android TextToSpeech 初始化失败",
+                status: Number(status)
+              });
+              return;
+            }
+            androidTtsReady = true;
+            androidTtsInitializing = false;
+            try {
+              const localeResult = androidTtsInstance.setLanguage(Locale.CHINA);
+              logInfo("Android TextToSpeech 语言设置完成", {
+                localeResult: Number(localeResult)
+              });
+            } catch (localeError) {
+              logError("Android TextToSpeech 设置语言失败", localeError);
+            }
+            flushAndroidTtsCallbacks(true);
+          } catch (callbackError) {
+            androidTtsReady = false;
+            androidTtsInitializing = false;
+            logError("Android TextToSpeech onInit 处理失败", callbackError);
+            flushAndroidTtsCallbacks(false, callbackError);
+          }
+        }
+      });
+      androidTtsInstance = new TextToSpeech(mainActivity, initListener);
+      logInfo("已发起 Android TextToSpeech 初始化请求");
+    } catch (error) {
+      androidTtsReady = false;
+      androidTtsInitializing = false;
+      logError("初始化 Android TextToSpeech 异常", error);
+      flushAndroidTtsCallbacks(false, error);
+    }
+  }
+  function speakWithAndroidTts() {
+    try {
+      const TextToSpeech = plus.android.importClass("android.speech.tts.TextToSpeech");
+      const result = androidTtsInstance.speak(NOTICE_TEXT, TextToSpeech.QUEUE_FLUSH, null, "town_errand_notice");
+      const errorCode = Number(TextToSpeech.ERROR);
+      logInfo("已调用 Android TextToSpeech.speak", {
+        result: Number(result),
+        errorCode
+      });
+      if (Number(result) === errorCode) {
+        throw new Error(`Android TextToSpeech.speak 返回错误码 ${result}`);
+      }
+      return true;
+    } catch (error) {
+      logError("Android TextToSpeech.speak 执行失败", error);
+      return false;
+    }
+    return false;
+  }
+  function speakTownErrandIncomingMessage() {
+    const now = Date.now();
+    const interval = now - lastSpeakAt;
+    logInfo("收到镇上跑腿代购语音播报请求", {
+      now,
+      lastSpeakAt,
+      interval
+    });
+    if (lastSpeakAt > 0 && interval < NOTICE_COOLDOWN_MS) {
+      logWarn("命中 3 秒防重复播报，已跳过", {
+        interval,
+        cooldown: NOTICE_COOLDOWN_MS
+      });
+      return false;
+    }
+    lastSpeakAt = now;
+    showVisualNotice();
+    if (!isAppPlusRuntime()) {
+      logWarn("当前为非 APP 环境，仅保留文字提示，不执行真机语音");
+      return false;
+    }
+    ensurePlusReady(() => {
+      ensureAndroidTtsReady((success, payload) => {
+        if (!success) {
+          logError("Android TTS 未就绪，无法执行语音播报", payload);
+          fallbackToBeep(payload);
+          return;
+        }
+        const speakSuccess = speakWithAndroidTts();
+        if (!speakSuccess) {
+          fallbackToBeep({ message: "Android TTS speak 调用失败" });
+        }
+      });
+    });
+    return true;
+  }
   let locationTimer = null;
+  let townMessageBootstrapTimer = null;
+  let townMessagePollTimer = null;
+  let locationPermissionPrompted = false;
+  let townMessageWatcherStarted = false;
+  let townMessageState = {
+    initialized: false,
+    unreadTotal: 0
+  };
+  function pickList(payload) {
+    if (Array.isArray(payload))
+      return payload;
+    if (Array.isArray(payload == null ? void 0 : payload.list))
+      return payload.list;
+    if (Array.isArray(payload == null ? void 0 : payload.rows))
+      return payload.rows;
+    if (Array.isArray(payload == null ? void 0 : payload.data))
+      return payload.data;
+    return [];
+  }
+  function pickUnreadCount(item = {}) {
+    const unread = item.unread_count ?? item.unreadCount ?? item.unread_num;
+    return Number(unread) > 0 ? Number(unread) : 0;
+  }
+  function isTownStationmaster(userInfo = {}) {
+    return userInfo.rider_kind === "stationmaster" || userInfo.delivery_scope === "town_delivery";
+  }
+  function isCountyDriver(userInfo = {}) {
+    return userInfo.delivery_scope === "county_delivery" && userInfo.rider_kind === "rider";
+  }
   const _sfc_main = {
     onLaunch: function() {
-      formatAppLog("log", "at App.vue:8", "App Launch - 骑手端启动");
+      formatAppLog("log", "at App.vue:41", "App Launch - 骑手端启动");
+      this.startTownMessageWatcher();
     },
     onShow: function() {
-      formatAppLog("log", "at App.vue:11", "App Show - 骑手端显示");
+      formatAppLog("log", "at App.vue:45", "App Show - 骑手端显示");
+      this.syncCountyDriverOnlineStatus();
       this.startLocationReport();
+      this.startTownMessageWatcher();
     },
     onHide: function() {
-      formatAppLog("log", "at App.vue:15", "App Hide - 骑手端隐藏");
+      formatAppLog("log", "at App.vue:51", "App Hide - 骑手端隐藏");
       this.stopLocationReport();
+      this.stopTownMessageWatcher();
     },
     methods: {
       startLocationReport() {
         this.stopLocationReport();
         const token = uni.getStorageSync("token");
         if (!token) {
-          formatAppLog("log", "at App.vue:24", "未登录，不启动位置上报");
+          formatAppLog("log", "at App.vue:61", "未登录，不启动位置上报");
           return;
         }
-        formatAppLog("log", "at App.vue:28", "启动位置上报定时器，间隔 10 秒");
+        formatAppLog("log", "at App.vue:65", "启动位置上报定时器，间隔 10 秒");
         locationTimer = setInterval(() => {
           this.doReportLocation();
         }, 1e4);
@@ -6410,21 +7983,160 @@ if (uni.restoreGlobal) {
         if (locationTimer) {
           clearInterval(locationTimer);
           locationTimer = null;
-          formatAppLog("log", "at App.vue:41", "位置上报定时器已停止");
+          formatAppLog("log", "at App.vue:78", "位置上报定时器已停止");
         }
       },
       doReportLocation() {
         uni.getLocation({
           type: "gcj02",
           success: (res) => {
-            formatAppLog("log", "at App.vue:49", "获取真实GPS成功:", res.latitude, res.longitude);
-            reportLocation(res.latitude, res.longitude).catch((err) => formatAppLog("log", "at App.vue:51", "真实位置上报接口失败:", err));
+            locationPermissionPrompted = false;
+            formatAppLog("log", "at App.vue:87", "获取真实GPS成功:", res.latitude, res.longitude);
+            reportLocation(res.latitude, res.longitude).catch((err) => formatAppLog("log", "at App.vue:89", "真实位置上报接口失败:", err));
           },
           fail: (err) => {
-            formatAppLog("log", "at App.vue:54", "获取真实GPS失败，使用模拟测试坐标上报");
-            reportLocation(32.1765, 115.6734).catch((e) => formatAppLog("log", "at App.vue:56", "模拟位置上报接口失败:", e));
+            formatAppLog("log", "at App.vue:92", "获取真实GPS失败，未执行位置上报:", err);
+            this.handleLocationPermissionError(err);
           }
         });
+      },
+      handleLocationPermissionError(err) {
+        const errMsg = String((err == null ? void 0 : err.errMsg) || (err == null ? void 0 : err.message) || "");
+        const isPermissionDenied = errMsg.includes("auth deny") || errMsg.includes("authorize no response") || errMsg.includes("auth denied");
+        if (!isPermissionDenied || locationPermissionPrompted) {
+          return;
+        }
+        locationPermissionPrompted = true;
+        uni.showModal({
+          title: "需要定位权限",
+          content: "县城司机要出现在调度台，必须允许定位权限并成功上报当前位置。请前往授权。",
+          confirmText: "去授权",
+          cancelText: "稍后",
+          success: (res) => {
+            if (res.confirm && typeof uni.openSetting === "function") {
+              uni.openSetting({
+                success: () => {
+                  locationPermissionPrompted = false;
+                  this.doReportLocation();
+                }
+              });
+            }
+          }
+        });
+      },
+      async syncCountyDriverOnlineStatus() {
+        const token = getToken();
+        const storedUser = getUserInfo$1() || {};
+        if (!token || !isCountyDriver(storedUser)) {
+          return;
+        }
+        const rawStatus = uni.getStorageSync("riderStatus");
+        const hasSavedStatus = rawStatus !== "" && rawStatus !== null && typeof rawStatus !== "undefined";
+        const nextStatus = hasSavedStatus ? Number(rawStatus) === 1 ? 1 : 0 : 1;
+        if (!hasSavedStatus) {
+          setRiderStatus(nextStatus);
+        }
+        try {
+          await updateRiderStatus(nextStatus);
+          formatAppLog("log", "at App.vue:141", "县城司机在线状态已同步到后端:", nextStatus);
+        } catch (error) {
+          formatAppLog("error", "at App.vue:143", "县城司机在线状态同步失败:", error);
+        }
+      },
+      startTownMessageWatcher() {
+        this.stopTownMessageWatcher();
+        formatAppLog("log", "at App.vue:149", "启动镇上跑腿代购全局监听引导器");
+        this.ensureTownMessageWatcher();
+        townMessageBootstrapTimer = setInterval(() => {
+          this.ensureTownMessageWatcher();
+        }, 2e3);
+      },
+      stopTownMessageWatcher() {
+        if (townMessageBootstrapTimer) {
+          clearInterval(townMessageBootstrapTimer);
+          townMessageBootstrapTimer = null;
+        }
+        if (townMessagePollTimer) {
+          clearInterval(townMessagePollTimer);
+          townMessagePollTimer = null;
+        }
+        townMessageWatcherStarted = false;
+        townMessageState = {
+          initialized: false,
+          unreadTotal: 0
+        };
+        formatAppLog("log", "at App.vue:170", "镇上跑腿代购全局监听已停止");
+      },
+      ensureTownMessageWatcher() {
+        const token = getToken();
+        const storedUser = getUserInfo$1() || {};
+        if (!token) {
+          if (townMessageWatcherStarted) {
+            formatAppLog("log", "at App.vue:179", "未登录，停止镇上跑腿代购全局监听");
+          }
+          if (townMessagePollTimer) {
+            clearInterval(townMessagePollTimer);
+            townMessagePollTimer = null;
+          }
+          townMessageWatcherStarted = false;
+          townMessageState = {
+            initialized: false,
+            unreadTotal: 0
+          };
+          return;
+        }
+        if (!isTownStationmaster(storedUser)) {
+          if (townMessageWatcherStarted) {
+            formatAppLog("log", "at App.vue:195", "当前账号不是乡镇站长，停止镇上跑腿代购全局监听");
+          }
+          if (townMessagePollTimer) {
+            clearInterval(townMessagePollTimer);
+            townMessagePollTimer = null;
+          }
+          townMessageWatcherStarted = false;
+          townMessageState = {
+            initialized: false,
+            unreadTotal: 0
+          };
+          return;
+        }
+        if (townMessageWatcherStarted && townMessagePollTimer) {
+          return;
+        }
+        formatAppLog("log", "at App.vue:213", "已启动镇上跑腿代购全局常驻监听");
+        townMessageWatcherStarted = true;
+        this.checkTownMessageConversations(true);
+        townMessagePollTimer = setInterval(() => {
+          this.checkTownMessageConversations(false);
+        }, 2e3);
+      },
+      async checkTownMessageConversations(isFirstLoad = false) {
+        try {
+          const res = await getTownErrandConversations();
+          const source = pickList((res == null ? void 0 : res.data) ?? res);
+          const unreadTotal = source.reduce((sum, item = {}) => sum + pickUnreadCount(item), 0);
+          if (!townMessageState.initialized || isFirstLoad) {
+            townMessageState = {
+              initialized: true,
+              unreadTotal
+            };
+            formatAppLog("log", "at App.vue:232", "镇上跑腿代购全局监听初始化完成", { unreadTotal });
+            return;
+          }
+          if (unreadTotal > townMessageState.unreadTotal) {
+            formatAppLog("log", "at App.vue:237", "检测到新的镇上跑腿代购未读消息，触发全局语音播报", {
+              previousUnreadTotal: townMessageState.unreadTotal,
+              unreadTotal
+            });
+            speakTownErrandIncomingMessage();
+          }
+          townMessageState = {
+            initialized: true,
+            unreadTotal
+          };
+        } catch (error) {
+          formatAppLog("error", "at App.vue:249", "镇上跑腿代购全局监听拉取失败", error);
+        }
       }
     }
   };

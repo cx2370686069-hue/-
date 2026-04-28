@@ -71,6 +71,8 @@ const Review = sequelize.define('Review', {
   }
 }, {
   tableName: 'reviews',
+  createdAt: 'created_at',
+  updatedAt: 'updated_at',
   indexes: [
     { fields: ['order_id'], unique: true },
     { fields: ['merchant_id'] },

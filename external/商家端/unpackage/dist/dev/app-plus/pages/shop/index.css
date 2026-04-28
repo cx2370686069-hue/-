@@ -6,8 +6,42 @@
 }
 .hero[data-v-7db6cc15] {
   background: linear-gradient(135deg, #ff6b35, #ff8c42);
-  padding: 1.25rem 1rem 1.5rem;
+  padding: 0.75rem 0.75rem 1.25rem;
   color: #fff;
+}
+.cover[data-v-7db6cc15] {
+  position: relative;
+  height: 8.125rem;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.16);
+}
+.cover-img[data-v-7db6cc15] {
+  width: 100%;
+  height: 100%;
+}
+.cover-mask[data-v-7db6cc15] {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 0.75rem;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.48));
+}
+.cover-tip[data-v-7db6cc15] {
+  font-size: 0.75rem;
+  color: #fff;
+}
+.hero-main[data-v-7db6cc15] {
+  margin-top: 0.75rem;
+  display: flex;
+  align-items: center;
+}
+.avatar-block[data-v-7db6cc15] {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-right: 0.75rem;
 }
 .avatar[data-v-7db6cc15] {
   width: 3.75rem;
@@ -18,7 +52,14 @@
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  margin-bottom: 0.625rem;
+}
+.avatar-action[data-v-7db6cc15] {
+  margin-top: 0.375rem;
+  font-size: 0.6875rem;
+  color: rgba(255, 255, 255, 0.92);
+}
+.hero-text[data-v-7db6cc15] {
+  flex: 1;
 }
 .avatar-img[data-v-7db6cc15] {
   width: 100%;
@@ -81,14 +122,28 @@
   font-size: 0.875rem;
   color: #333;
 }
+.picker-line[data-v-7db6cc15] {
+  flex: 1;
+  font-size: 0.875rem;
+  color: #333;
+}
+.picker-tip[data-v-7db6cc15] {
+  display: block;
+  margin-top: 0.3125rem;
+  font-size: 0.6875rem;
+  color: #999;
+}
+.picker-tip.error[data-v-7db6cc15] {
+  color: #ff4d4f;
+}
 .textarea[data-v-7db6cc15] {
   width: 100%;
-  min-height: 5rem;
+  min-height: 2.75rem;
   font-size: 0.875rem;
   color: #333;
 }
 .textarea.sm[data-v-7db6cc15] {
-  min-height: 3.75rem;
+  min-height: 2.25rem;
 }
 .ph[data-v-7db6cc15] {
   color: #bbb;
@@ -104,13 +159,6 @@
 .hint[data-v-7db6cc15] {
   font-size: 0.75rem;
   color: #999;
-}
-.logo-actions[data-v-7db6cc15] {
-  margin-top: 0.375rem;
-}
-.link[data-v-7db6cc15] {
-  font-size: 0.75rem;
-  color: #ff6b35;
 }
 .coord[data-v-7db6cc15] {
   font-size: 0.8125rem;

@@ -67,6 +67,23 @@
 			}
 		},
 		{
+			"path": "pages/station-messages/index",
+			"style": {
+				"navigationBarTitleText": "跑腿代购消息",
+				"navigationBarBackgroundColor": "#1890FF",
+				"navigationBarTextStyle": "white",
+				"enablePullDownRefresh": true
+			}
+		},
+		{
+			"path": "pages/station-messages/detail",
+			"style": {
+				"navigationBarTitleText": "会话详情",
+				"navigationBarBackgroundColor": "#1890FF",
+				"navigationBarTextStyle": "white"
+			}
+		},
+		{
 			"path": "pages/profile/index",
 			"style": {
 				"navigationBarTitleText": "个人中心",

@@ -159,21 +159,50 @@
               出餐完成
             </button>
             <button
-              v-if="(order.status === 3 || order.status === 4) && order.orderType === 'county'"
+              v-if="showRiderDeliveryButton(order)"
               class="btn btn-primary"
               @click.stop="submitDeliver(order)"
             >
-              {{ order.status === 3 ? '呼叫骑手' : '提交调度' }}
+              {{ getDeliverButtonText(order) }}
             </button>
-            <text v-if="order.status === 3 && order.orderType !== 'county'" class="status-hint">待配送</text>
-            <text v-if="order.status === 4 && order.orderType !== 'county'" class="status-hint">配送中</text>
-            <!-- 通用按钮 -->
-            <button 
-              class="btn btn-default"
-              @click.stop="printOrder(order)"
+            <button
+              v-if="showSupermarketHybridModeChoice(order, 'self_delivery')"
+              class="btn btn-primary"
+              @click.stop="selectSupermarketDeliveryMode(order, 'self_delivery')"
             >
-              打印
+              老板自配
             </button>
+            <button
+              v-if="showSupermarketHybridModeChoice(order, 'rider_delivery')"
+              class="btn btn-primary"
+              @click.stop="selectSupermarketDeliveryMode(order, 'rider_delivery')"
+            >
+              骑手配送
+            </button>
+            <button
+              v-if="showSupermarketSelfDeliveryStart(order)"
+              class="btn btn-primary"
+              @click.stop="submitDeliver(order)"
+            >
+              开始配送
+            </button>
+            <button
+              v-if="showSupermarketMerchantConfirm(order)"
+              class="btn btn-primary"
+              @click.stop="merchantConfirmDelivery(order)"
+            >
+              确认送达
+            </button>
+            <button
+              v-if="showSupermarketSelfDeliveryNavigation(order)"
+              class="btn btn-default"
+              @click.stop="openSelfDeliveryMap(order)"
+            >
+              配送地图
+            </button>
+            <text v-if="order.status === 3 && !isSupermarketOrder(order)" class="status-hint">待配送</text>
+            <text v-if="order.status === 4 && !isSupermarketOrder(order)" class="status-hint">配送中</text>
+            <!-- 通用按钮 -->
             <button 
               class="btn btn-default"
               @click.stop="goDetail(order.id)"
@@ -207,7 +236,7 @@
 <script>
 import {
   getDashboard,
-  getOrderList,
+  getOrderDetail,
   acceptOrder as apiAcceptOrder,
   rejectOrder,
   prepareOrder,
@@ -215,7 +244,14 @@ import {
 } from '../../api/index.js'
 import { ORDER_STATUS, formatTime } from '../../utils/index.js'
 import { initSocket, onNewOrder, offNewOrder, getSocket } from '@/utils/socket.js'
-import { getToken, getUser } from '../../utils/auth.js'
+import { clearAuth, getToken, getUser, getUserId, hasValidMerchantSession } from '../../utils/auth.js'
+import request from '@/utils/request.js'
+
+const HALL_TAB_CONFIG = [
+  { key: 'new', label: '新订单', statuses: [1] },
+  { key: 'making', label: '制作中', statuses: [2] },
+  { key: 'delivery', label: '待配送', statuses: [3, 4, 5] }
+]
 
 export default {
   data() {
@@ -239,13 +275,8 @@ export default {
         { label: '近30天', value: 'month' }
       ],
       
-      // 订单大厅：新订单(1) / 制作中(2) / 待配送(3与4)
-      hallTab: '1',
-      hallTabs: [
-        { key: '1', label: '新订单(1)' },
-        { key: '2', label: '制作中(2)' },
-        { key: '34', label: '待配送(3/4)' }
-      ],
+      hallTab: 'new',
+      hallTabs: HALL_TAB_CONFIG,
       
       // 订单列表（已适配后端字段）
       orderList: [],
@@ -263,19 +294,29 @@ export default {
       if (this.searchKey) {
         return '未找到匹配的订单'
       }
-      return '当前阶段暂无订单'
+      const activeTab = this.hallTabs.find((item) => item.key === this.hallTab)
+      return activeTab ? `${activeTab.label}暂无真实订单` : '当前阶段暂无订单'
     }
   },
   
   onLoad() {
+    if (!this.ensureMerchantAccess()) return
+    try {
+      const pages = getCurrentPages()
+      const cur = pages && pages.length ? pages[pages.length - 1] : null
+      console.log('order-page route =', cur && cur.route)
+      console.log('order-page fullPath =', cur && cur.$page && cur.$page.fullPath)
+    } catch (e) {
+      console.log('order-page route read failed =', e)
+    }
     this.loadStats()
     this.loadOrderList()
 
     const token = getToken()
     const userInfo = getUser()
-    const userId = userInfo?.id || userInfo?.userId || ''
+    const userId = getUserId(userInfo)
     
-    if (token && !getSocket()) {
+    if (token && userId && !getSocket()) {
       initSocket(token, userId)
     }
     this._newOrderHandler = () => {
@@ -294,6 +335,7 @@ export default {
   },
 
   onShow() {
+    if (!this.ensureMerchantAccess()) return
     this.loadStats()
     this.loadOrderList()
   },
@@ -312,8 +354,15 @@ export default {
   },
 
   methods: {
+    ensureMerchantAccess() {
+      if (hasValidMerchantSession()) return true
+      clearAuth()
+      uni.reLaunch({ url: '/pages/login/index' })
+      return false
+    },
     // 加载统计数据
     async loadStats() {
+      if (!this.ensureMerchantAccess()) return
       try {
         const res = await getDashboard()
         const data = res?.data || res || {}
@@ -357,10 +406,85 @@ export default {
     },
 
     extractListPayload(res) {
-      return res?.data?.订单列表 || res?.data?.data || res?.订单列表 || res?.data || []
+      if (Array.isArray(res)) return res
+      if (Array.isArray(res?.data?.订单列表)) return res.data.订单列表
+      if (Array.isArray(res?.data?.data)) return res.data.data
+      if (Array.isArray(res?.订单列表)) return res.订单列表
+      if (Array.isArray(res?.data)) return res.data
+      return []
+    },
+
+    getActiveStatuses() {
+      const activeTab = this.hallTabs.find((item) => item.key === this.hallTab)
+      return activeTab && Array.isArray(activeTab.statuses) ? activeTab.statuses : []
+    },
+
+    filterOrdersByActiveStatuses(orderList) {
+      const statuses = this.getActiveStatuses().map((item) => Number(item))
+      if (!statuses.length) return Array.isArray(orderList) ? orderList : []
+      return (Array.isArray(orderList) ? orderList : []).filter((order) => {
+        const status = Number(order && order.status)
+        return statuses.includes(status)
+      })
+    },
+
+    buildOrderListParams(extra = {}) {
+      const params = {
+        page: this.page,
+        page_size: this.pageSize,
+        ...extra
+      }
+      if (this.searchKey) {
+        params.keyword = this.searchKey
+      }
+      if (this.currentDate) {
+        params.date_range = this.currentDate
+      }
+      return params
+    },
+
+    fetchMerchantOrders(params) {
+      return request({ url: '/merchant/orders', method: 'GET', data: params })
+    },
+
+    formatDeliveryAddress(rawAddress) {
+      if (!rawAddress) return ''
+      if (typeof rawAddress === 'string') {
+        const s = String(rawAddress).trim()
+        const looksJson = (s.startsWith('{') && s.endsWith('}')) || (s.startsWith('[') && s.endsWith(']')) || /"lng"|"lat"|"contact_phone"|"contact_name"/.test(s)
+        try {
+          const parsed = JSON.parse(s)
+          if (parsed && typeof parsed === 'object') {
+            const detail = parsed.detail != null ? String(parsed.detail).trim() : ''
+            const address = parsed.address != null ? String(parsed.address).trim() : ''
+            const town = parsed.town != null ? String(parsed.town).trim() : ''
+            return detail || (town && address ? `${town}${address}` : address || town || '')
+          }
+        } catch (e) {
+          if (!looksJson) return s
+          const pick = (key) => {
+            const m = s.match(new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`))
+            return m && m[1] ? String(m[1]).trim() : ''
+          }
+          const detail = pick('detail')
+          const address = pick('address')
+          const town = pick('town')
+          return detail || (town && address ? `${town}${address}` : address || town || '')
+        }
+        return looksJson ? '' : s
+      }
+      if (typeof rawAddress === 'object') {
+        const detail = rawAddress.detail != null ? String(rawAddress.detail).trim() : ''
+        const address = rawAddress.address != null ? String(rawAddress.address).trim() : ''
+        const town = rawAddress.town != null ? String(rawAddress.town).trim() : ''
+        return detail || (town && address ? `${town}${address}` : address || town || '')
+      }
+      return String(rawAddress)
     },
 
     mapOrderRow(o) {
+      const rawStatus = Number(o.status)
+      const status = Number.isFinite(rawStatus) ? rawStatus : o.status
       let goodsList = []
       try {
         let raw = o.products_info ?? o.items
@@ -383,12 +507,7 @@ export default {
       const customerName = o.user?.nickname || o.contact_name || '顾客'
       const customerPhone = o.contact_phone || o.user?.phone || ''
       const rawAddress = o.delivery_address
-      const address =
-        typeof rawAddress === 'string'
-          ? rawAddress
-          : rawAddress
-            ? JSON.stringify(rawAddress)
-            : ''
+      const address = this.formatDeliveryAddress(rawAddress)
 
       const pay = Number(o.pay_amount)
       const fee = Number(o.delivery_fee)
@@ -402,10 +521,10 @@ export default {
       }
 
       return {
-        id: o.id,
-        orderNo: o.order_no || o.orderNo,
-        status: o.status,
-        statusText: ORDER_STATUS[o.status]?.text || '未知状态',
+        id: o.id || o.order_id,
+        orderNo: o.order_no || o.orderNo || String(o.order_id || ''),
+        status,
+        statusText: ORDER_STATUS[status]?.text || `状态${status}`,
         createTime: createdAt ? formatTime(new Date(createdAt).getTime() / 1000, 'HH:mm') : '',
         customerName,
         customerPhone,
@@ -417,55 +536,220 @@ export default {
         estimatedIncome: Number.isFinite(est) ? Number(est).toFixed(2) : '0.00',
         remark: o.remark || o.buyer_remark || '',
         orderType: o.order_type || o.orderType || '',
-        isUrgent: false
+        isUrgent: false,
+        rawRecordId: o.id,
+        rawOrderId: o.order_id,
+        rawStatus: o.status,
+        rawDeliveryAddress: rawAddress,
+        category: o.category || o.merchant_category || o.shop_category || '',
+        supermarketDeliveryPermissionSnapshot: o.supermarket_delivery_permission_snapshot || '',
+        supermarketDeliveryMode: o.supermarket_delivery_mode || '',
+        settlementRuleSnapshot: o.settlement_rule_snapshot || null,
+        merchantLng: this.toCoordinateNumber(o.merchant_lng ?? o.merchantLng),
+        merchantLat: this.toCoordinateNumber(o.merchant_lat ?? o.merchantLat),
+        customerLng: this.toCoordinateNumber(o.customer_lng ?? o.delivery_longitude ?? o.longitude),
+        customerLat: this.toCoordinateNumber(o.customer_lat ?? o.delivery_latitude ?? o.latitude)
       }
     },
 
+    mergeSupermarketOrderDetail(order, detailRaw) {
+      const nextOrder = { ...order }
+      const permissionSnapshot = detailRaw?.supermarket_delivery_permission_snapshot
+      const deliveryMode = detailRaw?.supermarket_delivery_mode
+      const settlementRuleSnapshot = detailRaw?.settlement_rule_snapshot
+      const category =
+        detailRaw?.category ||
+        detailRaw?.merchant_category ||
+        detailRaw?.shop_category ||
+        detailRaw?.merchant?.category ||
+        detailRaw?.shop?.category ||
+        nextOrder.category
+
+      nextOrder.category = category != null ? String(category) : nextOrder.category
+      if (this.isSupermarketOrder(nextOrder)) {
+        if (permissionSnapshot != null) {
+          nextOrder.supermarketDeliveryPermissionSnapshot = String(permissionSnapshot)
+        }
+        if (deliveryMode != null) {
+          nextOrder.supermarketDeliveryMode = String(deliveryMode)
+        }
+        if (settlementRuleSnapshot != null) {
+          nextOrder.settlementRuleSnapshot = settlementRuleSnapshot
+        }
+      } else {
+        nextOrder.supermarketDeliveryPermissionSnapshot = ''
+        nextOrder.supermarketDeliveryMode = ''
+        nextOrder.settlementRuleSnapshot = null
+      }
+      if (this.toCoordinateNumber(detailRaw?.merchant_lng ?? detailRaw?.merchantLng) != null) {
+        nextOrder.merchantLng = this.toCoordinateNumber(detailRaw?.merchant_lng ?? detailRaw?.merchantLng)
+      }
+      if (this.toCoordinateNumber(detailRaw?.merchant_lat ?? detailRaw?.merchantLat) != null) {
+        nextOrder.merchantLat = this.toCoordinateNumber(detailRaw?.merchant_lat ?? detailRaw?.merchantLat)
+      }
+      if (this.toCoordinateNumber(detailRaw?.customer_lng ?? detailRaw?.delivery_longitude ?? detailRaw?.longitude) != null) {
+        nextOrder.customerLng = this.toCoordinateNumber(detailRaw?.customer_lng ?? detailRaw?.delivery_longitude ?? detailRaw?.longitude)
+      }
+      if (this.toCoordinateNumber(detailRaw?.customer_lat ?? detailRaw?.delivery_latitude ?? detailRaw?.latitude) != null) {
+        nextOrder.customerLat = this.toCoordinateNumber(detailRaw?.customer_lat ?? detailRaw?.delivery_latitude ?? detailRaw?.latitude)
+      }
+      return nextOrder
+    },
+
+    toCoordinateNumber(value) {
+      const num = Number(value)
+      return Number.isFinite(num) ? num : null
+    },
+
+    getValidCoordinatePair(longitude, latitude) {
+      const lng = this.toCoordinateNumber(longitude)
+      const lat = this.toCoordinateNumber(latitude)
+      if (lng == null || lat == null) return null
+      if (lng === 0 && lat === 0) return null
+      return { lng, lat }
+    },
+
+    isSupermarketCategory(category) {
+      return String(category || '').trim() === '超市'
+    },
+
+    isSupermarketOrder(order) {
+      if (!order) return false
+      return this.isSupermarketCategory(order.category)
+    },
+
+    resolveSupermarketDeliveryMode(order) {
+      if (!this.isSupermarketOrder(order)) return ''
+      if (order.supermarketDeliveryMode === 'self_delivery' || order.supermarketDeliveryMode === 'rider_delivery') {
+        return order.supermarketDeliveryMode
+      }
+      if (order.supermarketDeliveryPermissionSnapshot === 'self_only') {
+        return 'self_delivery'
+      }
+      if (order.supermarketDeliveryPermissionSnapshot === 'rider_only') {
+        return 'rider_delivery'
+      }
+      return 'pending'
+    },
+
+    showSupermarketHybridModeChoice(order, targetMode) {
+      return (
+        this.isSupermarketOrder(order) &&
+        order.status === 3 &&
+        order.supermarketDeliveryPermissionSnapshot === 'hybrid' &&
+        this.resolveSupermarketDeliveryMode(order) === 'pending' &&
+        ['self_delivery', 'rider_delivery'].includes(targetMode)
+      )
+    },
+
+    showSupermarketSelfDeliveryStart(order) {
+      return (
+        this.isSupermarketOrder(order) &&
+        order.status === 3 &&
+        this.resolveSupermarketDeliveryMode(order) === 'self_delivery'
+      )
+    },
+
+    showSupermarketMerchantConfirm(order) {
+      return (
+        this.isSupermarketOrder(order) &&
+        order.status === 5 &&
+        this.resolveSupermarketDeliveryMode(order) === 'self_delivery'
+      )
+    },
+
+    showSupermarketSelfDeliveryNavigation(order) {
+      return (
+        this.isSupermarketOrder(order) &&
+        (order.status === 4 || order.status === 5) &&
+        this.resolveSupermarketDeliveryMode(order) === 'self_delivery'
+      )
+    },
+
+    showRiderDeliveryButton(order) {
+      if (!this.isSupermarketOrder(order)) return false
+      const deliveryMode = this.resolveSupermarketDeliveryMode(order)
+      return (
+        order.status === 3 &&
+        deliveryMode === 'rider_delivery'
+      )
+    },
+
+    getDeliverButtonText(order) {
+      if (!this.isSupermarketOrder(order)) return ''
+      if (this.resolveSupermarketDeliveryMode(order) === 'rider_delivery') {
+        return '呼叫骑手'
+      }
+      return ''
+    },
+
+    async enrichSupermarketOrders(orderList) {
+      const detailTargets = orderList.filter(
+        (order) => order && this.isSupermarketOrder(order) && (order.status === 3 || order.status === 4 || order.status === 5)
+      )
+      if (!detailTargets.length) return orderList
+
+      const detailResults = await Promise.all(
+        detailTargets.map(async (order) => {
+          try {
+            const detailRes = await getOrderDetail(order.id)
+            const detailRaw = detailRes && detailRes.data !== undefined ? detailRes.data : detailRes
+            return { id: order.id, detailRaw }
+          } catch (e) {
+            return { id: order.id, detailRaw: null }
+          }
+        })
+      )
+
+      const detailMap = new Map(detailResults.map((item) => [item.id, item.detailRaw]))
+      return orderList.map((order) => {
+        const detailRaw = detailMap.get(order.id)
+        return detailRaw ? this.mergeSupermarketOrderDetail(order, detailRaw) : order
+      })
+    },
+
     async loadOrderList() {
+      if (!this.ensureMerchantAccess()) return
       try {
-        const params = {
-          page: this.page,
-          page_size: this.pageSize
-        }
-        if (this.searchKey) {
-          params.keyword = this.searchKey
-        }
-        if (this.currentDate) {
-          params.date_range = this.currentDate
-        }
-
-        let list = []
-        if (this.hallTab === '34') {
-          const [r3, r4] = await Promise.all([
-            getOrderList({ ...params, status: 3 }),
-            getOrderList({ ...params, status: 4 })
-          ])
-          const a = this.extractListPayload(r3)
-          const b = this.extractListPayload(r4)
-          const byId = new Map()
-          ;[...a, ...b].forEach((row) => {
-            if (row && row.id != null && !byId.has(row.id)) {
-              byId.set(row.id, row)
-            }
-          })
-          list = Array.from(byId.values())
-          list.sort((x, y) => {
-            const tx = new Date(x.createdAt || x.created_at || 0).getTime()
-            const ty = new Date(y.createdAt || y.created_at || 0).getTime()
-            return ty - tx
-          })
-        } else {
-          params.status = Number(this.hallTab)
-          const res = await getOrderList(params)
-          list = this.extractListPayload(res)
-        }
-
+        const statuses = this.getActiveStatuses()
+        const responses = await Promise.all(
+          statuses.map((status) => this.fetchMerchantOrders(this.buildOrderListParams({ status })))
+        )
+        const listGroup = responses.map((res) => this.extractListPayload(res))
+        const byId = new Map()
+        listGroup.flat().forEach((row) => {
+          if (row && row.id != null && !byId.has(row.id)) {
+            byId.set(row.id, row)
+          }
+        })
+        const list = Array.from(byId.values()).sort((x, y) => {
+          const tx = new Date(x.createdAt || x.created_at || 0).getTime()
+          const ty = new Date(y.createdAt || y.created_at || 0).getTime()
+          return ty - tx
+        })
         const mapped = list.map((o) => this.mapOrderRow(o))
+        mapped.forEach((order) => {
+          console.log('order-card raw delivery_address =', order && order.rawDeliveryAddress)
+          console.log('order-card formatted address =', order && order.address)
+        })
+        if (this.hallTab === 'making') {
+          mapped.forEach((order) => {
+            console.log('making-tab order =', {
+              rawStatus: order.rawStatus,
+              status: order.status,
+              id: order.id,
+              orderNo: order.orderNo
+            })
+          })
+        }
 
-        this.orderList = this.page > 1 ? [...this.orderList, ...mapped] : mapped
+        const enrichedOrders = this.filterOrdersByActiveStatuses(await this.enrichSupermarketOrders(mapped))
+        const mergedList = this.page > 1 ? [...this.orderList, ...enrichedOrders] : enrichedOrders
+        this.orderList = this.filterOrdersByActiveStatuses(mergedList)
         await this.loadStats()
-        this.noMore = mapped.length < this.pageSize
+        this.noMore = listGroup.every((items) => items.length < this.pageSize)
       } catch (e) {
+        this.orderList = this.page > 1 ? this.orderList : []
         console.error('加载订单列表失败', e)
       }
     },
@@ -487,6 +771,20 @@ export default {
         this.loadingMore = false
       })
     },
+
+    applyLocalOrderStatus(orderId, nextStatus) {
+      const targetId = String(orderId)
+      const updatedList = this.orderList.map((item) => {
+        if (String(item.id) !== targetId) return item
+        return {
+          ...item,
+          status: nextStatus,
+          rawStatus: nextStatus,
+          statusText: ORDER_STATUS[nextStatus]?.text || `状态${nextStatus}`
+        }
+      })
+      this.orderList = this.filterOrdersByActiveStatuses(updatedList)
+    },
     
     async handleAccept(order) {
       try {
@@ -494,6 +792,7 @@ export default {
           merchant_lng: 115.681123,
           merchant_lat: 32.181234
         })
+        this.applyLocalOrderStatus(order.id, 2)
         uni.showToast({ title: '接单成功', icon: 'success' })
         this.page = 1
         await this.loadOrderList()
@@ -524,40 +823,156 @@ export default {
         uni.showToast({ title: '已拒单', icon: 'success' })
         this.loadOrderList()
       } catch (e) {
-        uni.showToast({ title: '操作失败', icon: 'none' })
+        uni.showToast({ title: String(this.extractErrorMessage(e, '操作失败')), icon: 'none' })
       }
     },
     
     // 出餐完成：POST /api/order/prepare，状态 2 -> 3
     async finishMake(order) {
+      const payload = { order_id: order && order.id }
+      console.log('finishMake order =', order)
+      console.log('finishMake order.id =', order && order.id)
+      console.log('finishMake order.rawRecordId =', order && order.rawRecordId)
+      console.log('finishMake order.rawOrderId =', order && order.rawOrderId)
+      console.log('finishMake order.orderNo =', order && order.orderNo)
+      console.log('finishMake order.status =', order && order.status)
+      console.log('finishMake payload =', payload)
       try {
+        try {
+          const detailRes = await getOrderDetail(order.id)
+          const detailRaw = detailRes && detailRes.data !== undefined ? detailRes.data : detailRes
+          console.log('finishMake detail =', detailRaw)
+          console.log('finishMake detail.status =', detailRaw && detailRaw.status)
+        } catch (detailError) {
+          console.log('finishMake detailError =', detailError)
+        }
         await prepareOrder(order.id)
         uni.showToast({ title: '出餐完成', icon: 'success' })
         this.page = 1
         await this.loadOrderList()
         await this.loadStats()
       } catch (e) {
-        uni.showToast({ title: '操作失败', icon: 'none' })
+        console.log('finishMake error =', e)
+        console.log('finishMake error.message =', e && e.message)
+        console.log('finishMake error.response =', e && e.response)
+        console.log('finishMake error.response.data =', e && e.response && e.response.data)
+        const rawMessage =
+          (e && e.response && e.response.data && (e.response.data.message || e.response.data.msg || e.response.data.detail)) ||
+          (e && e.data && (e.data.message || e.data.msg || e.data.detail)) ||
+          (e && (e.message || e.msg || e.detail)) ||
+          '操作失败'
+        uni.showToast({ title: String(rawMessage), icon: 'none' })
       }
     },
 
-    // 县城订单：POST /api/order/deliver（状态 3 或 4）
+    // 当前页仅在已明确的配送按钮语义下调用 POST /api/order/deliver
+    extractErrorMessage(error, fallback = '操作失败') {
+      return (
+        (error && error.response && error.response.data && (error.response.data.message || error.response.data.msg || error.response.data.detail)) ||
+        (error && error.data && (error.data.message || error.data.msg || error.data.detail)) ||
+        (error && (error.message || error.msg || error.detail)) ||
+        fallback
+      )
+    },
+
+    buildSelfDeliveryMapPayload(order, detailRaw = null) {
+      const raw = detailRaw || {}
+      const customerPair = this.getValidCoordinatePair(
+        raw.customer_lng ?? raw.delivery_longitude ?? raw.longitude ?? order.customerLng,
+        raw.customer_lat ?? raw.delivery_latitude ?? raw.latitude ?? order.customerLat
+      )
+      const merchantPair = this.getValidCoordinatePair(
+        raw.merchant_lng ?? raw.merchantLng ?? order.merchantLng,
+        raw.merchant_lat ?? raw.merchantLat ?? order.merchantLat
+      )
+      const contactPhone = String(raw.contact_phone || order.customerPhone || '').trim()
+      const address = this.formatDeliveryAddress(raw.delivery_address || order.rawDeliveryAddress || order.address || '')
+      return {
+        customerLng: customerPair ? customerPair.lng : null,
+        customerLat: customerPair ? customerPair.lat : null,
+        merchantLng: merchantPair ? merchantPair.lng : null,
+        merchantLat: merchantPair ? merchantPair.lat : null,
+        contactPhone,
+        address
+      }
+    },
+
+    async openSelfDeliveryMap(order) {
+      try {
+        const detailRes = await getOrderDetail(order.id)
+        const detailRaw = detailRes && detailRes.data !== undefined ? detailRes.data : detailRes
+        const payload = this.buildSelfDeliveryMapPayload(order, detailRaw)
+        if (payload.customerLng == null || payload.customerLat == null) {
+          uni.showToast({ title: '订单缺少收货坐标，无法打开地图', icon: 'none' })
+          return
+        }
+        const query = [
+          'orderId=' + encodeURIComponent(String(order.id || '')),
+          'customerLng=' + encodeURIComponent(String(payload.customerLng)),
+          'customerLat=' + encodeURIComponent(String(payload.customerLat)),
+          'merchantLng=' + encodeURIComponent(String(payload.merchantLng == null ? '' : payload.merchantLng)),
+          'merchantLat=' + encodeURIComponent(String(payload.merchantLat == null ? '' : payload.merchantLat)),
+          'address=' + encodeURIComponent(payload.address),
+          'phone=' + encodeURIComponent(payload.contactPhone)
+        ].join('&')
+        uni.navigateTo({ url: '/pages/order/self-delivery-nav?' + query })
+      } catch (e) {
+        uni.showToast({ title: String(this.extractErrorMessage(e, '打开地图失败')), icon: 'none' })
+      }
+    },
+
     async submitDeliver(order) {
       try {
         await deliverOrder(order.id)
-        uni.showToast({ title: '已提交', icon: 'success' })
+        const mode = this.resolveSupermarketDeliveryMode(order)
+        if (mode === 'self_delivery') {
+          await this.openSelfDeliveryMap(order)
+        } else {
+          uni.showToast({ title: '已呼叫骑手', icon: 'success' })
+        }
         this.page = 1
         await this.loadOrderList()
         await this.loadStats()
       } catch (e) {
-        uni.showToast({ title: '操作失败', icon: 'none' })
+        uni.showToast({ title: String(this.extractErrorMessage(e, '操作失败')), icon: 'none' })
       }
     },
-    
-    // 打印订单
-    printOrder(order) {
-      uni.showToast({ title: '打印指令已发送', icon: 'none' })
-      // TODO: 连接打印机
+
+    async selectSupermarketDeliveryMode(order, supermarketDeliveryMode) {
+      try {
+        await request({
+          url: '/order/supermarket/delivery-mode',
+          method: 'POST',
+          data: {
+            order_id: order.id,
+            supermarket_delivery_mode: supermarketDeliveryMode
+          }
+        })
+        uni.showToast({ title: '配送方式已更新', icon: 'success' })
+        this.page = 1
+        await this.loadOrderList()
+        await this.loadStats()
+      } catch (e) {
+        uni.showToast({ title: String(this.extractErrorMessage(e, '操作失败')), icon: 'none' })
+      }
+    },
+
+    async merchantConfirmDelivery(order) {
+      try {
+        await request({
+          url: '/order/merchant-confirm-delivery',
+          method: 'POST',
+          data: {
+            order_id: order.id
+          }
+        })
+        uni.showToast({ title: '确认送达成功', icon: 'success' })
+        this.page = 1
+        await this.loadOrderList()
+        await this.loadStats()
+      } catch (e) {
+        uni.showToast({ title: String(this.extractErrorMessage(e, '操作失败')), icon: 'none' })
+      }
     },
     
     // 拨打电话
@@ -745,8 +1160,9 @@ export default {
   border-radius: 8rpx;
   font-weight: 500;
 }
-.status-1 { background: #FFF1F0; color: #FF6B35; }
-.status-2 { background: #E6F7FF; color: #1890FF; }
+.status-0 { background: #FFF1F0; color: #FF6B35; }
+.status-1 { background: #E6F7FF; color: #1890FF; }
+.status-2 { background: #F9F0FF; color: #722ED1; }
 .status-3 { background: #FFF7E6; color: #FAAD14; }
 .status-4 { background: #F0F5FF; color: #2F54EB; }
 .status-5 { background: #F6FFED; color: #52C41A; }

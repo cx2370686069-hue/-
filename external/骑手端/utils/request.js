@@ -38,7 +38,7 @@ function request({ url, method = 'GET', data = {} }) {
         }
         
         // 成功
-        if (res.statusCode === 200) {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
           resolve(res.data)
         } else {
           // 失败

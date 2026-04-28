@@ -362,33 +362,14 @@
       }
     },
     {
-      "name": "🚴 获取可抢订单（骑手端）",
+      "name": "🚴 获取骑手工作台订单（骑手端）",
       "method": "GET",
       "path": "/order/available",
       "auth": {
         "type": "bearer",
         "bearer": "{{token}}"
       },
-      "description": "骑手角色专用"
-    },
-    {
-      "name": "🚴 骑手抢单",
-      "method": "POST",
-      "path": "/order/rider-accept",
-      "headers": [
-        {
-          "name": "Content-Type",
-          "value": "application/json"
-        }
-      ],
-      "body": {
-        "mode": "raw",
-        "raw": "{\n  \"order_id\": 1\n}"
-      },
-      "auth": {
-        "type": "bearer",
-        "bearer": "{{token}}"
-      }
+      "description": "骑手工作台订单统计接口，不提供抢单能力"
     },
     {
       "name": "🚴 骑手确认送达",

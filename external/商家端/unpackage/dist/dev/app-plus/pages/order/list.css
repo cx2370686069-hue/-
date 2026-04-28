@@ -170,9 +170,11 @@
   border-radius: 0.25rem;
   font-weight: 500;
 }
-.status-1[data-v-456ecf67] { background: #FFF1F0; color: #FF6B35;
+.status-0[data-v-456ecf67] { background: #FFF1F0; color: #FF6B35;
 }
-.status-2[data-v-456ecf67] { background: #E6F7FF; color: #1890FF;
+.status-1[data-v-456ecf67] { background: #E6F7FF; color: #1890FF;
+}
+.status-2[data-v-456ecf67] { background: #F9F0FF; color: #722ED1;
 }
 .status-3[data-v-456ecf67] { background: #FFF7E6; color: #FAAD14;
 }

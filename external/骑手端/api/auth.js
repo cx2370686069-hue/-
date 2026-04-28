@@ -11,10 +11,10 @@ export function login(data) {
 }
 
 /**
- * 注册
+ * 骑手注册
  */
-export function register(data) {
-  return post('/auth/register', data)
+export function registerRider(data) {
+  return post('/auth/register/rider', data)
 }
 
 /**

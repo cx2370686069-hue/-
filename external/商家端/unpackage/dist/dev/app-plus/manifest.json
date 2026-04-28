@@ -127,7 +127,7 @@
     "uni-app": {
       "control": "uni-v3",
       "vueVersion": "3",
-      "compilerVersion": "5.05",
+      "compilerVersion": "5.07",
       "nvueCompiler": "uni-app",
       "renderer": "auto",
       "nvue": {
@@ -156,7 +156,7 @@
           "text": "首页"
         },
         {
-          "pagePath": "pages/order/index",
+          "pagePath": "pages/order/list",
           "iconPath": "/static/tabbar/order.png",
           "selectedIconPath": "/static/tabbar/order-active.png",
           "text": "订单"

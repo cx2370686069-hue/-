@@ -51,6 +51,10 @@
   border-left-color: #ff6b35;
   background: linear-gradient(135deg, #fff 0%, #fff7f5 100%);
 }
+.order-card.town-order-card[data-v-e1e6274e] {
+  border-left-color: #1f6f43;
+  background: linear-gradient(135deg, #fff 0%, #f2fbf5 100%);
+}
 .order-header[data-v-e1e6274e] {
   display: flex;
   justify-content: space-between;
@@ -65,6 +69,18 @@
   justify-content: space-between;
   align-items: center;
   margin-bottom: 0.375rem;
+}
+.header-tags[data-v-e1e6274e] {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+.scope-tag[data-v-e1e6274e] {
+  font-size: 0.75rem;
+  color: #fff;
+  background: #1f6f43;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
 }
 .order-no[data-v-e1e6274e] {
   font-size: 0.875rem;
@@ -206,6 +222,10 @@
 }
 .btn-success[data-v-e1e6274e] {
   background: linear-gradient(135deg, #52c41a, #73d13d);
+  color: #fff;
+}
+.btn-special[data-v-e1e6274e] {
+  background: linear-gradient(135deg, #fa8c16, #ffc069);
   color: #fff;
 }
 .btn-default[data-v-e1e6274e] {

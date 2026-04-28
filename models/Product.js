@@ -66,7 +66,15 @@ const Product = sequelize.define('Product', {
   indexes: [
     { fields: ['merchant_id'] },
     { fields: ['category_id'] },
-    { fields: ['status'] }
+    { fields: ['status'] },
+    {
+      name: 'idx_products_merchant_status_sort',
+      fields: ['merchant_id', 'status', 'sort']
+    },
+    {
+      name: 'idx_products_merchant_category_status_sort',
+      fields: ['merchant_id', 'category_id', 'status', 'sort']
+    }
   ]
 });
 

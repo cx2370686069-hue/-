@@ -211,9 +211,11 @@ export default {
       this.categorySubmitting = true
       try {
         await createCategory({ name, sort: 1 })
-        uni.showToast({ title: '新增成功', icon: 'success' })
+        uni.showToast({ title: '创建成功', icon: 'success' })
         this.closeCategoryDialog()
         await this.loadCategories()
+      } catch (e) {
+        uni.showToast({ title: (e && e.message) || '创建失败', icon: 'none' })
       } finally {
         this.categorySubmitting = false
       }

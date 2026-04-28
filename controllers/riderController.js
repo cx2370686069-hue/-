@@ -1,6 +1,77 @@
-const { User, Order, Merchant } = require('../models');
+const { User, Order, Merchant, ServiceArea } = require('../models');
 const { successResponse, errorResponse } = require('../utils/helpers');
 const { Op } = require('sequelize');
+
+const resolveRiderScope = (user) => {
+  if (user.delivery_scope === 'town_delivery') {
+    return {
+      delivery_scope: 'town_delivery',
+      town_name: user.town_name || user.rider_town || null
+    };
+  }
+
+  if (user.delivery_scope === 'county_delivery') {
+    return {
+      delivery_scope: 'county_delivery',
+      town_name: null
+    };
+  }
+
+  if (user.rider_kind === 'stationmaster' || user.rider_town) {
+    return {
+      delivery_scope: 'town_delivery',
+      town_name: user.town_name || user.rider_town || null
+    };
+  }
+
+  return {
+    delivery_scope: 'county_delivery',
+    town_name: null
+  };
+};
+
+const buildRiderOwnedOrderWhere = (user) => {
+  const scope = resolveRiderScope(user);
+  const where = { rider_id: user.id };
+
+  if (scope.delivery_scope === 'town_delivery') {
+    where.order_type = 'town';
+    if (scope.town_name) {
+      where.customer_town = scope.town_name;
+    }
+    return where;
+  }
+
+  where.order_type = 'county';
+  return where;
+};
+
+const resolveTownArea = async (payload = {}) => {
+  const townCode = String(payload.town_code || payload.townCode || '').trim();
+  const townName = String(payload.town || payload.town_name || payload.townName || '').trim();
+
+  if (townCode) {
+    return ServiceArea.findOne({
+      where: {
+        area_code: townCode,
+        area_type: 'town',
+        is_enabled: true
+      }
+    });
+  }
+
+  if (townName) {
+    return ServiceArea.findOne({
+      where: {
+        area_name: townName,
+        area_type: 'town',
+        is_enabled: true
+      }
+    });
+  }
+
+  return null;
+};
 
 exports.bindStationTown = async (req, res, next) => {
   try {
@@ -9,17 +80,17 @@ exports.bindStationTown = async (req, res, next) => {
       return res.status(403).json(errorResponse('只有骑手可以操作'));
     }
 
-    const town = String(req.body?.town || '').trim();
-    if (!town) {
-      return res.status(400).json(errorResponse('缺少乡镇名称'));
+    const townArea = await resolveTownArea(req.body);
+    if (!townArea) {
+      return res.status(400).json(errorResponse('缺少有效乡镇'));
     }
 
     const existing = await User.findOne({
       where: {
         role: 'rider',
         status: 1,
-        rider_kind: 'stationmaster',
-        rider_town: town
+        rider_level: 'captain',
+        town_code: townArea.area_code
       }
     });
 
@@ -28,11 +99,22 @@ exports.bindStationTown = async (req, res, next) => {
     }
 
     await user.update({
+      delivery_scope: 'town_delivery',
+      rider_level: 'captain',
+      town_code: townArea.area_code,
+      town_name: townArea.area_name,
       rider_kind: 'stationmaster',
-      rider_town: town
+      rider_town: townArea.area_name
     });
 
-    res.json(successResponse({ rider_kind: user.rider_kind, rider_town: user.rider_town }, '绑定成功'));
+    res.json(successResponse({
+      delivery_scope: user.delivery_scope,
+      rider_level: user.rider_level,
+      town_code: user.town_code,
+      town_name: user.town_name,
+      rider_kind: user.rider_kind,
+      rider_town: user.rider_town
+    }, '绑定成功'));
   } catch (error) {
     next(error);
   }
@@ -102,18 +184,48 @@ exports.getOnlineRiderLocations = async (req, res, next) => {
 
     const minutes = Number(req.query?.minutes || 10);
     const since = new Date(Date.now() - Math.max(1, minutes) * 60 * 1000);
+    const where = {
+      role: 'rider',
+      status: 1,
+      rider_status: 1,
+      rider_location_updated_at: { [Op.gte]: since }
+    };
+
+    if (user.role === 'merchant') {
+      const merchant = await Merchant.findOne({ where: { user_id: user.id } });
+      if (!merchant) {
+        return res.status(404).json(errorResponse('您还没有店铺'));
+      }
+
+      if (merchant.business_scope === 'town_food') {
+        where.delivery_scope = 'town_delivery';
+        if (merchant.town_name) {
+          where.town_name = merchant.town_name;
+        }
+      } else if (merchant.business_scope === 'county_food') {
+        where.delivery_scope = 'county_delivery';
+      }
+    } else {
+      const scope = resolveRiderScope(user);
+      if (scope.delivery_scope === 'town_delivery') {
+        where.delivery_scope = 'town_delivery';
+        if (scope.town_name) {
+          where.town_name = scope.town_name;
+        }
+      } else {
+        where.delivery_scope = 'county_delivery';
+      }
+    }
 
     const riders = await User.findAll({
-      where: {
-        role: 'rider',
-        status: 1,
-        rider_status: 1,
-        rider_location_updated_at: { [Op.gte]: since }
-      },
+      where,
       attributes: [
         'id',
         'nickname',
         'phone',
+        'delivery_scope',
+        'town_code',
+        'town_name',
         'rider_latitude',
         'rider_longitude',
         'rider_location_updated_at'
@@ -135,7 +247,7 @@ exports.getMyAssignedOrders = async (req, res, next) => {
     }
 
     const { status } = req.query;
-    const where = { rider_id: user.id };
+    const where = buildRiderOwnedOrderWhere(user);
     if (status) where.status = status;
 
     const orders = await Order.findAll({
@@ -166,4 +278,3 @@ exports.getMyAssignedOrders = async (req, res, next) => {
     next(error);
   }
 };
-

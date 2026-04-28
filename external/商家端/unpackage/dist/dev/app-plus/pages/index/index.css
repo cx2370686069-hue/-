@@ -1,18 +1,4 @@
 
-.status-card[data-v-1cf27b2a] {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  background: linear-gradient(135deg, #FF6B35 0%, #FF8C42 100%);
-  padding: 1rem;
-  border-radius: 0.5rem;
-  margin-bottom: 0.75rem;
-  color: #fff;
-}
-.shop-name[data-v-1cf27b2a] { font-size: 1.125rem; font-weight: 600;
-}
-.status-text[data-v-1cf27b2a] { font-size: 0.75rem; opacity: 0.9;
-}
 .test-card[data-v-1cf27b2a] {
   display: flex;
   flex-direction: column;
@@ -37,6 +23,32 @@
 }
 .section-title[data-v-1cf27b2a] { font-size: 0.9375rem; font-weight: 600; margin-bottom: 0.75rem;
 }
+.state-card[data-v-1cf27b2a] {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.state-title[data-v-1cf27b2a] {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #333;
+}
+.state-desc[data-v-1cf27b2a] {
+  font-size: 0.8125rem;
+  color: #666;
+  line-height: 1.6;
+}
+.state-btn[data-v-1cf27b2a] {
+  margin: 0.25rem 0 0;
+  font-size: 0.8125rem;
+  border-radius: 0.375rem;
+}
+.state-btn.primary[data-v-1cf27b2a] {
+  background: #ff6b35;
+  color: #fff;
+  border: none;
+}
 .overview-grid[data-v-1cf27b2a] {
   display: flex;
   justify-content: space-around;
@@ -60,6 +72,41 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+.sound-tip-card[data-v-1cf27b2a] {
+  margin-bottom: 0.75rem;
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.375rem;
+  background: #fff;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 0.0625rem 0.375rem rgba(0,0,0,0.04);
+}
+.sound-tip-main[data-v-1cf27b2a] {
+  display: flex;
+  flex-direction: column;
+}
+.sound-tip-title[data-v-1cf27b2a] {
+  font-size: 0.875rem;
+  color: #333;
+  font-weight: 600;
+}
+.sound-tip-desc[data-v-1cf27b2a] {
+  margin-top: 0.1875rem;
+  font-size: 0.75rem;
+  color: #999;
+}
+.sound-tip-status[data-v-1cf27b2a] {
+  font-size: 0.75rem;
+  color: #07c160;
+  background: #edf9f0;
+  padding: 0.3125rem 0.5625rem;
+  border-radius: 31.21875rem;
+}
+.sound-tip-status.off[data-v-1cf27b2a] {
+  color: #ff6b35;
+  background: #fff3e8;
 }
 .arrow[data-v-1cf27b2a] { font-size: 1.125rem;
 }

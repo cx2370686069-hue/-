@@ -27,7 +27,7 @@
       </view>
       <view class="stat-card">
         <text class="stat-num">¥{{ stats.todayEarning }}</text>
-        <text class="stat-label">今日收入</text>
+        <text class="stat-label">完成订单收入统计</text>
       </view>
     </view>
 
@@ -60,13 +60,13 @@
     </view>
 
     <view class="menu-section">
-      <view class="section-title-small">💰 收入统计</view>
+      <view class="section-title-small">💰 订单收入统计</view>
       <view class="menu-grid">
         <view class="menu-item" @click="goEarnings">
           <view class="menu-icon-wrap" style="background-color: #F6FFED;">
             <text class="menu-icon">💰</text>
           </view>
-          <text class="menu-text">收入明细</text>
+          <text class="menu-text">订单收入汇总</text>
         </view>
         <view class="menu-item" @click="goWeekStats">
           <view class="menu-icon-wrap" style="background-color: #FFF0F6;">
@@ -92,6 +92,13 @@
           </view>
           <text class="menu-text">个人中心</text>
         </view>
+        <view v-if="showStationMessageEntry" class="menu-item" @click="goStationMessages">
+          <view class="menu-icon-wrap" style="background-color: #FFF1F0;">
+            <text class="menu-icon">💬</text>
+          </view>
+          <text class="menu-text">跑腿代购消息</text>
+          <text class="menu-badge" v-if="stationMessageUnread > 0">{{ formatBadgeCount(stationMessageUnread) }}</text>
+        </view>
         <view class="menu-item" @click="goSettings">
           <view class="menu-icon-wrap" style="background-color: #FFF7E6;">
             <text class="menu-icon">⚙️</text>
@@ -107,22 +114,32 @@
       </view>
     </view>
 
-    <!-- 待接单提醒 -->
+    <!-- 待处理订单提醒 -->
     <view class="section" v-if="pendingOrders.length > 0">
       <view class="section-header">
-        <text class="section-title">� 配送中订单</text>
+        <text class="section-title">配送任务</text>
         <text class="section-action" @click="goOrders">查看全部</text>
       </view>
       <view class="order-card" v-for="order in pendingOrders.slice(0, 3)" :key="order.id" @click="goOrderDetail(order)">
         <view class="order-top">
-          <text class="order-type">{{ order.type === 'takeout' ? '外卖' : '跑腿' }}</text>
+          <view class="order-tags">
+            <text class="order-type" :class="{ 'town-type': isTownOrder(order) }">
+              {{ isTownOrder(order) ? '乡镇订单' : (order.type === 'takeout' ? '外卖' : '配送') }}
+            </text>
+            <text v-if="getTownName(order)" class="order-town">{{ getTownName(order) }}</text>
+          </view>
           <text class="order-price">¥{{ order.rider_fee || 0 }}</text>
+        </view>
+        <view class="order-merchant">
+          <text class="merchant-icon">🏪</text>
+          <text class="merchant-text">{{ order.merchant?.name || '未知商家' }}</text>
         </view>
         <view class="order-addr">
           <text class="addr-icon">📍</text>
           <text class="addr-text">{{ getBriefAddress(order) }}</text>
         </view>
         <view class="order-bottom">
+          <text class="order-status" :class="{ 'town-status': isTownOrder(order) }">{{ getStatusText(order.status) }}</text>
           <text class="order-time">{{ formatTime(order.created_at) }}</text>
         </view>
       </view>
@@ -131,8 +148,8 @@
     <!-- 空状态 -->
     <view class="empty-state" v-if="pendingOrders.length === 0 && isOnline">
       <text class="empty-icon">☕</text>
-      <text class="empty-text">暂无可接订单</text>
-      <text class="empty-tip">休息一下，新订单快来了~</text>
+      <text class="empty-text">暂无待处理订单</text>
+      <text class="empty-tip">当前没有分配到你的配送任务</text>
     </view>
 
     <!-- 自定义确认弹窗 -->
@@ -162,10 +179,13 @@
 </template>
 
 <script>
-import { getAvailableOrders } from '@/api/order.js'
+import { getRiderOrders, updateRiderStatus } from '@/api/order.js'
 import { getErrandList } from '@/api/errand.js'
+import { getTownErrandConversations } from '@/api/town-errand-message.js'
 import { getUserInfo } from '@/api/user.js'
-import { getRiderStatus, setRiderStatus } from '@/utils/storage.js'
+import { ORDER_STATUS } from '@/config/index.js'
+import { getRiderStatus, getUserInfo as getStoredUserInfo, setRiderStatus } from '@/utils/storage.js'
+import { initSocket, onNewDelivery, disconnectSocket, offAllListeners } from '@/utils/socket.js'
 import { formatTime } from '@/utils/index.js'
 
 export default {
@@ -173,6 +193,10 @@ export default {
     return {
       isOnline: true,
       nickname: '骑手',
+      userProfile: null,
+      stationMessageUnread: 0,
+      stationMessagePollTimer: null,
+      lastStationMessageUnread: null,
       allOrders: [],
       errandOrders: [],
       stats: {
@@ -190,33 +214,66 @@ export default {
   },
   computed: {
     pendingOrders() {
-      return this.allOrders.filter(o => o.status === 5)
+      return this.allOrders.filter(o => [4, 5].includes(Number(o.status)))
+    },
+    showStationMessageEntry() {
+      const profile = this.userProfile || {}
+      return profile.rider_kind === 'stationmaster' || profile.delivery_scope === 'town_delivery'
     }
   },
   onLoad() {
     // 加载骑手状态
     const savedStatus = getRiderStatus()
     this.isOnline = savedStatus === 1
+    const storedUser = getStoredUserInfo()
+    if (storedUser) {
+      this.userProfile = storedUser
+      this.nickname = storedUser.nickname || '骑手'
+    }
   },
   onShow() {
+    this.initOrderSocket()
     this.loadData()
+  },
+  onHide() {
+    this.destroyOrderSocket()
+    this.stopStationMessagePolling()
+  },
+  onUnload() {
+    this.destroyOrderSocket()
+    this.stopStationMessagePolling()
   },
   methods: {
     formatTime,
+    formatBadgeCount(count) {
+      return count > 99 ? '99+' : String(count)
+    },
+    getStatusText(status) {
+      return ORDER_STATUS[status]?.text || '未知状态'
+    },
+    isTownOrder(order = {}) {
+      return order.order_type === 'town' || order.delivery_scope === 'town_delivery' || !!this.getTownName(order)
+    },
+    getTownName(order = {}) {
+      return order.customer_town || order.town_name || order.rider_town || ''
+    },
     
     async loadData() {
+      await this.loadUserInfo()
       await Promise.all([
-        this.loadUserInfo(),
         this.loadOrders(),
-        this.loadErrands()
+        this.loadErrands(),
+        this.loadStationMessageSummary(true)
       ])
       this.calculateStats()
+      this.startStationMessagePolling()
     },
     
     async loadUserInfo() {
       try {
         const res = await getUserInfo()
         if (res.data) {
+          this.userProfile = res.data
           this.nickname = res.data.nickname || '骑手'
         }
       } catch (e) {
@@ -226,7 +283,7 @@ export default {
     
     async loadOrders() {
       try {
-        const res = await getAvailableOrders()
+        const res = await getRiderOrders()
         this.allOrders = res.data || []
       } catch (e) {
         console.error('加载订单失败', e)
@@ -241,6 +298,51 @@ export default {
       } catch (e) {
         console.error('加载跑腿订单失败', e)
         this.errandOrders = []
+      }
+    },
+    async loadStationMessageSummary(isFirstLoad = false) {
+      if (!this.showStationMessageEntry) {
+        this.stationMessageUnread = 0
+        this.lastStationMessageUnread = 0
+        return
+      }
+      try {
+        const res = await getTownErrandConversations()
+        const source = Array.isArray(res?.data)
+          ? res.data
+          : Array.isArray(res?.data?.list)
+            ? res.data.list
+            : Array.isArray(res?.data?.rows)
+              ? res.data.rows
+              : Array.isArray(res?.data?.data)
+                ? res.data.data
+                : Array.isArray(res)
+                  ? res
+                  : []
+        const unreadTotal = source.reduce((sum, item = {}) => {
+          const unread = Number(item.unread_count ?? item.unreadCount ?? item.unread_num ?? 0)
+          return sum + (unread > 0 ? unread : 0)
+        }, 0)
+        const previousUnread = this.lastStationMessageUnread
+        this.stationMessageUnread = unreadTotal
+        this.lastStationMessageUnread = unreadTotal
+      } catch (error) {
+        console.error('加载站长消息未读数失败', error)
+      }
+    },
+    startStationMessagePolling() {
+      this.stopStationMessagePolling()
+      if (!this.showStationMessageEntry) {
+        return
+      }
+      this.stationMessagePollTimer = setInterval(() => {
+        this.loadStationMessageSummary(false)
+      }, 3000)
+    },
+    stopStationMessagePolling() {
+      if (this.stationMessagePollTimer) {
+        clearInterval(this.stationMessagePollTimer)
+        this.stationMessagePollTimer = null
       }
     },
     
@@ -267,7 +369,7 @@ export default {
       this.stats.errandPending = this.errandOrders.length
     },
     
-    toggleOnline() {
+    async toggleOnline() {
       // 如果是从接单中切换到休息，弹出确认框
       if (this.isOnline) {
         this.showConfirmDialog = true
@@ -281,20 +383,23 @@ export default {
           }
         }, 1000)
       } else {
-        // 从休息切换到接单中，立即切换
-        this.isOnline = true
-        const newStatus = 1
-        setRiderStatus(newStatus)
-        
-        uni.showToast({ 
-          title: '已开始接单', 
-          icon: 'none' 
-        })
+        try {
+          const newStatus = 1
+          await updateRiderStatus(newStatus)
+          this.isOnline = true
+          setRiderStatus(newStatus)
+          uni.showToast({ 
+            title: '已开始接单', 
+            icon: 'none' 
+          })
+        } catch (error) {
+          console.error('切换接单状态失败', error)
+        }
       }
     },
     
     // 确认下班
-    confirmOffWork() {
+    async confirmOffWork() {
       if (this.countdown > 0) {
         uni.showToast({
           title: '请等待倒计时结束',
@@ -303,16 +408,20 @@ export default {
         return
       }
       
-      // 确定下班
-      const newStatus = 0
-      setRiderStatus(newStatus)
-      this.isOnline = false
-      this.showConfirmDialog = false
-      
-      uni.showToast({ 
-        title: '已暂停接单', 
-        icon: 'none' 
-      })
+      try {
+        const newStatus = 0
+        await updateRiderStatus(newStatus)
+        setRiderStatus(newStatus)
+        this.isOnline = false
+        this.showConfirmDialog = false
+        
+        uni.showToast({ 
+          title: '已暂停接单', 
+          icon: 'none' 
+        })
+      } catch (error) {
+        console.error('切换休息状态失败', error)
+      }
     },
     
     // 取消下班
@@ -326,10 +435,35 @@ export default {
         const addr = typeof order.delivery_address === 'string' 
           ? JSON.parse(order.delivery_address) 
           : order.delivery_address
-        return addr.district + addr.street || '未知地址'
+        return addr.detail || addr.address || `${addr.district || ''}${addr.street || ''}` || order.address || '未知地址'
       } catch (e) {
-        return '未知地址'
+        return order.address || '未知地址'
       }
+    },
+    initOrderSocket() {
+      const token = uni.getStorageSync('token') || ''
+      if (!token) {
+        return
+      }
+      initSocket(token)
+      offAllListeners()
+      onNewDelivery(async (payload = {}) => {
+        const order = payload.data || {}
+        if (!order.id) {
+          return
+        }
+        uni.showToast({
+          title: this.isTownOrder(order) ? '收到乡镇配送任务' : '收到新的配送任务',
+          icon: 'none',
+          duration: 2000
+        })
+        await this.loadOrders()
+        this.calculateStats()
+      })
+    },
+    destroyOrderSocket() {
+      offAllListeners()
+      disconnectSocket()
     },
     
     goOrders() {
@@ -361,6 +495,10 @@ export default {
       // profile 是 tabbar 页面，需要用 switchTab
       uni.switchTab({ url: '/pages/profile/index' })
     },
+
+    goStationMessages() {
+      uni.navigateTo({ url: '/pages/station-messages/index' })
+    },
     
     goSettings() {
       uni.showToast({ title: '设置功能开发中', icon: 'none' })
@@ -371,9 +509,9 @@ export default {
     },
     
     goOrderDetail(order) {
-      const type = order.type === 'errand' ? 'errand' : 'order'
+      const target = order.type === 'errand' ? 'errands' : 'orders'
       uni.navigateTo({ 
-        url: `/pages/${type}/detail?id=${order.id}` 
+        url: `/pages/${target}/detail?id=${order.id}` 
       })
     }
   }
@@ -596,6 +734,12 @@ export default {
   border-left: 6rpx solid #1890ff;
 }
 
+.order-tags {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+}
+
 .order-card:last-child {
   margin-bottom: 0;
 }
@@ -615,10 +759,39 @@ export default {
   border-radius: 6rpx;
 }
 
+.order-type.town-type {
+  background: #1f6f43;
+}
+
+.order-town {
+  font-size: 22rpx;
+  color: #1f6f43;
+  background: rgba(31, 111, 67, 0.12);
+  padding: 4rpx 12rpx;
+  border-radius: 6rpx;
+}
+
 .order-price {
   font-size: 30rpx;
   color: #FF6B35;
   font-weight: bold;
+}
+
+.order-merchant {
+  display: flex;
+  align-items: center;
+  margin-bottom: 10rpx;
+}
+
+.merchant-icon {
+  font-size: 24rpx;
+  margin-right: 8rpx;
+}
+
+.merchant-text {
+  font-size: 26rpx;
+  color: #333;
+  font-weight: 500;
 }
 
 .order-addr {
@@ -647,6 +820,16 @@ export default {
 .order-time {
   font-size: 22rpx;
   color: #ccc;
+}
+
+.order-status {
+  font-size: 24rpx;
+  color: #1890ff;
+  font-weight: 500;
+}
+
+.order-status.town-status {
+  color: #1f6f43;
 }
 
 .take-btn {
