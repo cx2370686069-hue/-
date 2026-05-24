@@ -1,6 +1,8 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
+// 这张表是“系统通知已读记录”模型。
+// 用来记录某个用户是否已经读过某条系统通知。
 const SystemNotificationRead = sequelize.define('SystemNotificationRead', {
   id: {
     type: DataTypes.INTEGER,

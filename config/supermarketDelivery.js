@@ -1,3 +1,8 @@
+// 这个文件专门管“超市订单配送模式”。
+// 它把三件事拆开了：
+// 1. 店铺允许哪些配送权限
+// 2. 某一笔订单当前实际走哪种配送模式
+// 3. 不同模式对应哪套结算规则
 const SUPERMARKET_DELIVERY_PERMISSIONS = {
   SELF_ONLY: 'self_only',
   RIDER_ONLY: 'rider_only',
@@ -17,6 +22,7 @@ const SUPERMARKET_SETTLEMENT_RULES = {
   RIDER_DELIVERY_FIXED: 'supermarket_rider_delivery_fixed_1'
 };
 
+// 老数据、中文输入、前端别名，最后都要被折算成系统内部统一值。
 const PERMISSION_ALIASES = {
   [SUPERMARKET_DELIVERY_PERMISSIONS.SELF_ONLY]: SUPERMARKET_DELIVERY_PERMISSIONS.SELF_ONLY,
   self: SUPERMARKET_DELIVERY_PERMISSIONS.SELF_ONLY,
@@ -52,6 +58,7 @@ const PERMISSION_ALIASES = {
   '自己配送/骑手配送': SUPERMARKET_DELIVERY_PERMISSIONS.HYBRID
 };
 
+// 配送模式和“店铺权限”不是一回事，这里是订单落地后的实际模式别名表。
 const MODE_ALIASES = {
   [SUPERMARKET_DELIVERY_MODES.PENDING]: SUPERMARKET_DELIVERY_MODES.PENDING,
   pending: SUPERMARKET_DELIVERY_MODES.PENDING,
@@ -75,6 +82,7 @@ const MODE_ALIASES = {
 
 const normalizeTextKey = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
 
+// 权限归一化失败时返回 null，调用方自己决定是驳回还是走默认逻辑。
 const normalizeSupermarketDeliveryPermission = (value) => {
   if (value === undefined || value === null || value === '') {
     return null;
@@ -82,6 +90,7 @@ const normalizeSupermarketDeliveryPermission = (value) => {
   return PERMISSION_ALIASES[normalizeTextKey(value)] || PERMISSION_ALIASES[String(value).trim()] || null;
 };
 
+// 订单配送模式也统一做一次归一化，避免 mixed case 或中文别名把后续判断搞乱。
 const normalizeSupermarketDeliveryMode = (value) => {
   if (value === undefined || value === null || value === '') {
     return null;
@@ -89,6 +98,8 @@ const normalizeSupermarketDeliveryMode = (value) => {
   return MODE_ALIASES[normalizeTextKey(value)] || MODE_ALIASES[String(value).trim()] || null;
 };
 
+// 超市订单刚创建时，先根据店铺权限推导一个初始配送模式。
+// 如果店铺是“二选一”，这里会直接定死；如果是 hybrid，就先挂 pending 等后面再选。
 const resolveInitialSupermarketDeliveryMode = (permission) => {
   switch (permission) {
     case SUPERMARKET_DELIVERY_PERMISSIONS.SELF_ONLY:

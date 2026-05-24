@@ -1,7 +1,8 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
-// 商品模型
+// 这张表是“商品主表”模型。
+// 商品基础资料、价格、库存、销量、上下架状态，主要都在这里。
 const Product = sequelize.define('Product', {
   id: {
     type: DataTypes.INTEGER,

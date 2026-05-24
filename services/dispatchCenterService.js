@@ -1,8 +1,13 @@
+// 这个文件是“调度中心服务”。
+// 主要负责两件事：
+// 1. 把订单推给外部调度中心
+// 2. 把乡镇订单自动分配给对应乡镇站长
 const axios = require('axios');
 const { Op } = require('sequelize');
 const { Order, OrderLog, User, Merchant } = require('../models');
 const socketService = require('./socketService');
 
+// 把订单整理成调度中心接口需要的 payload 结构。
 const buildDispatchOrderPayload = ({ order, merchant }) => {
   return {
     id: String(order.id),
@@ -18,6 +23,8 @@ const buildDispatchOrderPayload = ({ order, merchant }) => {
   };
 };
 
+// 向外部调度中心推单。
+// 这里会先检查环境变量里有没有配置调度中心地址，再真正发 HTTP 请求。
 const pushOrderToDispatchCenter = async ({ order, merchant }) => {
   const baseUrl = process.env.DISPATCH_CENTER_BASE_URL;
   if (!baseUrl) {
@@ -43,6 +50,7 @@ const pushOrderToDispatchCenter = async ({ order, merchant }) => {
   return res.data;
 };
 
+// 根据乡镇名称查当前可接单的乡镇站长。
 const findTownStationmaster = async (townName) => {
   const resolvedTownName = String(townName || '').trim();
   if (!resolvedTownName) {
@@ -64,6 +72,8 @@ const findTownStationmaster = async (townName) => {
   });
 };
 
+// 把乡镇订单自动分配给乡镇站长。
+// 这里除了改订单归属，还会写订单日志、发 socket 通知。
 const assignToTownStation = async ({ order, merchant, operatorUserId }) => {
   const targetOrder = order?.id
     ? order
@@ -105,7 +115,9 @@ const assignToTownStation = async ({ order, merchant, operatorUserId }) => {
   await targetOrder.update({
     rider_id: rider.id,
     status: 4,
-    dispatch_center_status: 'station_assigned'
+    dispatch_center_status: 'station_assigned',
+    current_responsible_user_id: rider.id,
+    current_responsible_role: 'town_stationmaster'
   });
 
   await OrderLog.create({
@@ -125,7 +137,16 @@ const assignToTownStation = async ({ order, merchant, operatorUserId }) => {
     ]
   });
 
-  socketService.notifyRiderNewOrder(rider.id, refreshed);
+  socketService.notifyRiderNewOrder(rider.id, refreshed, {
+    eventType: 'rider_station_order_assigned',
+    title: '乡镇待配送订单',
+    message: '您有新的乡镇待配送订单',
+    speechText: '您有新的乡镇待配送订单，请及时处理',
+    soundType: 'rider_new_delivery',
+    priority: 'high',
+    jumpPath: '/pages/orders/index',
+    dedupeKey: `rider_station_order_assigned:${targetOrder.id}:${rider.id}`
+  });
   socketService.notifyUserOrderUpdate(targetOrder.user_id, refreshed, '乡镇站长已接单，等待取餐配送');
   await socketService.broadcastDispatcherOrdersUpdate();
 

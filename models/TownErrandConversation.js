@@ -1,6 +1,8 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
+// 这张表是“乡镇跑腿会话”模型。
+// 用户和乡镇站长之间的咨询会话，会先在这里建一个会话壳，再挂消息记录。
 const TownErrandConversation = sequelize.define('TownErrandConversation', {
   id: {
     type: DataTypes.INTEGER,

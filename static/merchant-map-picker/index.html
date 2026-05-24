@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <title>商家端腾讯地图选点</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #f7f8fa;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      }
+
+      #mapContainer {
+        position: fixed;
+        left: 0;
+        top: 0;
+        right: 0;
+        bottom: calc(124px + env(safe-area-inset-bottom));
+      }
+
+      .center-pin {
+        position: fixed;
+        left: 50%;
+        top: 50%;
+        width: 28px;
+        height: 40px;
+        margin-left: -14px;
+        margin-top: -40px;
+        z-index: 10;
+        pointer-events: none;
+      }
+
+      .center-pin::before {
+        content: '';
+        display: block;
+        width: 28px;
+        height: 28px;
+        border-radius: 50% 50% 50% 0;
+        background: #ff6b35;
+        transform: rotate(-45deg);
+        box-shadow: 0 6px 14px rgba(255, 107, 53, 0.28);
+      }
+
+      .center-pin::after {
+        content: '';
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 10px;
+        height: 10px;
+        margin-left: -5px;
+        margin-top: -10px;
+        border-radius: 50%;
+        background: #fff;
+      }
+
+      .bottom-bar {
+        position: fixed;
+        left: 12px;
+        right: 12px;
+        bottom: calc(12px + env(safe-area-inset-bottom));
+        z-index: 20;
+        padding: 12px;
+        border-radius: 16px;
+        background: #ffffff;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+        pointer-events: auto;
+        touch-action: none;
+        -webkit-user-select: none;
+        user-select: none;
+      }
+
+      .hint-text {
+        margin: 0 0 10px;
+        font-size: 12px;
+        line-height: 1.5;
+        color: #666;
+      }
+
+      .coord-text {
+        margin: 0 0 10px;
+        font-size: 11px;
+        line-height: 1.4;
+        color: #999;
+      }
+
+      .confirm-btn {
+        width: 100%;
+        height: 44px;
+        border: 0;
+        border-radius: 22px;
+        background: #ff6b35;
+        color: #fff;
+        font-size: 16px;
+        font-weight: 600;
+        position: relative;
+        z-index: 21;
+        pointer-events: auto;
+        touch-action: manipulation;
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      .confirm-btn[disabled] {
+        background: #ffb49f;
+      }
+
+      .loading-mask {
+        position: fixed;
+        inset: 0;
+        z-index: 30;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(255, 255, 255, 0.72);
+        font-size: 14px;
+        color: #666;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="mapContainer"></div>
+    <div class="center-pin"></div>
+    <div id="bottomBar" class="bottom-bar">
+      <p id="hintText" class="hint-text">请拖动地图，让图钉对准门店位置后确认</p>
+      <p id="coordText" class="coord-text">坐标获取中...</p>
+      <button id="confirmBtn" class="confirm-btn" type="button" disabled>确认位置</button>
+    </div>
+    <div id="loadingMask" class="loading-mask">正在加载腾讯地图...</div>
+
+    <script src="https://doc.dcloud.net.cn/uni.webview.1.5.6.js"></script>
+    <script>
+      ;(function () {
+        var DEFAULT_CENTER = { lat: 32.1313, lng: 115.654 }
+        var map = null
+        var selectedLocation = null
+        var isConfirming = false
+        var bridgeReady = false
+        var hintTextEl = document.getElementById('hintText')
+        var coordTextEl = document.getElementById('coordText')
+        var confirmBtnEl = document.getElementById('confirmBtn')
+        var bottomBarEl = document.getElementById('bottomBar')
+        var loadingMaskEl = document.getElementById('loadingMask')
+        var lastConfirmTriggerAt = 0
+
+        document.addEventListener('UniAppJSBridgeReady', function () {
+          bridgeReady = true
+        })
+
+        function getQuery(name) {
+          var search = window.location.search.slice(1).split('&')
+          for (var i = 0; i < search.length; i += 1) {
+            var item = search[i]
+            if (!item) continue
+            var parts = item.split('=')
+            if (decodeURIComponent(parts[0] || '') === name) {
+              return decodeURIComponent(parts.slice(1).join('=') || '')
+            }
+          }
+          return ''
+        }
+
+        // #region debug-point A:map-query
+        fetch('http://192.168.1.9:7777/event',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'map-picker-wrong-address',runId:'pre-fix',hypothesisId:'A',location:'static/merchant-map-picker/index.html:init',msg:'[DEBUG] 地图页初始化参数',data:{href:window.location.href,address:getQuery('address'),latitude:getQuery('latitude'),longitude:getQuery('longitude')},ts:Date.now()})}).catch(function(){})
+        // #endregion
+
+        function normalizeNumber(value) {
+          var num = Number(value)
+          return isFinite(num) ? num : null
+        }
+
+        function getValidCoordinatePair(latitude, longitude) {
+          var lat = normalizeNumber(latitude)
+          var lng = normalizeNumber(longitude)
+          if (lat == null || lng == null) return null
+          if (lat === 0 && lng === 0) return null
+          if (lat < -90 || lat > 90) return null
+          if (lng < -180 || lng > 180) return null
+          return {
+            lat: lat,
+            lng: lng
+          }
+        }
+
+        function setHintText(text) {
+          hintTextEl.textContent = text || '请拖动地图，让图钉对准门店位置后确认'
+        }
+
+        function setCoordText(lat, lng) {
+          coordTextEl.textContent =
+            lat == null || lng == null ? '坐标获取中...' : '纬度 ' + lat.toFixed(6) + '，经度 ' + lng.toFixed(6)
+        }
+
+        function setLoading(show) {
+          loadingMaskEl.style.display = show ? 'flex' : 'none'
+        }
+
+        function setConfirmEnabled(enabled) {
+          confirmBtnEl.disabled = !enabled
+        }
+
+        function loadMapScript() {
+          return new Promise(function (resolve, reject) {
+            if (window.TMap) {
+              resolve(window.TMap)
+              return
+            }
+            var key = getQuery('key')
+            if (!key) {
+              reject(new Error('missing-key'))
+              return
+            }
+            var script = document.createElement('script')
+            script.charset = 'utf-8'
+            script.src = 'https://map.qq.com/api/gljs?v=1.exp&key=' + encodeURIComponent(key)
+            script.onload = function () {
+              if (window.TMap) {
+                resolve(window.TMap)
+                return
+              }
+              reject(new Error('tmap-unavailable'))
+            }
+            script.onerror = function () {
+              reject(new Error('script-load-failed'))
+            }
+            document.head.appendChild(script)
+          })
+        }
+
+        function postSelectedLocation(location) {
+          // #region debug-point B:post-message
+          fetch('http://192.168.1.9:7777/event',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'map-picker-wrong-address',runId:'pre-fix',hypothesisId:'B',location:'static/merchant-map-picker/index.html:postSelectedLocation',msg:'[DEBUG] 地图页准备回传选点',data:{location:location,hasUni:!!(window.uni&&typeof window.uni.postMessage==='function'),bridgeReady:bridgeReady},ts:Date.now()})}).catch(function(){})
+          // #endregion
+          if (window.uni && typeof window.uni.postMessage === 'function') {
+            bridgeReady = true
+            window.uni.postMessage({
+              data: {
+                action: 'locationPicked',
+                payload: location
+              }
+            })
+            return true
+          }
+          if (!bridgeReady) {
+            return false
+          }
+          console.log('locationPicked', location)
+          return false
+        }
+
+        function stopOverlayEvent(event) {
+          if (!event) return
+          if (typeof event.preventDefault === 'function') {
+            event.preventDefault()
+          }
+          if (typeof event.stopPropagation === 'function') {
+            event.stopPropagation()
+          }
+          if (typeof event.stopImmediatePropagation === 'function') {
+            event.stopImmediatePropagation()
+          }
+        }
+
+        function bindOverlayEvents() {
+          if (!bottomBarEl) return
+          ;['touchstart', 'touchmove', 'touchend', 'mousedown', 'mouseup', 'click'].forEach(function (eventName) {
+            bottomBarEl.addEventListener(
+              eventName,
+              function (event) {
+                stopOverlayEvent(event)
+              },
+              { passive: false }
+            )
+          })
+        }
+
+        function resolveInitialCenter() {
+          var coordinatePair = getValidCoordinatePair(getQuery('latitude'), getQuery('longitude'))
+          if (coordinatePair) {
+            return coordinatePair
+          }
+          return DEFAULT_CENTER
+        }
+
+        function updateSelection(lat, lng, sourceText) {
+          if (isConfirming) return
+          selectedLocation = {
+            latitude: Number(lat.toFixed(6)),
+            longitude: Number(lng.toFixed(6)),
+            address: ''
+          }
+          setCoordText(selectedLocation.latitude, selectedLocation.longitude)
+          setConfirmEnabled(true)
+          setHintText(sourceText || '当前位置已更新，确认后回填门店坐标')
+        }
+
+        function getMapCenter() {
+          if (!map) return null
+          var center = map.getCenter()
+          return center ? { lat: center.getLat(), lng: center.getLng() } : null
+        }
+
+        function bindMapEvents() {
+          map.on('dragend', function () {
+            if (isConfirming) return
+            var center = getMapCenter()
+            if (!center) return
+            updateSelection(center.lat, center.lng, '当前位置已更新，确认后回填门店坐标')
+          })
+        }
+
+        function initMap() {
+          var center = resolveInitialCenter()
+          map = new window.TMap.Map(document.getElementById('mapContainer'), {
+            center: new window.TMap.LatLng(center.lat, center.lng),
+            zoom: 17,
+            pitch: 0,
+            rotation: 0
+          })
+          bindOverlayEvents()
+          confirmBtnEl.addEventListener('touchend', handleConfirm, { passive: false })
+          confirmBtnEl.addEventListener('click', handleConfirm, { passive: false })
+          bindMapEvents()
+          updateSelection(center.lat, center.lng, '请拖动地图，让图钉对准门店位置后确认')
+          setLoading(false)
+        }
+
+        function handleConfirm(event) {
+          stopOverlayEvent(event)
+          var now = Date.now()
+          if (now - lastConfirmTriggerAt < 400) return
+          lastConfirmTriggerAt = now
+          if (!selectedLocation || isConfirming) return
+          isConfirming = true
+          setConfirmEnabled(false)
+          setHintText('正在确认位置...')
+          if (postSelectedLocation(selectedLocation)) {
+            return
+          }
+          isConfirming = false
+          setConfirmEnabled(true)
+          setHintText('页面通信未就绪，请稍后再试')
+        }
+
+        loadMapScript()
+          .then(initMap)
+          .catch(function (error) {
+            setLoading(false)
+            setConfirmEnabled(false)
+            if (error && error.message === 'missing-key') {
+              setHintText('腾讯地图 key 未配置，请先补全商家端地图 key')
+              return
+            }
+            setHintText('腾讯地图加载失败，请检查服务器页面地址和 key 配置')
+          })
+      })()
+    </script>
+  </body>
+</html>

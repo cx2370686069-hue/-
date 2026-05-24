@@ -1,0 +1,1070 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <title>用户端地图选点</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #f7f8fa;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      }
+
+      #mapContainer {
+        position: fixed;
+        inset: 0;
+      }
+
+      .bottom-sheet {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 30;
+        display: flex;
+        flex-direction: column;
+        height: min(48vh, 420px);
+        min-height: 320px;
+        background: rgba(255, 255, 255, 0.98);
+        border-radius: 20px 20px 0 0;
+        box-shadow: 0 -10px 28px rgba(0, 0, 0, 0.12);
+        overflow: hidden;
+      }
+
+      .sheet-handle {
+        width: 42px;
+        height: 4px;
+        border-radius: 999px;
+        background: #e6e6e6;
+        margin: 8px auto 4px;
+        flex-shrink: 0;
+      }
+
+      .search-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 44px;
+        margin: 8px 16px 10px;
+        padding: 0 12px;
+        border-radius: 10px;
+        background: #f5f5f5;
+        box-shadow: none;
+        flex-shrink: 0;
+      }
+
+      .search-icon {
+        color: #999;
+        font-size: 16px;
+        line-height: 1;
+      }
+
+      .search-input {
+        flex: 1;
+        height: 100%;
+        border: 0;
+        outline: none;
+        background: transparent;
+        font-size: 15px;
+        color: #222;
+      }
+
+      .search-btn {
+        display: none;
+      }
+
+      .suggest-panel {
+        display: block;
+        flex: 1;
+        min-height: 0;
+        background: transparent;
+        overflow: hidden;
+      }
+
+      .suggest-list {
+        height: 100%;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      .suggest-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 10px 14px;
+        border-bottom: 1px solid #f1f1f1;
+        background: #fff;
+      }
+
+      .suggest-item.active {
+        background: #fff8f4;
+      }
+
+      .suggest-item:last-child {
+        border-bottom: 0;
+      }
+
+      .suggest-main {
+        flex: 1;
+        min-width: 0;
+      }
+
+      .suggest-title-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .suggest-title {
+        font-size: 14px;
+        font-weight: 600;
+        line-height: 1.3;
+        color: #222;
+      }
+
+      .suggest-address {
+        margin-top: 2px;
+        font-size: 12px;
+        line-height: 1.35;
+        color: #888;
+      }
+
+      .suggest-check {
+        flex-shrink: 0;
+        color: #ff6b35;
+        font-size: 16px;
+        font-weight: 700;
+        line-height: 1;
+      }
+
+      .panel-state {
+        padding: 16px;
+        font-size: 13px;
+        line-height: 1.6;
+        color: #888;
+        text-align: left;
+      }
+
+      .center-pin {
+        position: fixed;
+        left: 50%;
+        top: 38%;
+        width: 30px;
+        height: 42px;
+        margin-left: -15px;
+        margin-top: -42px;
+        z-index: 12;
+        pointer-events: none;
+      }
+
+      .center-pin::before {
+        content: '';
+        display: block;
+        width: 30px;
+        height: 30px;
+        border-radius: 50% 50% 50% 0;
+        background: #ff6b35;
+        transform: rotate(-45deg);
+        box-shadow: 0 6px 14px rgba(255, 107, 53, 0.28);
+      }
+
+      .center-pin::after {
+        content: '';
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 10px;
+        height: 10px;
+        margin-left: -5px;
+        margin-top: -11px;
+        border-radius: 50%;
+        background: #fff;
+      }
+
+      .sheet-footer {
+        padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+        background: #fff;
+        border-top: 1px solid #f2f2f2;
+        flex-shrink: 0;
+      }
+
+      .confirm-btn {
+        width: 100%;
+        height: 46px;
+        margin-top: 0;
+        border: 0;
+        border-radius: 23px;
+        background: #ff6b35;
+        color: #fff;
+        font-size: 16px;
+        font-weight: 600;
+      }
+
+      .confirm-btn[disabled] {
+        background: #ffb49f;
+      }
+
+      .loading-mask {
+        position: fixed;
+        inset: 0;
+        z-index: 40;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(255, 255, 255, 0.72);
+        font-size: 14px;
+        color: #666;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="mapContainer"></div>
+    <div class="center-pin"></div>
+    <div class="bottom-sheet">
+      <div class="sheet-handle"></div>
+      <div class="search-bar">
+        <span class="search-icon">⌕</span>
+        <input
+          id="searchInput"
+          class="search-input"
+          type="search"
+          placeholder="搜索地点"
+          autocomplete="off"
+        />
+        <button id="searchBtn" class="search-btn" type="button">搜索</button>
+      </div>
+      <div id="suggestPanel" class="suggest-panel">
+        <div id="suggestState" class="panel-state">输入地址后会显示联想位置</div>
+        <div id="suggestList" class="suggest-list"></div>
+      </div>
+      <div class="sheet-footer">
+        <button id="confirmBtn" class="confirm-btn" type="button" disabled>确认位置</button>
+      </div>
+    </div>
+    <div id="loadingMask" class="loading-mask">正在加载地图...</div>
+
+    <script src="https://doc.dcloud.net.cn/uni.webview.1.5.6.js"></script>
+    <script>
+      ;(function () {
+        var DEFAULT_CENTER = { lat: 32.1313, lng: 115.654 }
+        var map = null
+        var bridgeReady = false
+        var isDragging = false
+        var lastSearchToken = 0
+        var searchTimer = null
+        var selectedLocation = null
+        var loadingMaskEl = document.getElementById('loadingMask')
+        var confirmBtnEl = document.getElementById('confirmBtn')
+        var searchInputEl = document.getElementById('searchInput')
+        var searchBtnEl = document.getElementById('searchBtn')
+        var suggestPanelEl = document.getElementById('suggestPanel')
+        var suggestStateEl = document.getElementById('suggestState')
+        var suggestListEl = document.getElementById('suggestList')
+
+        document.addEventListener('UniAppJSBridgeReady', function () {
+          bridgeReady = true
+        })
+
+        function getQuery(name) {
+          var pairs = window.location.search.slice(1).split('&')
+          for (var i = 0; i < pairs.length; i += 1) {
+            if (!pairs[i]) continue
+            var parts = pairs[i].split('=')
+            if (decodeURIComponent(parts[0] || '') === name) {
+              return decodeURIComponent(parts.slice(1).join('=') || '')
+            }
+          }
+          return ''
+        }
+
+        function toFiniteNumber(value) {
+          var num = Number(value)
+          return isFinite(num) ? num : null
+        }
+
+        function isUsableCoordinate(lng, lat) {
+          var targetLng = toFiniteNumber(lng)
+          var targetLat = toFiniteNumber(lat)
+          if (targetLng == null || targetLat == null) return false
+          if (targetLng === 0 && targetLat === 0) return false
+          if (targetLat < 3 || targetLat > 55 || targetLng < 73 || targetLng > 136) return false
+          return true
+        }
+
+        function outOfChina(lng, lat) {
+          return lng < 72.004 || lng > 137.8347 || lat < 0.8293 || lat > 55.8271
+        }
+
+        function transformLat(x, y) {
+          var ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x))
+          ret += ((20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0) / 3.0
+          ret += ((20.0 * Math.sin(y * Math.PI) + 40.0 * Math.sin((y / 3.0) * Math.PI)) * 2.0) / 3.0
+          ret += ((160.0 * Math.sin((y / 12.0) * Math.PI) + 320.0 * Math.sin((y * Math.PI) / 30.0)) * 2.0) / 3.0
+          return ret
+        }
+
+        function transformLng(x, y) {
+          var ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x))
+          ret += ((20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0) / 3.0
+          ret += ((20.0 * Math.sin(x * Math.PI) + 40.0 * Math.sin((x / 3.0) * Math.PI)) * 2.0) / 3.0
+          ret += ((150.0 * Math.sin((x / 12.0) * Math.PI) + 300.0 * Math.sin((x / 30.0) * Math.PI)) * 2.0) / 3.0
+          return ret
+        }
+
+        function gcj02ToWgs84(lng, lat) {
+          if (!isFinite(lng) || !isFinite(lat)) {
+            return { lng: null, lat: null }
+          }
+          if (outOfChina(lng, lat)) {
+            return { lng: lng, lat: lat }
+          }
+          var a = 6378245.0
+          var ee = 0.00669342162296594323
+          var dLat = transformLat(lng - 105.0, lat - 35.0)
+          var dLng = transformLng(lng - 105.0, lat - 35.0)
+          var radLat = (lat / 180.0) * Math.PI
+          var magic = Math.sin(radLat)
+          magic = 1 - ee * magic * magic
+          var sqrtMagic = Math.sqrt(magic)
+          dLat = (dLat * 180.0) / (((a * (1 - ee)) / (magic * sqrtMagic)) * Math.PI)
+          dLng = (dLng * 180.0) / ((a / sqrtMagic) * Math.cos(radLat) * Math.PI)
+          var mgLat = lat + dLat
+          var mgLng = lng + dLng
+          return {
+            lng: lng * 2 - mgLng,
+            lat: lat * 2 - mgLat
+          }
+        }
+
+        function setLoading(show) {
+          loadingMaskEl.style.display = show ? 'flex' : 'none'
+        }
+
+        function setStatus(text) {
+          return text
+        }
+
+        function setAddress(text) {
+          return text
+        }
+
+        function setCoords(latitude, longitude) {
+          return latitude == null || longitude == null ? '' : String(longitude) + ',' + String(latitude)
+        }
+
+        function setConfirmEnabled(enabled) {
+          confirmBtnEl.disabled = !enabled
+        }
+
+        function showSuggestPanel(show) {
+          suggestPanelEl.style.display = 'block'
+        }
+
+        function setSuggestState(text) {
+          suggestStateEl.textContent = text || ''
+          suggestStateEl.style.display = text ? 'block' : 'none'
+        }
+
+        function clearSuggestList() {
+          suggestListEl.innerHTML = ''
+        }
+
+        function buildSelectedDisplayItem() {
+          if (!selectedLocation) return null
+          return {
+            title: String(selectedLocation.title || selectedLocation.name || selectedLocation.address || '已选位置').trim(),
+            address: String(selectedLocation.address || selectedLocation.title || selectedLocation.name || '').trim(),
+            longitude: selectedLocation.longitude,
+            latitude: selectedLocation.latitude,
+            gcj_longitude: selectedLocation.gcj_longitude,
+            gcj_latitude: selectedLocation.gcj_latitude,
+            _selected: true
+          }
+        }
+
+        function isSameSuggestionItem(a, b) {
+          if (!a || !b) return false
+          var aLng = toFiniteNumber(a.gcj_longitude != null ? a.gcj_longitude : a.longitude)
+          var aLat = toFiniteNumber(a.gcj_latitude != null ? a.gcj_latitude : a.latitude)
+          var bLng = toFiniteNumber(b.gcj_longitude != null ? b.gcj_longitude : b.longitude)
+          var bLat = toFiniteNumber(b.gcj_latitude != null ? b.gcj_latitude : b.latitude)
+          if (aLng != null && aLat != null && bLng != null && bLat != null) {
+            return Math.abs(aLng - bLng) < 0.00001 && Math.abs(aLat - bLat) < 0.00001
+          }
+          return String(a.title || a.name || a.address || '').trim() === String(b.title || b.name || b.address || '').trim() &&
+            String(a.address || '').trim() === String(b.address || '').trim()
+        }
+
+        function isActiveSuggestionItem(item) {
+          if (!item) return false
+          if (item._selected) return true
+          return isSameSuggestionItem(item, selectedLocation)
+        }
+
+        function buildDisplayItems(items) {
+          var result = []
+          var seen = {}
+
+          function pushItem(item, forceSelected) {
+            if (!item) return
+            var normalized = Object.assign({}, item)
+            if (forceSelected) {
+              normalized._selected = true
+            }
+            var lng = toFiniteNumber(normalized.gcj_longitude != null ? normalized.gcj_longitude : normalized.longitude)
+            var lat = toFiniteNumber(normalized.gcj_latitude != null ? normalized.gcj_latitude : normalized.latitude)
+            var key = [
+              String(normalized.title || normalized.name || normalized.address || '').trim(),
+              String(normalized.address || '').trim(),
+              lng != null ? lng.toFixed(5) : '',
+              lat != null ? lat.toFixed(5) : ''
+            ].join('|')
+            if (seen[key]) {
+              if (normalized._selected) {
+                seen[key]._selected = true
+              }
+              return
+            }
+            seen[key] = normalized
+            result.push(normalized)
+          }
+
+          pushItem(buildSelectedDisplayItem(), true)
+          ;(items || []).forEach(function (item) {
+            pushItem(item, false)
+          })
+          return result
+        }
+
+        function escapeHtml(text) {
+          return String(text || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;')
+        }
+
+        function unwrapResponse(payload) {
+          if (payload && typeof payload === 'object') {
+            if (Array.isArray(payload.data)) {
+              return payload.data
+            }
+            if (payload.code === 200 && payload.data !== undefined) {
+              return payload.data
+            }
+          }
+          return payload
+        }
+
+        function apiGet(url, params) {
+          var query = []
+          Object.keys(params || {}).forEach(function (key) {
+            var value = params[key]
+            if (value === '' || value === null || value === undefined) return
+            query.push(encodeURIComponent(key) + '=' + encodeURIComponent(String(value)))
+          })
+          var target = url + (query.length ? '?' + query.join('&') : '')
+          return fetch(target, {
+            method: 'GET',
+            credentials: 'include'
+          }).then(function (response) {
+            return response.json().then(function (json) {
+              if (!response.ok) {
+                throw new Error((json && json.message) || '请求失败')
+              }
+              return unwrapResponse(json)
+            })
+          })
+        }
+
+        function extractReverseAddress(payload) {
+          var result = payload && payload.result ? payload.result : {}
+          var component = result.address_component || result.addressComponent || {}
+          var address =
+            (result.formatted_addresses && (result.formatted_addresses.recommend || result.formatted_addresses.rough)) ||
+            result.formatted_address ||
+            result.address ||
+            ''
+          return {
+            address: String(address || '').trim(),
+            province: String(component.province || '').trim(),
+            city: String(component.city || '').trim(),
+            district: String(component.district || component.county || '').trim(),
+            town: String(component.town || component.township || '').trim(),
+            street: String(
+              (component.street_number && component.street_number.street) || component.street || component.road || ''
+            ).trim()
+          }
+        }
+
+        function extractTown(text) {
+          var value = String(text || '').trim()
+          if (!value) return ''
+          var match = value.match(/([^省市区县]{1,20}(?:镇|乡|街道))/)
+          return match ? String(match[1] || '').trim() : ''
+        }
+
+        function buildReversePoiItem(raw, reverseInfo, fallbackGcjLat, fallbackGcjLng) {
+          raw = raw || {}
+          reverseInfo = reverseInfo || {}
+          var location = raw.location || raw.latLng || raw.position || {}
+          var gcjLng = toFiniteNumber(
+            raw.gcj_longitude != null
+              ? raw.gcj_longitude
+              : raw.longitude != null
+                ? raw.longitude
+                : typeof location.getLng === 'function'
+                  ? location.getLng()
+                  : location.lng
+          )
+          var gcjLat = toFiniteNumber(
+            raw.gcj_latitude != null
+              ? raw.gcj_latitude
+              : raw.latitude != null
+                ? raw.latitude
+                : typeof location.getLat === 'function'
+                  ? location.getLat()
+                  : location.lat
+          )
+          if (gcjLng == null) gcjLng = toFiniteNumber(fallbackGcjLng)
+          if (gcjLat == null) gcjLat = toFiniteNumber(fallbackGcjLat)
+          if (!isUsableCoordinate(gcjLng, gcjLat)) {
+            return null
+          }
+          var wgsPoint = gcj02ToWgs84(gcjLng, gcjLat)
+          var title = String(raw.title || raw.name || raw.address || reverseInfo.address || '位置').trim()
+          var address = String(raw.address || raw.addr || title || reverseInfo.address || '').trim()
+          return {
+            title: title || address || '位置',
+            address: address || title || reverseInfo.address || '位置',
+            name: title || address || '位置',
+            longitude: wgsPoint.lng,
+            latitude: wgsPoint.lat,
+            gcj_longitude: gcjLng,
+            gcj_latitude: gcjLat,
+            coord_type: 'wgs84',
+            province: String(raw.province || reverseInfo.province || '').trim(),
+            city: String(raw.city || reverseInfo.city || '').trim(),
+            district: String(raw.district || reverseInfo.district || '').trim(),
+            town: String(raw.town || reverseInfo.town || extractTown(address) || '').trim(),
+            street: String(raw.street || reverseInfo.street || '').trim(),
+            source: String(raw.source || 'reverse_poi').trim()
+          }
+        }
+
+        function extractReversePoiItems(payload, reverseInfo, gcjLat, gcjLng) {
+          var result = payload && payload.result ? payload.result : {}
+          var pois = Array.isArray(result.pois) ? result.pois : []
+          var mapped = []
+          var seen = {}
+
+          function pushItem(item) {
+            if (!item) return
+            var lng = toFiniteNumber(item.gcj_longitude)
+            var lat = toFiniteNumber(item.gcj_latitude)
+            if (!isUsableCoordinate(lng, lat)) return
+            var key = [
+              String(item.title || item.name || item.address || '').trim(),
+              String(item.address || '').trim(),
+              lng != null ? lng.toFixed(6) : '',
+              lat != null ? lat.toFixed(6) : ''
+            ].join('|')
+            if (seen[key]) return
+            seen[key] = true
+            mapped.push(item)
+          }
+
+          pois.forEach(function (poi) {
+            pushItem(buildReversePoiItem(poi, reverseInfo, gcjLat, gcjLng))
+          })
+
+          if (!mapped.length) {
+            pushItem(
+              buildReversePoiItem(
+                {
+                  title: reverseInfo.address || '当前位置',
+                  address: reverseInfo.address || '当前位置',
+                  gcj_latitude: gcjLat,
+                  gcj_longitude: gcjLng,
+                  province: reverseInfo.province,
+                  city: reverseInfo.city,
+                  district: reverseInfo.district,
+                  town: reverseInfo.town,
+                  street: reverseInfo.street,
+                  source: 'reverse_geocode'
+                },
+                reverseInfo,
+                gcjLat,
+                gcjLng
+              )
+            )
+          }
+
+          return mapped
+        }
+
+        function buildSelectionFromItem(item, reverseData) {
+          var gcjLng = toFiniteNumber(item && item.gcj_longitude)
+          var gcjLat = toFiniteNumber(item && item.gcj_latitude)
+          var wgsLng = toFiniteNumber(item && item.longitude)
+          var wgsLat = toFiniteNumber(item && item.latitude)
+          if ((wgsLng == null || wgsLat == null) && gcjLng != null && gcjLat != null) {
+            var wgsPoint = gcj02ToWgs84(gcjLng, gcjLat)
+            wgsLng = wgsPoint.lng
+            wgsLat = wgsPoint.lat
+          }
+          var reverseInfo = reverseData || {}
+          var title = String(item && item.title || '').trim()
+          var address = String(item && item.address || reverseInfo.address || title).trim()
+          return {
+            title: title || address,
+            address: address || title,
+            name: title || address,
+            longitude: wgsLng,
+            latitude: wgsLat,
+            gcj_longitude: gcjLng,
+            gcj_latitude: gcjLat,
+            coord_type: 'wgs84',
+            province: String(reverseInfo.province || item && item.province || '').trim(),
+            city: String(reverseInfo.city || item && item.city || '').trim(),
+            district: String(reverseInfo.district || item && item.district || '').trim(),
+            town: String(reverseInfo.town || item && item.town || '').trim(),
+            street: String(reverseInfo.street || '').trim(),
+            source: String(item && item.source || 'user_remote_map_picker').trim()
+          }
+        }
+
+        function updateSelection(selection, statusText) {
+          selectedLocation = selection
+          setAddress(selection && selection.address || selection && selection.title || '请选择位置')
+          setCoords(selection && selection.latitude, selection && selection.longitude)
+          setStatus(statusText)
+          setConfirmEnabled(Boolean(selection && selection.longitude != null && selection.latitude != null))
+          renderSuggestions(suggestListEl._rawItems || [], '输入地址后会显示联想位置')
+        }
+
+        function getInitialCenter() {
+          var lat = toFiniteNumber(getQuery('latitude'))
+          var lng = toFiniteNumber(getQuery('longitude'))
+          if (lat != null && lng != null) {
+            return { lat: lat, lng: lng }
+          }
+          return DEFAULT_CENTER
+        }
+
+        function getMapCenterGcj() {
+          if (!map) return null
+          var center = map.getCenter()
+          if (!center) return null
+          return {
+            lat: center.getLat(),
+            lng: center.getLng()
+          }
+        }
+
+        function moveMapTo(item) {
+          var lat = toFiniteNumber(item && item.gcj_latitude)
+          var lng = toFiniteNumber(item && item.gcj_longitude)
+          if (!isUsableCoordinate(lng, lat) || !map) return false
+          map.easeTo({
+            center: new window.TMap.LatLng(lat, lng),
+            zoom: 17
+          })
+          return true
+        }
+
+        function loadMapScript() {
+          return new Promise(function (resolve, reject) {
+            if (window.TMap) {
+              resolve(window.TMap)
+              return
+            }
+            var key = getQuery('key')
+            if (!key) {
+              reject(new Error('missing-key'))
+              return
+            }
+            var script = document.createElement('script')
+            script.charset = 'utf-8'
+            script.src = 'https://map.qq.com/api/gljs?v=1.exp&key=' + encodeURIComponent(key)
+            script.onload = function () {
+              if (window.TMap) {
+                resolve(window.TMap)
+                return
+              }
+              reject(new Error('tmap-unavailable'))
+            }
+            script.onerror = function () {
+              reject(new Error('script-load-failed'))
+            }
+            document.head.appendChild(script)
+          })
+        }
+
+        function renderSuggestions(items, emptyText) {
+          suggestListEl._rawItems = Array.isArray(items) ? items : []
+          clearSuggestList()
+          var displayItems = buildDisplayItems(suggestListEl._rawItems)
+          if (!displayItems.length) {
+            setSuggestState(emptyText || '未找到相关位置，换个词试试')
+            showSuggestPanel(true)
+            return
+          }
+
+          setSuggestState('')
+          var html = displayItems
+            .map(function (item, index) {
+              var active = isActiveSuggestionItem(item)
+              return (
+                '<div class="suggest-item' + (active ? ' active' : '') + '" data-index="' +
+                index +
+                '">' +
+                '<div class="suggest-main">' +
+                '<div class="suggest-title-row">' +
+                '<div class="suggest-title">' +
+                escapeHtml(item.title || item.address || '未命名位置') +
+                '</div>' +
+                (active ? '<div class="suggest-check">✓</div>' : '') +
+                '</div>' +
+                '<div class="suggest-address">' +
+                escapeHtml(item.address || '暂无详细地址') +
+                '</div>' +
+                '</div>' +
+                '</div>'
+              )
+            })
+            .join('')
+          suggestListEl.innerHTML = html
+          suggestListEl._items = displayItems
+          showSuggestPanel(true)
+        }
+
+        function normalizeSearchText(value) {
+          return String(value || '').trim().replace(/\s+/g, '').toLowerCase()
+        }
+
+        function scoreSuggestionItem(item, keyword) {
+          var keywordText = normalizeSearchText(keyword)
+          var title = normalizeSearchText(item && item.title)
+          var address = normalizeSearchText(item && item.address)
+          var score = 0
+
+          if (!keywordText) {
+            return 0
+          }
+          if (title === keywordText) score += 120
+          if (address === keywordText) score += 110
+          if (title && keywordText && title.indexOf(keywordText) !== -1) score += 70
+          if (address && keywordText && address.indexOf(keywordText) !== -1) score += 50
+          if (title && keywordText && keywordText.indexOf(title) !== -1) score += 30
+          if (address && keywordText && keywordText.indexOf(address) !== -1) score += 20
+          if (String(item && item.source || '').trim() === 'service_area') score -= 15
+          return score
+        }
+
+        function pickBestSuggestionItem(items, keyword) {
+          var list = Array.isArray(items) ? items : []
+          if (!list.length) {
+            return null
+          }
+          var bestItem = list[0]
+          var bestScore = scoreSuggestionItem(bestItem, keyword)
+          for (var i = 1; i < list.length; i += 1) {
+            var current = list[i]
+            var currentScore = scoreSuggestionItem(current, keyword)
+            if (currentScore > bestScore) {
+              bestItem = current
+              bestScore = currentScore
+            }
+          }
+          return bestItem
+        }
+
+        function fetchReverseByGcj(gcjLat, gcjLng, sourceText) {
+          var wgsPoint = gcj02ToWgs84(gcjLng, gcjLat)
+          if (wgsPoint.lng == null || wgsPoint.lat == null) {
+            return Promise.resolve(null)
+          }
+          setStatus('正在识别地址...')
+          return apiGet('/api/map/reverse-geocode', {
+            lng: wgsPoint.lng,
+            lat: wgsPoint.lat
+          })
+            .then(function (payload) {
+              var reverseInfo = extractReverseAddress(payload || {})
+              var nearbyItems = extractReversePoiItems(payload || {}, reverseInfo, gcjLat, gcjLng)
+              suggestListEl._rawItems = nearbyItems
+              updateSelection(
+                buildSelectionFromItem(
+                  nearbyItems[0] || {
+                    title: reverseInfo.address,
+                    address: reverseInfo.address,
+                    longitude: wgsPoint.lng,
+                    latitude: wgsPoint.lat,
+                    gcj_longitude: gcjLng,
+                    gcj_latitude: gcjLat,
+                    source: 'reverse_geocode'
+                  },
+                  reverseInfo
+                ),
+                sourceText || '当前位置已更新'
+              )
+              return reverseInfo
+            })
+            .catch(function () {
+              suggestListEl._rawItems = []
+              updateSelection(
+                buildSelectionFromItem(
+                  {
+                    title: '已选位置',
+                    address: '已选位置',
+                    longitude: wgsPoint.lng,
+                    latitude: wgsPoint.lat,
+                    gcj_longitude: gcjLng,
+                    gcj_latitude: gcjLat,
+                    source: 'reverse_fallback'
+                  },
+                  {}
+                ),
+                '地址识别失败，请确认后手动补充门牌号'
+              )
+              return null
+            })
+        }
+
+        function requestSuggestions(keyword, mode) {
+          var searchText = String(keyword || '').trim()
+          if (!searchText) {
+            setSuggestState('输入地址后会显示联想位置')
+            renderSuggestions([], '输入地址后会显示联想位置')
+            return
+          }
+
+          var center = getMapCenterGcj()
+          var wgsCenter = center ? gcj02ToWgs84(center.lng, center.lat) : { lng: null, lat: null }
+          var token = Date.now()
+          lastSearchToken = token
+          setSuggestState(mode === 'search' ? '正在搜索...' : '正在联想位置...')
+          clearSuggestList()
+          showSuggestPanel(true)
+
+          var requestParams = {
+            keyword: searchText,
+            lng: wgsCenter.lng,
+            lat: wgsCenter.lat,
+            limit: mode === 'search' ? 10 : 8
+          }
+
+          apiGet(mode === 'search' ? '/api/map/search' : '/api/map/suggest', requestParams)
+            .then(function (items) {
+              var list = Array.isArray(items) ? items : []
+              if (mode !== 'search') {
+                return {
+                  items: list,
+                  mode: mode
+                }
+              }
+              var bestPrimaryItem = pickBestSuggestionItem(list, searchText)
+              var bestPrimaryScore = scoreSuggestionItem(bestPrimaryItem, searchText)
+              if (list.length && bestPrimaryScore >= 60) {
+                return {
+                  items: list,
+                  mode: mode
+                }
+              }
+              return apiGet('/api/map/suggest', {
+                keyword: searchText,
+                lng: wgsCenter.lng,
+                lat: wgsCenter.lat,
+                limit: 8
+              }).then(function (fallbackItems) {
+                var suggestItems = Array.isArray(fallbackItems) ? fallbackItems : []
+                return {
+                  items: list.concat(suggestItems),
+                  mode: 'search_fallback'
+                }
+              })
+            })
+            .then(function (result) {
+              if (token !== lastSearchToken || !result) return
+              var items = Array.isArray(result.items) ? result.items : []
+              if (mode === 'search') {
+                if (!items.length) {
+                  renderSuggestions([], '未找到相关位置，换个关键词试试')
+                  return
+                }
+                suggestListEl._rawItems = items
+                suggestListEl._items = items
+                var bestItem = pickBestSuggestionItem(items, searchText)
+                if (!bestItem) {
+                  renderSuggestions(items, '未找到相关位置，换个关键词试试')
+                  return
+                }
+                locateSuggestionItem(
+                  bestItem,
+                  result.mode === 'search_fallback' ? '已根据联想结果定位' : '已定位到搜索结果'
+                )
+                return
+              }
+              renderSuggestions(items, '未找到相关位置，换个关键词试试')
+            })
+            .catch(function (error) {
+              if (token !== lastSearchToken) return
+              setSuggestState((error && error.message) || '搜索服务暂不可用')
+              clearSuggestList()
+              showSuggestPanel(true)
+            })
+        }
+
+        function locateSuggestionItem(item, sourceText) {
+          if (!item) {
+            return Promise.resolve(false)
+          }
+          if (!isUsableCoordinate(item && item.gcj_longitude, item && item.gcj_latitude)) {
+            setStatus('该位置坐标异常，请换一个结果重试')
+            setAddress(String(item.title || item.address || '该位置暂不可用'))
+            setCoords(null, null)
+            setConfirmEnabled(false)
+            return Promise.resolve(false)
+          }
+          searchInputEl.value = item.title || item.address || ''
+          showSuggestPanel(false)
+          moveMapTo(item)
+          return fetchReverseByGcj(item.gcj_latitude, item.gcj_longitude, sourceText || '已定位到搜索结果')
+            .then(function (reverseInfo) {
+              updateSelection(buildSelectionFromItem(item, reverseInfo || {}), sourceText || '已定位到搜索结果')
+              return true
+            })
+        }
+
+        function handleSuggestSelect(index) {
+          var items = suggestListEl._items || []
+          var item = items[index]
+          if (!item) return
+          locateSuggestionItem(item, '已定位到搜索结果')
+        }
+
+        function postSelectedLocation(location) {
+          if (window.uni && typeof window.uni.postMessage === 'function') {
+            bridgeReady = true
+            window.uni.postMessage({
+              data: {
+                action: 'locationPicked',
+                payload: location
+              }
+            })
+            return true
+          }
+          return bridgeReady
+        }
+
+        function bindSearchEvents() {
+          searchInputEl.addEventListener('input', function (event) {
+            var keyword = event && event.target ? event.target.value : ''
+            if (searchTimer) {
+              clearTimeout(searchTimer)
+            }
+            searchTimer = setTimeout(function () {
+              requestSuggestions(keyword, 'suggest')
+            }, 260)
+          })
+          searchInputEl.addEventListener('focus', function () {
+            var keyword = searchInputEl.value
+            if (String(keyword || '').trim()) {
+              requestSuggestions(keyword, 'suggest')
+            }
+          })
+          searchInputEl.addEventListener('keydown', function (event) {
+            if (event && event.key === 'Enter') {
+              if (typeof event.preventDefault === 'function') {
+                event.preventDefault()
+              }
+              requestSuggestions(searchInputEl.value, 'search')
+            }
+          })
+          searchBtnEl.addEventListener('click', function () {
+            requestSuggestions(searchInputEl.value, 'search')
+          })
+          suggestListEl.addEventListener('click', function (event) {
+            var node = event.target
+            while (node && node !== suggestListEl && !node.getAttribute('data-index')) {
+              node = node.parentNode
+            }
+            if (!node || node === suggestListEl) return
+            var index = Number(node.getAttribute('data-index'))
+            if (!isFinite(index)) return
+            handleSuggestSelect(index)
+          })
+        }
+
+        function bindMapEvents() {
+          map.on('dragstart', function () {
+            isDragging = true
+            setStatus('地图拖动中...')
+          })
+          map.on('dragend', function () {
+            isDragging = false
+            var center = getMapCenterGcj()
+            if (!center) return
+            renderSuggestions([], '输入地址后会显示联想位置')
+            fetchReverseByGcj(center.lat, center.lng, '当前位置已更新')
+          })
+        }
+
+        function handleConfirm() {
+          if (!selectedLocation) return
+          setStatus('正在确认位置...')
+          if (postSelectedLocation(selectedLocation)) {
+            return
+          }
+          setStatus('页面通信未就绪，请稍后再试')
+        }
+
+        function initMap() {
+          var center = getInitialCenter()
+          var initialAddress = String(getQuery('address') || '').trim()
+          if (initialAddress) {
+            searchInputEl.value = initialAddress
+          }
+          map = new window.TMap.Map(document.getElementById('mapContainer'), {
+            center: new window.TMap.LatLng(center.lat, center.lng),
+            zoom: 17,
+            pitch: 0,
+            rotation: 0
+          })
+
+          bindSearchEvents()
+          bindMapEvents()
+          confirmBtnEl.addEventListener('click', handleConfirm)
+          setLoading(false)
+          fetchReverseByGcj(center.lat, center.lng, '已定位到当前位置')
+        }
+
+        loadMapScript()
+          .then(initMap)
+          .catch(function (error) {
+            setLoading(false)
+            setConfirmEnabled(false)
+            if (error && error.message === 'missing-key') {
+              setStatus('腾讯地图 key 未配置，请先检查前端地图 key')
+              setAddress('地图 key 缺失')
+              return
+            }
+            setStatus('腾讯地图加载失败，请检查远端静态页和 key 配置')
+            setAddress('地图加载失败')
+          })
+      })()
+    </script>
+  </body>
+</html>

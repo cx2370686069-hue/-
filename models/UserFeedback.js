@@ -1,6 +1,8 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
+// 这张表是“用户投诉建议”模型。
+// 用户提交的投诉、建议、反馈内容，以及后台处理状态，都会落在这里。
 const USER_FEEDBACK_STATUSES = ['pending', 'processing', 'resolved'];
 
 const UserFeedback = sequelize.define('UserFeedback', {

@@ -1,7 +1,8 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
-// 商品分类模型
+// 这张表是“商品分类”模型。
+// 每个商家自己的商品分组，例如饮品、小吃、主食，都会落在这里。
 const ProductCategory = sequelize.define('ProductCategory', {
   id: {
     type: DataTypes.INTEGER,

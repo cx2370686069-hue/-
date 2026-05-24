@@ -1,8 +1,15 @@
+// 这个文件是“用户投诉建议控制器”。
+// 用户端提交投诉建议时，主要就是走这个入口。
 const { UserFeedback } = require('../models');
 const { errorResponse, successResponse } = require('../utils/helpers');
 
+// 投诉建议里的文本统一先做去空格处理。
 const normalizeText = (value) => String(value || '').trim();
 
+/**
+ * 提交投诉建议
+ * 这里只负责收集用户反馈并落库，不负责后台后续处理流转。
+ */
 exports.createFeedback = async (req, res, next) => {
   try {
     const content = normalizeText(req.body.content);

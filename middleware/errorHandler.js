@@ -1,9 +1,9 @@
-// 全局错误处理中间件
+// 这个文件是“全局错误处理中间件”。
+// 所有没有被前面正常处理掉的异常，最终都会汇总到这里，统一返回前端能识别的错误格式。
 const errorHandler = (err, req, res, next) => {
   console.error('Error:', err);
 
-  // 统一响应格式：前端要求的 { code: 1, msg: 'xxx', data: null } 或 { code: 0, message: 'xxx', data: {...} }
-  // 这里统一错误时的 code 非 0
+  // 统一响应格式：这里所有错误都会返回 code / message / data 这一套结构。
   const responseCode = err.status || 500;
   
   // Sequelize 验证错误
@@ -47,7 +47,7 @@ const errorHandler = (err, req, res, next) => {
       ? '服务器内部错误'
       : (err.message || '服务器内部错误');
 
-  // 默认错误
+  // 兜底错误：开发环境保留真实报错，生产环境的 500 则尽量隐藏内部细节。
   res.status(responseCode).json({
     code: responseCode,
     message: safeMessage,

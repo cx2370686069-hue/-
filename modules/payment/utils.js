@@ -4,11 +4,14 @@ const {
   SUPERMARKET_SETTLEMENT_RULES
 } = require('../../config/supermarketDelivery');
 
+// 这个文件放的是“支付模块通用计算工具”。
+// 金额四舍五入、配送费估算、外卖订单结算拆账、支付渠道归一化，都集中在这里。
 const round2 = (value) => {
   const n = Number(value || 0);
   return Math.round(n * 100) / 100;
 };
 
+// 县城配送费算法：默认按一套“起步里程 + 超出加价”规则来算。
 const computeCountyDeliveryFee = (distanceKm, pricing) => {
   const baseDistanceKm = Number(pricing?.baseDistanceKm ?? 3);
   const baseFee = Number(pricing?.baseFee ?? 2.5);
@@ -17,6 +20,7 @@ const computeCountyDeliveryFee = (distanceKm, pricing) => {
   return round2(baseFee + extraKm * extraPerKm);
 };
 
+// 乡镇配送费算法和县城不是一套，这里单独拆开，后面调价时不容易误伤县城逻辑。
 const computeTownDeliveryFee = (distanceKm, pricing) => {
   const baseDistanceKm = Number(pricing?.baseDistanceKm ?? 3);
   const baseFee = Number(pricing?.baseFee ?? 2.5);
@@ -36,6 +40,7 @@ const computeTownDeliveryFee = (distanceKm, pricing) => {
   return round2(midTierFee + (distanceKm - midDistanceKm) * longDistancePerKm);
 };
 
+// 对外统一暴露的配送费入口，内部再按订单类型选具体算法。
 const computeDeliveryFee = ({ distanceKm, orderType }) => {
   const normalizedDistance = Number(distanceKm);
   if (!Number.isFinite(normalizedDistance) || normalizedDistance < 0) {
@@ -50,6 +55,8 @@ const computeDeliveryFee = ({ distanceKm, orderType }) => {
   return computeCountyDeliveryFee(normalizedDistance, businessRules.deliveryPricing);
 };
 
+// 这里是“外卖订单结算拆账”的核心工具。
+// 支付成功后，订单上的 pay_amount / rider_fee / platform_income_amount 等字段，都是按这里算。
 const computeTakeoutSettlement = (order) => {
   const totalAmount = round2(order.total_amount);
   const deliveryFee = round2(order.delivery_fee);
@@ -59,6 +66,7 @@ const computeTakeoutSettlement = (order) => {
   const supermarketMode = String(order?.supermarket_delivery_mode || '').trim();
 
   if (supermarketMode === SUPERMARKET_DELIVERY_MODES.SELF_DELIVERY) {
+    // 超市老板自己送：平台只收固定 3 元。
     const platformFee = 3;
     return {
       payAmount,
@@ -72,6 +80,7 @@ const computeTakeoutSettlement = (order) => {
   }
 
   if (supermarketMode === SUPERMARKET_DELIVERY_MODES.RIDER_DELIVERY) {
+    // 超市交给骑手送：平台固定留 1 元，其余配送费给骑手。
     const platformFee = 1;
     return {
       payAmount,
@@ -85,6 +94,7 @@ const computeTakeoutSettlement = (order) => {
   }
 
   if (supermarketMode === SUPERMARKET_DELIVERY_MODES.PENDING) {
+    // 还没决定最终配送方式时，先不结算，避免提前把钱拆错。
     return {
       payAmount,
       riderFee: 0,
@@ -117,6 +127,7 @@ const computeTakeoutSettlement = (order) => {
   };
 };
 
+// 前端可能传 wx / ali / wechat 之类的写法，这里统一成系统内部标准渠道名。
 const normalizePayChannel = (input) => {
   const v = String(input || '').trim().toLowerCase();
   if (!v) return 'mock';

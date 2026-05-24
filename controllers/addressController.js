@@ -1,8 +1,11 @@
+// 这个文件就是“用户收货地址控制器”。
+// 主要负责地址列表、默认地址、新增、修改、删除这些基础地址操作。
 const { Address } = require('../models');
 const { successResponse, errorResponse } = require('../utils/helpers');
 
 /**
  * 获取用户地址列表
+ * 这里只查当前登录用户自己的地址，并且会把默认地址排在最前面。
  */
 exports.getAddressList = async (req, res, next) => {
   try {
@@ -21,6 +24,7 @@ exports.getAddressList = async (req, res, next) => {
 
 /**
  * 获取默认地址
+ * 前端下单时如果想直接拿“当前默认地址”，一般就是调这个接口。
  */
 exports.getDefaultAddress = async (req, res, next) => {
   try {
@@ -38,13 +42,15 @@ exports.getDefaultAddress = async (req, res, next) => {
 
 /**
  * 创建地址
+ * 如果这次新建地址时勾了“默认地址”，这里会先把这个用户原来的默认地址全部取消掉。
  */
 exports.createAddress = async (req, res, next) => {
   try {
     const user = req.user;
     const { is_default, ...addressData } = req.body;
 
-    // 如果设置为默认地址，取消其他默认
+    // 一个用户同一时间只能有一个默认地址。
+    // 所以这里一旦新地址要设为默认，就先把旧的默认地址全部取消掉。
     if (is_default) {
       await Address.update(
         { is_default: false },
@@ -66,6 +72,8 @@ exports.createAddress = async (req, res, next) => {
 
 /**
  * 更新地址
+ * 这里只允许修改“当前登录用户自己的地址”。
+ * 如果改成默认地址，也会同步把其他默认地址取消掉。
  */
 exports.updateAddress = async (req, res, next) => {
   try {
@@ -80,7 +88,7 @@ exports.updateAddress = async (req, res, next) => {
       return res.status(404).json(errorResponse('地址不存在'));
     }
 
-    // 如果设置为默认地址，取消其他默认
+    // 如果这次把当前地址改成默认地址，就要把其他地址的默认标记一起清掉。
     if (is_default) {
       await Address.update(
         { is_default: false },
@@ -101,6 +109,7 @@ exports.updateAddress = async (req, res, next) => {
 
 /**
  * 删除地址
+ * 这里只删除当前用户自己的地址，不允许越权删别人的地址。
  */
 exports.deleteAddress = async (req, res, next) => {
   try {
@@ -125,6 +134,7 @@ exports.deleteAddress = async (req, res, next) => {
 
 /**
  * 设置默认地址
+ * 这个接口的作用很单纯：把当前选中的地址设成默认，并取消其他默认地址。
  */
 exports.setDefaultAddress = async (req, res, next) => {
   try {
@@ -139,13 +149,13 @@ exports.setDefaultAddress = async (req, res, next) => {
       return res.status(404).json(errorResponse('地址不存在'));
     }
 
-    // 取消其他默认
+    // 先把当前用户的其他地址全部取消默认。
     await Address.update(
       { is_default: false },
       { where: { user_id: user.id } }
     );
 
-    // 设置当前为默认
+    // 再把当前这条地址设成默认地址。
     await address.update({ is_default: true });
 
     res.json(successResponse(address, '设置成功'));

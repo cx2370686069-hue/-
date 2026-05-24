@@ -1,6 +1,9 @@
+// 这个文件是“购物车控制器”。
+// 购物车列表、加入商品、减少商品、清空购物车，都是这里处理。
 const { CartItem, Product } = require('../models');
 const { errorResponse } = require('../utils/helpers');
 
+// 数量统一按正整数处理，避免前端传 0、负数或小数导致购物车数据异常。
 const toPositiveInteger = (value, defaultValue = 1) => {
   const num = Number(value);
   if (!Number.isInteger(num) || num <= 0) {
@@ -9,11 +12,14 @@ const toPositiveInteger = (value, defaultValue = 1) => {
   return num;
 };
 
+// 规格文本先做基础清洗，避免购物车里出现超长或前后带空格的规格名。
 const normalizeSpecText = (value) => {
   const text = String(value || '').trim();
   return text ? text.slice(0, 100) : '';
 };
 
+// 这里统一整理购物车返回结构。
+// 后面的列表、新增、删除接口都会复用这一套格式，保证前端拿到的数据形状一致。
 const buildCartPayload = (cartItems = []) => {
   const normalizedItems = cartItems.map((item) => {
     const price = Number(item.price || 0);
@@ -43,6 +49,7 @@ const buildCartPayload = (cartItems = []) => {
   };
 };
 
+// 按用户 id 读取购物车当前全部商品。
 const getUserCartItems = async (userId) => {
   return CartItem.findAll({
     where: { user_id: userId },
@@ -50,6 +57,10 @@ const getUserCartItems = async (userId) => {
   });
 };
 
+/**
+ * 获取购物车列表
+ * 这里只返回当前登录用户自己的购物车内容。
+ */
 exports.getCartList = async (req, res, next) => {
   try {
     const cartItems = await getUserCartItems(req.user.id);
@@ -59,6 +70,10 @@ exports.getCartList = async (req, res, next) => {
   }
 };
 
+/**
+ * 加入购物车
+ * 如果购物车里已经有同一个商品 + 同一个规格，就在原数量上累加。
+ */
 exports.addToCart = async (req, res, next) => {
   try {
     const userId = req.user.id;
@@ -116,6 +131,10 @@ exports.addToCart = async (req, res, next) => {
   }
 };
 
+/**
+ * 从购物车减少商品
+ * 如果减完后数量小于等于 0，就直接把这条购物车记录删掉。
+ */
 exports.removeFromCart = async (req, res, next) => {
   try {
     const userId = req.user.id;
@@ -175,6 +194,10 @@ exports.removeFromCart = async (req, res, next) => {
   }
 };
 
+/**
+ * 清空购物车
+ * 这里只清空当前登录用户自己的购物车，不会影响别人。
+ */
 exports.clearCart = async (req, res, next) => {
   try {
     await CartItem.destroy({

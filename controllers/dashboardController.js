@@ -1,16 +1,30 @@
+// 这个文件是“商家工作台控制器”。
+// 商家后台首页那几块总览数据、近 7 天趋势、热销商品，主要都从这里查。
 const { Merchant, Order, Product, User, sequelize } = require('../models');
 const { successResponse, errorResponse } = require('../utils/helpers');
 const { Op } = require('sequelize');
 const moment = require('moment');
 
+// 工作台营收统一按“已完成订单”统计。
+// 也就是只有 status=6 的订单，才会真正算进商家营收。
+const buildCompletedRevenueWhere = ({ merchantId, start, end }) => ({
+  merchant_id: merchantId,
+  status: 6,
+  delivered_at: {
+    [Op.gte]: start,
+    [Op.lt]: end
+  }
+});
+
 /**
- * 获取商家工作台数据（dashboard）
+ * 获取商家工作台首页概览
+ * 这里返回首页最上面那几个核心数字，比如今日订单、今日营收、待处理订单、本月订单。
  */
 exports.getDashboard = async (req, res, next) => {
   try {
     const user = req.user;
     
-    // 获取商家信息
+    // 先确认当前登录用户已经开通了商家店铺。
     const merchant = await Merchant.findOne({ where: { user_id: user.id } });
     if (!merchant) {
       return res.status(404).json(errorResponse('您还没有店铺'));
@@ -19,7 +33,7 @@ exports.getDashboard = async (req, res, next) => {
     const today = moment().startOf('day');
     const tomorrow = moment().add(1, 'days').startOf('day');
 
-    // 今日订单数
+    // 统计今天新创建的订单数。
     const todayOrders = await Order.count({
       where: {
         merchant_id: merchant.id,
@@ -30,21 +44,18 @@ exports.getDashboard = async (req, res, next) => {
       }
     });
 
-    // 今日营收
+    // 今日营收只按已完成订单统计，配送中订单还不能计入营收。
     const todayRevenueResult = await Order.findOne({
-      where: {
-        merchant_id: merchant.id,
-        status: { [Op.in]: [5, 6] }, // 已完成
-        created_at: {
-          [Op.gte]: today.toDate(),
-          [Op.lt]: tomorrow.toDate()
-        }
-      },
+      where: buildCompletedRevenueWhere({
+        merchantId: merchant.id,
+        start: today.toDate(),
+        end: tomorrow.toDate()
+      }),
       attributes: [[sequelize.fn('SUM', sequelize.col('pay_amount')), 'total']]
     });
     const todayRevenue = todayRevenueResult?.dataValues?.total || 0;
 
-    // 待处理订单数（待接单 + 制作中）
+    // 这里把待接单、备餐中、待配送都算作“待处理订单”。
     const pendingOrders = await Order.count({
       where: {
         merchant_id: merchant.id,
@@ -52,7 +63,7 @@ exports.getDashboard = async (req, res, next) => {
       }
     });
 
-    // 本月订单数
+    // 统计本月累计订单数。
     const monthStart = moment().startOf('month');
     const monthOrders = await Order.count({
       where: {
@@ -63,7 +74,7 @@ exports.getDashboard = async (req, res, next) => {
       }
     });
 
-    // 店铺状态
+    // 当前店铺是否营业。
     const isOpen = merchant.status === 1;
 
     res.json(successResponse({
@@ -80,7 +91,8 @@ exports.getDashboard = async (req, res, next) => {
 };
 
 /**
- * 获取统计数据（近 7 天订单趋势）
+ * 获取近 7 天订单趋势
+ * 这里按天循环统计订单数和营收，用于商家工作台折线图。
  */
 exports.getStats = async (req, res, next) => {
   try {
@@ -109,14 +121,11 @@ exports.getStats = async (req, res, next) => {
       });
 
       const revenue = await Order.findOne({
-        where: {
-          merchant_id: merchant.id,
-          status: { [Op.in]: [5, 6] },
-          created_at: {
-            [Op.gte]: start.toDate(),
-            [Op.lte]: end.toDate()
-          }
-        },
+        where: buildCompletedRevenueWhere({
+          merchantId: merchant.id,
+          start: start.toDate(),
+          end: date.clone().add(1, 'day').startOf('day').toDate()
+        }),
         attributes: [[sequelize.fn('SUM', sequelize.col('pay_amount')), 'total']]
       });
 
@@ -136,6 +145,7 @@ exports.getStats = async (req, res, next) => {
 
 /**
  * 获取热销商品
+ * 当前是简化实现：直接按商品销量倒序取前 10 名。
  */
 exports.getHotProducts = async (req, res, next) => {
   try {

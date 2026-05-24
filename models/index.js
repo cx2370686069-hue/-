@@ -1,6 +1,11 @@
-// 导出所有模型
+// 这个文件是“模型总入口”。
+// 它做两件事：
+// 1. 统一导出所有 Sequelize 模型
+// 2. 在这里集中注册模型之间的关联关系
 const User = require('./User');
 const Merchant = require('./Merchant');
+const MerchantPushDevice = require('./MerchantPushDevice');
+const MerchantWithdrawRecord = require('./MerchantWithdrawRecord');
 const Product = require('./Product');
 const ProductCategory = require('./ProductCategory');
 const CartItem = require('./CartItem');
@@ -11,9 +16,11 @@ const Address = require('./Address');
 const PaymentTransaction = require('./PaymentTransaction');
 const WalletLog = require('./WalletLog');
 const ProductSpec = require('./ProductSpec');
+const ProductDigitalProfile = require('./ProductDigitalProfile');
 const Refund = require('./Refund');
 const Review = require('./Review');
 const ServiceArea = require('./ServiceArea');
+const OrderTransfer = require('./OrderTransfer');
 const TownErrandConversation = require('./TownErrandConversation');
 const TownErrandMessage = require('./TownErrandMessage');
 const UserPhoneChangeLog = require('./UserPhoneChangeLog');
@@ -21,11 +28,15 @@ const { UserFeedback } = require('./UserFeedback');
 const { SystemNotification } = require('./SystemNotification');
 const SystemNotificationRead = require('./SystemNotificationRead');
 
-// 定义模型关系
+// ==================== 模型关联关系注册区 ====================
 
 // 用户 - 商家（一对一）
 User.hasOne(Merchant, { foreignKey: 'user_id', as: 'merchant' });
 Merchant.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
+
+// 商家 - 商家自配送员工（一对多）
+Merchant.hasMany(User, { foreignKey: 'bound_merchant_id', as: 'deliveryAgents' });
+User.belongsTo(Merchant, { foreignKey: 'bound_merchant_id', as: 'boundMerchant' });
 
 // 商家 - 商品分类（一对多）
 Merchant.hasMany(ProductCategory, { foreignKey: 'merchant_id', as: 'categories' });
@@ -87,6 +98,18 @@ CountyOrderGroup.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 Merchant.hasMany(Order, { foreignKey: 'merchant_id', as: 'orders' });
 Order.belongsTo(Merchant, { foreignKey: 'merchant_id', as: 'merchant' });
 
+// 商家 - 提现申请记录（一对多）
+Merchant.hasMany(MerchantWithdrawRecord, { foreignKey: 'merchant_id', as: 'withdrawRecords' });
+MerchantWithdrawRecord.belongsTo(Merchant, { foreignKey: 'merchant_id', as: 'merchant' });
+
+// 商家 - 推送设备（一对多）
+Merchant.hasMany(MerchantPushDevice, { foreignKey: 'merchant_id', as: 'pushDevices' });
+MerchantPushDevice.belongsTo(Merchant, { foreignKey: 'merchant_id', as: 'merchant' });
+
+// 用户 - 商家推送设备（一对多）
+User.hasMany(MerchantPushDevice, { foreignKey: 'user_id', as: 'merchantPushDevices' });
+MerchantPushDevice.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
+
 // 县城美食拼单组 - 商家（主店）
 Merchant.hasMany(CountyOrderGroup, { foreignKey: 'main_merchant_id', as: 'mainCountyOrderGroups' });
 CountyOrderGroup.belongsTo(Merchant, { foreignKey: 'main_merchant_id', as: 'mainMerchant' });
@@ -103,6 +126,18 @@ Order.belongsTo(CountyOrderGroup, { foreignKey: 'merge_group_id', as: 'mergeGrou
 Order.hasMany(OrderLog, { foreignKey: 'order_id', as: 'logs' });
 OrderLog.belongsTo(Order, { foreignKey: 'order_id', as: 'order' });
 
+// 订单 - 转派记录（一对多）
+Order.hasMany(OrderTransfer, { foreignKey: 'order_id', as: 'transfers' });
+OrderTransfer.belongsTo(Order, { foreignKey: 'order_id', as: 'order' });
+
+// 用户 - 发起/接收/撤回转派记录
+User.hasMany(OrderTransfer, { foreignKey: 'from_user_id', as: 'outgoingOrderTransfers' });
+OrderTransfer.belongsTo(User, { foreignKey: 'from_user_id', as: 'fromUser' });
+User.hasMany(OrderTransfer, { foreignKey: 'to_user_id', as: 'incomingOrderTransfers' });
+OrderTransfer.belongsTo(User, { foreignKey: 'to_user_id', as: 'toUser' });
+User.hasMany(OrderTransfer, { foreignKey: 'revoked_by_user_id', as: 'revokedOrderTransfers' });
+OrderTransfer.belongsTo(User, { foreignKey: 'revoked_by_user_id', as: 'revokedByUser' });
+
 // 订单 - 支付交易（一对多）
 Order.hasMany(PaymentTransaction, { foreignKey: 'order_id', as: 'paymentTransactions' });
 PaymentTransaction.belongsTo(Order, { foreignKey: 'order_id', as: 'order' });
@@ -118,6 +153,10 @@ WalletLog.belongsTo(User, { foreignKey: 'user_id', as: 'user' });
 // 商品 - 商品规格（一对多）
 Product.hasMany(ProductSpec, { foreignKey: 'product_id', as: 'specs' });
 ProductSpec.belongsTo(Product, { foreignKey: 'product_id', as: 'product' });
+
+// 商品 - 手机数码扩展信息（一对一）
+Product.hasOne(ProductDigitalProfile, { foreignKey: 'product_id', as: 'digital_profile' });
+ProductDigitalProfile.belongsTo(Product, { foreignKey: 'product_id', as: 'product' });
 
 // 订单 - 退款工单（一对一/一对多视业务而定，通常一单支持多次部分退款所以一对多）
 Order.hasMany(Refund, { foreignKey: 'order_id', as: 'refunds' });
@@ -153,6 +192,8 @@ module.exports = {
   sequelize: require('../config/database'),
   User,
   Merchant,
+  MerchantPushDevice,
+  MerchantWithdrawRecord,
   Product,
   ProductCategory,
   CartItem,
@@ -163,9 +204,11 @@ module.exports = {
   PaymentTransaction,
   WalletLog,
   ProductSpec,
+  ProductDigitalProfile,
   Refund,
   Review,
   ServiceArea,
+  OrderTransfer,
   SystemNotification,
   SystemNotificationRead,
   UserFeedback,

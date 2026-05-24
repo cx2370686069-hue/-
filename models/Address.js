@@ -1,7 +1,8 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
-// 用户地址模型
+// 这张表是“用户收货地址”模型。
+// 一个用户可以有多条地址，地址模块和下单模块都会直接依赖这里。
 const Address = sequelize.define('Address', {
   id: {
     type: DataTypes.INTEGER,
@@ -60,7 +61,7 @@ const Address = sequelize.define('Address', {
       return value === null ? null : parseFloat(value);
     }
   },
-  // 兼容前端不同的命名习惯（虚拟字段，不存入数据库）
+  // 兼容前端不同的命名习惯（虚拟字段，不存数据库）
   lat: {
     type: DataTypes.VIRTUAL,
     get() { return this.latitude; }

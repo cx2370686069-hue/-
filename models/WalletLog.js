@@ -1,7 +1,8 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
-// 资金流水日志表（支持骑手、商家、用户的钱包明细）
+// 这张表是“资金流水日志”模型。
+// 商家收入、骑手佣金、提现、退款这类账户流水，都会统一沉淀到这里。
 const WalletLog = sequelize.define('WalletLog', {
   id: {
     type: DataTypes.INTEGER,

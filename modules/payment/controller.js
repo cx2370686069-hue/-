@@ -6,19 +6,26 @@ const { successResponse, errorResponse } = require('../../utils/helpers');
 const { normalizePayChannel, round2 } = require('./utils');
 const paymentService = require('./service');
 
+// 这个文件是“支付控制器”。
+// 它主要负责三类入口：
+// 1. 用户发起预支付
+// 2. 开发环境内部 mock 确认支付
+// 3. 微信 / 支付宝支付回调进来后的控制层处理
 const getOrderIdFromBody = (body) => {
   return body?.order_id || body?.orderId || body?.orderID || body?.id;
 };
 
 const isProduction = () => process.env.NODE_ENV === 'production';
 
-// 仅在非生产环境且 PAYMENT_ENABLE_INTERNAL_MOCK_CONFIRM=true 才启用
-// （生产环境无论环境变量如何都强制关闭，避免误开关导致免支付）
+// ==================== 开发环境安全开关区 ====================
+// 仅在非生产环境且 PAYMENT_ENABLE_INTERNAL_MOCK_CONFIRM=true 才启用。
+// 生产环境这里会被强制关掉，避免出现“没付款但订单被放行”的事故。
 const isInternalMockConfirmEnabled = () => {
   if (isProduction()) return false;
   return process.env.PAYMENT_ENABLE_INTERNAL_MOCK_CONFIRM === 'true';
 };
 
+// 支付成功后，这里顺手把新订单消息推给相关商家端。
 const notifyMerchantsForOrders = async (orders = []) => {
   for (const order of orders) {
     if (!order?.merchant_id) {
@@ -31,6 +38,8 @@ const notifyMerchantsForOrders = async (orders = []) => {
   }
 };
 
+// ==================== 用户支付发起区 ====================
+// 用户点“去支付”后，先走这里做订单归属校验，再交给 service(服务层) 创建支付流水。
 exports.prepay = async (req, res, next) => {
   try {
     const user = req.user;
@@ -87,6 +96,8 @@ const assertTransactionOwnedByUser = async (tx, userId) => {
   return false;
 };
 
+// ==================== 开发环境 mock 支付区 ====================
+// 这条接口只给开发 / 测试环境用，目的是在没接真支付时先把下单链路跑通。
 exports.mockConfirm = async (req, res, next) => {
   try {
     if (!isInternalMockConfirmEnabled()) {
@@ -170,6 +181,8 @@ const verifyChannelSignature = (req, channel) => {
   return Boolean(process.env.PAYMENT_NOTIFY_TOKEN);
 };
 
+// ==================== 第三方支付回调区 ====================
+// 微信和支付宝都会汇总到这里处理，前面做入口鉴权，后面统一交给 service(服务层) 落库改订单状态。
 const notifyHandler = async (req, res, next, channel) => {
   try {
     const tokenCheck = requireNotifyToken(req);

@@ -1,7 +1,8 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
-// 用户对订单（商家+骑手）的评价表
+// 这张表是“订单评价”模型。
+// 用户完成订单后，对商家和骑手的评分、文字评价、图片、商家回复，都会落在这里。
 const Review = sequelize.define('Review', {
   id: {
     type: DataTypes.INTEGER,

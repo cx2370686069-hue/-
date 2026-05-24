@@ -2,7 +2,8 @@ const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 const bcrypt = require('bcryptjs');
 
-// 用户模型（包含普通用户、商家、骑手）
+// 这张表是“用户主表”模型。
+// 普通用户、商家账号、骑手、商家自配送员、管理员，都共用这一张 users(用户表)。
 const User = sequelize.define('User', {
   id: {
     type: DataTypes.INTEGER,
@@ -29,10 +30,10 @@ const User = sequelize.define('User', {
     comment: '头像 URL'
   },
   role: {
-    type: DataTypes.ENUM('user', 'merchant', 'rider', 'admin'),
+    type: DataTypes.ENUM('user', 'merchant', 'rider', 'merchant_delivery', 'admin'),
     allowNull: false,
     defaultValue: 'user',
-    comment: '角色：user-用户，merchant-商家，rider-骑手，admin-管理员'
+    comment: '角色：user-用户，merchant-商家，rider-骑手，merchant_delivery-商家自配送员工，admin-管理员'
   },
   status: {
     type: DataTypes.INTEGER,
@@ -48,7 +49,7 @@ const User = sequelize.define('User', {
       return value === null ? 0 : parseFloat(value);
     }
   },
-  // 骑手专属字段
+  // 骑手 / 商家自配送员专属字段
   rider_status: {
     type: DataTypes.INTEGER,
     defaultValue: 0,
@@ -58,6 +59,31 @@ const User = sequelize.define('User', {
     type: DataTypes.INTEGER,
     defaultValue: 0,
     comment: '骑手审核状态：0-待审核，1-已通过，2-已拒绝'
+  },
+  rider_audited_by_role: {
+    type: DataTypes.STRING(30),
+    allowNull: true,
+    comment: '骑手最终审核角色：admin-总后台，stationmaster-乡镇站长'
+  },
+  rider_audited_by_user_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    comment: '骑手最终审核人ID'
+  },
+  rider_audited_by_name: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    comment: '骑手最终审核人名称'
+  },
+  rider_audited_at: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    comment: '骑手审核时间'
+  },
+  rider_reject_reason: {
+    type: DataTypes.STRING(255),
+    allowNull: true,
+    comment: '骑手驳回原因'
   },
   rider_balance: {
     type: DataTypes.DECIMAL(10, 2),
@@ -102,6 +128,11 @@ const User = sequelize.define('User', {
   rider_location_updated_at: {
     type: DataTypes.DATE,
     comment: '骑手位置更新时间'
+  },
+  bound_merchant_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    comment: '绑定店铺ID（商家自配送员工）'
   }
 }, {
   tableName: 'users',
@@ -110,25 +141,27 @@ const User = sequelize.define('User', {
   indexes: [
     { fields: ['phone'] },
     { fields: ['role'] },
+    { fields: ['bound_merchant_id'] },
     { fields: ['delivery_scope'] },
     { fields: ['town_code'] }
   ]
 });
 
-// 密码加密钩子
+// 新建账号时自动加密密码。
 User.beforeCreate(async (user) => {
   if (user.password) {
     user.password = await bcrypt.hash(user.password, 10);
   }
 });
 
+// 修改密码时也自动重新加密。
 User.beforeUpdate(async (user) => {
   if (user.changed('password') && user.password) {
     user.password = await bcrypt.hash(user.password, 10);
   }
 });
 
-// 验证密码方法
+// 实例方法：校验明文密码是否和数据库中的加密密码匹配。
 User.prototype.validatePassword = async function(password) {
   return await bcrypt.compare(password, this.password);
 };

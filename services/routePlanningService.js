@@ -1,6 +1,10 @@
+// 这个文件是“路线规划服务”。
+// 目前主要封装腾讯地图驾车路线距离，用来给配送费估算、路线距离计算等链路复用。
 const axios = require('axios');
-const TIANDITU_CONFIG = require('../config/tianditu');
+const TENCENT_MAP_CONFIG = require('../config/tencentMap');
+const { wgs84ToGcj02 } = require('../utils/coordTransform');
 
+// 保留 3 位小数，统一公里值的输出精度。
 const round3 = (value) => {
   const num = Number(value);
   return Number.isFinite(num) ? Math.round(num * 1000) / 1000 : null;
@@ -11,50 +15,31 @@ const toFiniteNumber = (value) => {
   return Number.isFinite(num) ? num : null;
 };
 
-const buildCoordText = (lng, lat) => `${lng},${lat}`;
+const buildCoordText = (lng, lat) => `${lat},${lng}`;
 
-const buildDrivePostStr = ({ startLng, startLat, endLng, endLat, style }) =>
-  JSON.stringify({
-    orig: buildCoordText(startLng, startLat),
-    dest: buildCoordText(endLng, endLat),
-    style: String(style || TIANDITU_CONFIG.driveStyle || '0')
-  });
-
+// 把腾讯地图返回的原始距离统一换算成公里。
 const normalizeDistanceKm = (rawDistance) => {
   const distance = toFiniteNumber(rawDistance);
   if (distance === null || distance < 0) {
     return null;
   }
 
-  // 天地图驾车路线接口通常返回米；若返回小数公里则直接保留。
+  // 腾讯路线规划返回值通常是米；若返回小数公里则直接保留。
   const distanceKm = Number.isInteger(distance) || distance >= 100 ? distance / 1000 : distance;
   return round3(distanceKm);
 };
 
-const pickDistanceKmFromXml = (xmlText) => {
-  if (typeof xmlText !== 'string' || !xmlText.trim()) {
-    return null;
-  }
-
-  const match = xmlText.match(/<distance>\s*([0-9.]+)\s*<\/distance>/i);
-  if (!match || !match[1]) {
-    return null;
-  }
-
-  return normalizeDistanceKm(match[1]);
-};
-
+// 不同接口字段名可能不一样，这里统一从响应里尽量取出距离。
 const pickDistanceKm = (payload) => {
-  const xmlDistanceKm = pickDistanceKmFromXml(payload);
-  if (xmlDistanceKm !== null) {
-    return xmlDistanceKm;
-  }
-
   const candidates = [
-    payload?.results?.[0]?.distance,
-    payload?.results?.distance,
+    payload?.result?.routes?.[0]?.distance,
+    payload?.result?.routes?.[0]?.dist,
+    payload?.result?.elements?.[0]?.distance,
+    payload?.result?.distance,
     payload?.routes?.[0]?.distance,
+    payload?.routes?.[0]?.dist,
     payload?.route?.distance,
+    payload?.route?.dist,
     payload?.distance
   ];
 
@@ -68,6 +53,7 @@ const pickDistanceKm = (payload) => {
   return null;
 };
 
+// 构造带状态码的路线规划错误。
 const buildRouteError = (message, statusCode = 500) => {
   const error = new Error(message);
   error.statusCode = statusCode;
@@ -85,6 +71,7 @@ const buildRawPreview = (payload) => {
   }
 };
 
+// 请求失败时，统一打印一份便于排查的上下文日志。
 const logRouteFailure = ({
   stage,
   reason,
@@ -96,7 +83,7 @@ const logRouteFailure = ({
   raw,
   extra
 }) => {
-  console.error('[TiandituRouteError]', {
+  console.error('[TencentRouteError]', {
     stage,
     reason,
     context: context || null,
@@ -107,14 +94,16 @@ const logRouteFailure = ({
   });
 };
 
+// 这是路线规划主入口。
+// 输入起点终点 WGS84 坐标，内部会先转腾讯地图需要的 GCJ02，再请求驾车路线距离。
 const getDrivingDistanceKm = async ({ startLng, startLat, endLng, endLat, context }) => {
-  if (!TIANDITU_CONFIG.tk) {
+  if (!TENCENT_MAP_CONFIG.key) {
     logRouteFailure({
       stage: 'config',
-      reason: 'missing_tk',
+      reason: 'missing_key',
       context
     });
-    throw buildRouteError('未配置天地图 TK，无法按驾车路线计算配送费', 503);
+    throw buildRouteError('未配置腾讯地图 Key，无法按驾车路线计算配送费', 503);
   }
 
   const originLng = toFiniteNumber(startLng);
@@ -139,20 +128,27 @@ const getDrivingDistanceKm = async ({ startLng, startLat, endLng, endLat, contex
     throw buildRouteError('路线规划坐标不完整', 400);
   }
 
+  const gcjOrigin = wgs84ToGcj02(originLng, originLat);
+  const gcjDest = wgs84ToGcj02(destLng, destLat);
+  if (
+    gcjOrigin.lng === null ||
+    gcjOrigin.lat === null ||
+    gcjDest.lng === null ||
+    gcjDest.lat === null
+  ) {
+    throw buildRouteError('路线规划坐标转换失败', 400);
+  }
+
   let response;
   try {
-    response = await axios.get(TIANDITU_CONFIG.driveUrl, {
+    response = await axios.get(TENCENT_MAP_CONFIG.directionDrivingUrl, {
       params: {
-        postStr: buildDrivePostStr({
-          startLng: originLng,
-          startLat: originLat,
-          endLng: destLng,
-          endLat: destLat
-        }),
-        type: 'search',
-        tk: TIANDITU_CONFIG.tk
+        from: buildCoordText(gcjOrigin.lng, gcjOrigin.lat),
+        to: buildCoordText(gcjDest.lng, gcjDest.lat),
+        key: TENCENT_MAP_CONFIG.key,
+        output: 'json'
       },
-      timeout: TIANDITU_CONFIG.timeoutMs
+      timeout: TENCENT_MAP_CONFIG.timeoutMs
     });
   } catch (error) {
     logRouteFailure({
@@ -170,7 +166,25 @@ const getDrivingDistanceKm = async ({ startLng, startLat, endLng, endLat, contex
       },
       raw: error.response?.data
     });
-    throw buildRouteError(`天地图驾车路线请求失败：${error.message}`, 502);
+    throw buildRouteError(`腾讯地图驾车路线请求失败：${error.message}`, 502);
+  }
+
+  if (Number(response?.data?.status) !== 0) {
+    logRouteFailure({
+      stage: 'api_status',
+      reason: 'provider_error',
+      context,
+      originLng,
+      originLat,
+      destLng,
+      destLat,
+      raw: response?.data,
+      extra: {
+        provider_status: response?.data?.status,
+        provider_message: response?.data?.message
+      }
+    });
+    throw buildRouteError(`腾讯地图驾车路线请求失败：${response?.data?.message || '服务返回异常'}`, 502);
   }
 
   const distanceKm = pickDistanceKm(response?.data);
@@ -188,7 +202,7 @@ const getDrivingDistanceKm = async ({ startLng, startLat, endLng, endLat, contex
         http_status: response?.status
       }
     });
-    throw buildRouteError('天地图未返回可用的驾车路线距离', 502);
+    throw buildRouteError('腾讯地图未返回可用的驾车路线距离', 502);
   }
 
   return {

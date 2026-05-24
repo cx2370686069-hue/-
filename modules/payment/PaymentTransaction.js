@@ -1,6 +1,8 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../../config/database');
 
+// 这张表是“支付流水表”模型。
+// 不管是一笔普通订单，还是县城拼单组支付，都会先在这里留一条支付记录，后面再由回调把状态改成 success。
 const PaymentTransaction = sequelize.define('PaymentTransaction', {
   id: {
     type: DataTypes.INTEGER,

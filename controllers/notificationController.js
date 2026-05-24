@@ -1,9 +1,13 @@
+// 这个文件是“用户端系统通知控制器”。
+// 用户端查看已发布通知、打开通知详情、统计未读数，都是走这里。
 const { Op } = require('sequelize');
 const { SystemNotification, SystemNotificationRead } = require('../models');
 const { successResponse, errorResponse } = require('../utils/helpers');
 
+// 用户端只能看到面向全体用户或普通用户的通知。
 const USER_VISIBLE_TARGET_ROLES = ['all', 'user'];
 
+// limit 这类参数统一按正整数解析。
 const toPositiveInteger = (value, fallback) => {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) {
@@ -12,6 +16,7 @@ const toPositiveInteger = (value, fallback) => {
   return parsed;
 };
 
+// 通知对象统一整理成前端可直接使用的结构。
 const formatNotification = (item) => ({
   id: item.id,
   title: item.title,
@@ -24,6 +29,7 @@ const formatNotification = (item) => ({
   updated_at: item.updated_at || null
 });
 
+// “已发布且当前用户可见”的查询条件统一在这里维护。
 const buildPublishedNotificationWhere = (extraWhere = {}) => ({
   ...extraWhere,
   status: 'published',
@@ -32,6 +38,7 @@ const buildPublishedNotificationWhere = (extraWhere = {}) => ({
   }
 });
 
+// 用户打开通知详情时，会顺手把这条通知标记成已读。
 const markNotificationAsRead = async (notificationId, userId) => {
   if (!notificationId || !userId) {
     return;
@@ -49,6 +56,10 @@ const markNotificationAsRead = async (notificationId, userId) => {
   });
 };
 
+/**
+ * 获取已发布通知列表
+ * 这里只返回用户端可见的已发布通知，不包含草稿和下线通知。
+ */
 exports.getPublishedNotifications = async (req, res, next) => {
   try {
     const limit = Math.min(toPositiveInteger(req.query.limit, 20), 50);
@@ -69,6 +80,10 @@ exports.getPublishedNotifications = async (req, res, next) => {
   }
 };
 
+/**
+ * 获取已发布通知详情
+ * 用户打开通知详情页时，除了返回内容，还会顺手把通知记成已读。
+ */
 exports.getPublishedNotificationDetail = async (req, res, next) => {
   try {
     const id = Number(req.params.id);
@@ -92,6 +107,10 @@ exports.getPublishedNotificationDetail = async (req, res, next) => {
   }
 };
 
+/**
+ * 获取未读通知数量
+ * 当前算法是：先取出所有已发布通知，再减去当前用户已经读过的数量。
+ */
 exports.getUnreadNotificationCount = async (req, res, next) => {
   try {
     const userId = Number(req.user?.id);

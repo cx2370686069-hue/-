@@ -1,7 +1,8 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
-// 商家店铺模型
+// 这张表是“商家店铺”模型。
+// 商家资料、审核状态、乡镇归属、配送权限、财务累计字段，都会收在这里。
 const Merchant = sequelize.define('Merchant', {
   id: {
     type: DataTypes.INTEGER,
@@ -12,6 +13,11 @@ const Merchant = sequelize.define('Merchant', {
     type: DataTypes.INTEGER,
     allowNull: false,
     comment: '关联用户 ID'
+  },
+  binding_code: {
+    type: DataTypes.STRING(6),
+    allowNull: true,
+    comment: '店铺绑定ID，供商家自配送员工注册时输入'
   },
   name: {
     type: DataTypes.STRING(100),
@@ -102,6 +108,42 @@ const Merchant = sequelize.define('Merchant', {
     defaultValue: 0,
     comment: '审核状态：0-待审核，1-已通过，2-已拒绝'
   },
+  audited_by_role: {
+    type: DataTypes.STRING(30),
+    allowNull: true,
+    comment: '最终审核角色：admin-总后台，stationmaster-乡镇站长'
+  },
+  audited_by_user_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    comment: '最终审核人用户ID'
+  },
+  audited_by_name: {
+    type: DataTypes.STRING(100),
+    allowNull: true,
+    comment: '最终审核人名称'
+  },
+  audited_at: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    comment: '最终审核时间'
+  },
+  reject_reason: {
+    type: DataTypes.STRING(255),
+    allowNull: true,
+    comment: '驳回原因'
+  },
+  audit_locked: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+    comment: '审核是否已锁定'
+  },
+  audit_locked_reason: {
+    type: DataTypes.STRING(255),
+    allowNull: true,
+    comment: '审核锁定原因'
+  },
   balance: {
     type: DataTypes.DECIMAL(10, 2),
     defaultValue: 0.0,
@@ -121,7 +163,9 @@ const Merchant = sequelize.define('Merchant', {
   tableName: 'merchants',
   indexes: [
     { fields: ['user_id'] },
+    { unique: true, fields: ['binding_code'] },
     { fields: ['status'] },
+    { fields: ['audit_status'] },
     { fields: ['channel_tags'] },
     { fields: ['business_scope'] },
     { fields: ['town_code'] }

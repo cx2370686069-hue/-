@@ -1,10 +1,15 @@
+// 这个文件是“后台投诉建议控制器”。
+// 后台管理员查看用户反馈、查看详情、更新处理状态，都是走这里。
 const { Op } = require('sequelize');
 const { UserFeedback, User } = require('../models');
 const { errorResponse, successResponse } = require('../utils/helpers');
 const { USER_FEEDBACK_STATUSES } = require('../models/UserFeedback');
 
+// 统一把文本转成去首尾空格后的格式，避免筛选时出现空格干扰。
 const normalizeText = (value) => String(value || '').trim();
 
+// 这里把反馈记录整理成后台前端真正要展示的结构。
+// 这样列表接口和详情接口返回格式就能保持一致。
 const formatFeedback = (item) => ({
   id: item.id,
   user_id: item.user_id,
@@ -19,6 +24,10 @@ const formatFeedback = (item) => ({
   updated_at: item.updated_at || null
 });
 
+/**
+ * 后台反馈列表
+ * 支持按处理状态和关键词筛选，关键词会同时搜反馈内容和联系电话。
+ */
 exports.getFeedbackList = async (req, res, next) => {
   try {
     const status = normalizeText(req.query.status);
@@ -53,6 +62,10 @@ exports.getFeedbackList = async (req, res, next) => {
   }
 };
 
+/**
+ * 后台反馈详情
+ * 按反馈 id 查单条详情，用于后台打开处理弹窗或详情页。
+ */
 exports.getFeedbackDetail = async (req, res, next) => {
   try {
     const id = Number(req.params.id);
@@ -80,6 +93,10 @@ exports.getFeedbackDetail = async (req, res, next) => {
   }
 };
 
+/**
+ * 更新反馈处理状态
+ * 后台处理一条投诉建议时，会在这里写入状态、处理人和处理时间。
+ */
 exports.updateFeedbackStatus = async (req, res, next) => {
   try {
     const id = Number(req.params.id);

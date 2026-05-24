@@ -1,7 +1,10 @@
+// 这个文件是“评价控制器”。
+// 用户端看商家评价、商家端查评价列表、商家回复评价，主要都走这里。
 const { Review, Order, User, Merchant, sequelize } = require('../models');
 const { successResponse, errorResponse } = require('../utils/helpers');
 const { Op } = require('sequelize');
 
+// 评价图片在库里可能是数组，也可能是 JSON 字符串，这里统一解析成数组。
 const parseReviewImages = (value) => {
   if (Array.isArray(value)) {
     return value;
@@ -17,6 +20,7 @@ const parseReviewImages = (value) => {
   }
 };
 
+// 匿名评价时，昵称统一做脱敏处理。
 const maskNickname = (nickname) => {
   const text = String(nickname || '').trim();
   if (!text) {
@@ -28,11 +32,13 @@ const maskNickname = (nickname) => {
   return `${text.slice(0, 1)}***${text.slice(-1)}`;
 };
 
+// merchant_id 参数统一收成正整数。
 const normalizeMerchantId = (value) => {
   const merchantId = Number.parseInt(value, 10);
   return Number.isInteger(merchantId) && merchantId > 0 ? merchantId : null;
 };
 
+// 平均评分统一保留 1 位小数。
 const formatAverageRating = (value) => {
   const num = Number(value);
   if (!Number.isFinite(num) || num <= 0) {
@@ -41,6 +47,7 @@ const formatAverageRating = (value) => {
   return Number(num.toFixed(1));
 };
 
+// 评价列表里会把订单商品摘要整理成一句短文案，方便前端展示。
 const buildProductSummary = (items) => {
   const list = Array.isArray(items) ? items.filter(Boolean) : [];
   if (list.length === 0) {
@@ -73,6 +80,7 @@ const buildProductSummary = (items) => {
 
 /**
  * 获取商家评价摘要（用户端公开）
+ * 这里返回平均分、评价总数，以及 1 到 5 星各自有多少条。
  */
 exports.getMerchantReviewSummary = async (req, res, next) => {
   try {
@@ -136,6 +144,7 @@ exports.getMerchantReviewSummary = async (req, res, next) => {
 
 /**
  * 获取商家公开评价列表（用户端公开）
+ * 用户端店铺详情页要看评价列表时，通常走这个接口。
  */
 exports.getMerchantPublicReviews = async (req, res, next) => {
   try {
@@ -209,6 +218,7 @@ exports.getMerchantPublicReviews = async (req, res, next) => {
 
 /**
  * 获取评价列表（商家端）
+ * 商家后台可按评分和是否已回复筛选评价。
  */
 exports.getReviews = async (req, res, next) => {
   try {
@@ -287,6 +297,7 @@ exports.getReviews = async (req, res, next) => {
 
 /**
  * 回复评价
+ * 商家对某一笔订单的评价写回复时，主要走这里。
  */
 exports.replyReview = async (req, res, next) => {
   try {

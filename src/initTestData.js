@@ -1,11 +1,13 @@
 const { sequelize, User, Merchant, Product } = require('../models');
 
+// 这个文件是“本地测试数据初始化脚本”。
+// 只适合开发环境手动跑，别拿去生产库执行。
 async function initData() {
   try {
     await sequelize.authenticate();
     console.log('✅ 数据库连接成功');
 
-    // 1. 创建测试商家账号 (用于登录)
+    // 1. 先准备一个测试商家登录账号。
     const [testUser] = await User.findOrCreate({
       where: { phone: '13800000000' },
       defaults: {
@@ -16,7 +18,7 @@ async function initData() {
     });
     console.log('✅ 测试商家账号生成: 13800000000 / password123');
 
-    // 2. 创建商家店铺信息
+    // 2. 再补对应的商家店铺资料。
     const [testMerchant] = await Merchant.findOrCreate({
       where: { phone: '13800000000' },
       defaults: {
@@ -30,7 +32,7 @@ async function initData() {
     });
     console.log('✅ 测试商家店铺生成');
 
-    // 3. 为该商家创建测试商品
+    // 3. 如果这个商家还没商品，就顺手塞几条测试商品，方便前端直接联调。
     const productCount = await Product.count({ where: { merchant_id: testMerchant.id } });
     if (productCount === 0) {
       await Product.bulkCreate([

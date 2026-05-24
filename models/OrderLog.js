@@ -1,7 +1,8 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
-// 订单日志模型（记录订单状态变化）
+// 这张表是“订单日志”模型。
+// 订单每次状态变化、谁操作、从什么状态变到什么状态，都会记在这里。
 const OrderLog = sequelize.define('OrderLog', {
   id: {
     type: DataTypes.INTEGER,
@@ -18,7 +19,7 @@ const OrderLog = sequelize.define('OrderLog', {
     comment: '操作人 ID'
   },
   operator_type: {
-    type: DataTypes.ENUM('user', 'merchant', 'rider', 'system', 'dispatcher'),
+    type: DataTypes.ENUM('user', 'merchant', 'rider', 'merchant_delivery', 'system', 'dispatcher'),
     comment: '操作人类型'
   },
   action: {

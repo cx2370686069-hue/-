@@ -1,6 +1,14 @@
+// 这个文件是“Socket 实时通知服务”。
+// 它负责整套实时链路：
+// 1. Socket 连接鉴权
+// 2. 用户 / 商家 / 骑手 / 调度台的房间管理
+// 3. 调度大屏订单与坐标广播
+// 4. 新订单、订单状态更新、派单通知等实时消息推送
 const jwt = require('jsonwebtoken');
 const { User, Order, Merchant } = require('../models');
+const merchantPushService = require('./merchantPushService');
 
+// ==================== 连接池与基础缓存区 ====================
 let io = null;
 const userSockets = new Map();
 const merchantSockets = new Map();
@@ -9,6 +17,81 @@ const dispatcherSockets = new Map(); // 调度中心连接池
 const riderLastSeen = new Map(); // 看门狗：记录骑手最后上报GPS的时间 
 const riderLocations = new Map(); // 缓存骑手最新坐标 
 const LOST_CONTACT_THRESHOLD = 30000; // 骑手失联判定阈值 (30秒) 
+const socketIdentityCache = new Map();
+const SOCKET_IDENTITY_CACHE_TTL = 60000;
+const SOCKET_AUTH_DB_TIMEOUT_MS = 8000;
+
+// 商家端远程推送走异步 fire-and-forget，避免主链路被推送慢请求卡住。
+function fireAndForgetMerchantPush(userId, payload) {
+  merchantPushService.notifyMerchantRemotePush(userId, payload).catch((error) => {
+    console.error('[merchant-push] dispatch failed', {
+      userId,
+      error: error?.message || error
+    });
+  });
+}
+
+// ==================== Socket 鉴权工具区 ====================
+function createSocketAuthError(reason, details = {}) {
+  const error = new Error('Unauthorized');
+  error.code = 'SOCKET_AUTH_FAILED';
+  error.reason = reason;
+  error.details = details;
+  return error;
+}
+
+function normalizeSocketToken(value) {
+  const raw = String(value || '').trim();
+  if (!raw) {
+    return '';
+  }
+  return raw.startsWith('Bearer ') ? raw.slice('Bearer '.length).trim() : raw;
+}
+
+// 把数据库角色映射成 socket 内部角色。
+function toSocketRole(dbRole = '') {
+  const normalized = String(dbRole || '').toLowerCase().trim();
+  if (normalized === 'admin') {
+    return 'dispatcher';
+  }
+  return ['user', 'merchant', 'rider', 'dispatcher'].includes(normalized) ? normalized : '';
+}
+
+function readSocketIdentityCache(token) {
+  const cached = socketIdentityCache.get(token);
+  if (!cached) {
+    return null;
+  }
+  if (cached.expireAt <= Date.now()) {
+    socketIdentityCache.delete(token);
+    return null;
+  }
+  return cached.identity;
+}
+
+function writeSocketIdentityCache(token, identity) {
+  if (!token || !identity) {
+    return;
+  }
+  socketIdentityCache.set(token, {
+    identity,
+    expireAt: Date.now() + SOCKET_IDENTITY_CACHE_TTL
+  });
+}
+
+// 带超时的用户查询，避免 socket 握手一直卡在数据库。
+async function findSocketUserById(userId) {
+  return Promise.race([
+    User.findByPk(userId, {
+      attributes: ['id', 'role', 'status']
+    }),
+    new Promise((_, reject) => {
+      setTimeout(() => {
+        reject(createSocketAuthError('db_timeout', { userId }));
+      }, SOCKET_AUTH_DB_TIMEOUT_MS);
+    })
+  ]);
+}
 
 const toFiniteNumber = (value) => {
   if (value === null || value === undefined || value === '') {
@@ -18,49 +101,57 @@ const toFiniteNumber = (value) => {
   return Number.isFinite(num) ? num : null;
 };
 
+// 解析当前 socket 的真实身份。
+// 这里会校验 token、查数据库状态、再决定它属于 user / merchant / rider / dispatcher 哪一类。
 async function resolveSocketIdentity(socket) {
-  const token = socket.handshake.auth?.token || socket.handshake.query?.token;
-  if (!token || typeof token !== 'string') {
-    throw new Error('Unauthorized');
+  const token = normalizeSocketToken(
+    socket.handshake.auth?.token
+    || socket.handshake.query?.token
+    || socket.handshake.headers?.authorization
+  );
+  if (!token) {
+    throw createSocketAuthError('missing_token');
+  }
+
+  const cachedIdentity = readSocketIdentityCache(token);
+  if (cachedIdentity) {
+    return cachedIdentity;
   }
 
   let decoded;
   try {
     decoded = jwt.verify(token, process.env.JWT_SECRET);
   } catch (error) {
-    throw new Error('Unauthorized');
+    throw createSocketAuthError('invalid_token');
   }
 
   const rawUserId = decoded.userId || decoded.id;
   const userId = Number(rawUserId);
   if (!Number.isInteger(userId) || userId <= 0) {
-    throw new Error('Unauthorized');
+    throw createSocketAuthError('invalid_user_id', { rawUserId });
   }
 
-  const user = await User.findByPk(userId, {
-    attributes: ['id', 'role', 'status']
-  });
+  const user = await findSocketUserById(userId);
   if (!user || Number(user.status) !== 1) {
-    throw new Error('Unauthorized');
+    throw createSocketAuthError('user_inactive', { userId, status: user?.status });
   }
 
-  const dbRole = String(user.role || '').toLowerCase();
-  let socketRole = dbRole;
-  if (dbRole === 'admin') {
-    socketRole = 'dispatcher';
+  const dbRole = String(user.role || '').toLowerCase().trim();
+  const socketRole = toSocketRole(dbRole);
+  if (!socketRole) {
+    throw createSocketAuthError('unsupported_role', { userId, dbRole });
   }
 
-  if (!['user', 'merchant', 'rider', 'dispatcher'].includes(socketRole)) {
-    throw new Error('Unauthorized');
-  }
-
-  return {
+  const identity = {
     userId: user.id,
     userRole: socketRole,
     accountRole: dbRole
   };
+  writeSocketIdentityCache(token, identity);
+  return identity;
 }
 
+// ==================== 调度大屏数据组装区 ====================
 function buildDispatcherRadarOrder(order) {
   const merchant = order.merchant || {};
   const customerLng = toFiniteNumber(order.customer_lng ?? order.delivery_longitude);
@@ -72,6 +163,8 @@ function buildDispatcherRadarOrder(order) {
     id: order.order_no,
     order_id: order.id,
     order_no: order.order_no,
+    created_at: order.created_at || null,
+    createdAt: order.created_at || null,
     rider_id: order.rider_id || null,
     lng: customerLng,
     lat: customerLat,
@@ -94,6 +187,7 @@ function buildDispatcherRadarOrder(order) {
   };
 }
 
+// 生成调度大屏当前活跃订单快照。
 async function getDispatcherOrdersSnapshot() {
   const { Op } = require('sequelize');
   const activeOrders = await Order.findAll({
@@ -105,6 +199,7 @@ async function getDispatcherOrdersSnapshot() {
   return activeOrders.map(buildDispatcherRadarOrder);
 }
 
+// 广播调度大屏订单更新。
 async function broadcastDispatcherOrdersUpdate(targetSocket = null) {
   if (!io && !targetSocket) {
     return;
@@ -130,14 +225,29 @@ async function broadcastDispatcherOrdersUpdate(targetSocket = null) {
 
 /**
  * 初始化 Socket.io
+ * 这是整个实时系统的入口：创建 io 实例、配置鉴权、中间件、房间管理、消息监听。
  */
 function init(server) {
   io = require('socket.io')(server, {
     cors: {
       origin: '*',
       methods: ['GET', 'POST']
-    }
+    },
+    transports: ['websocket', 'polling'],
+    pingInterval: 25000,
+    pingTimeout: 60000
   });
+
+  if (io?.engine && typeof io.engine.on === 'function') {
+    io.engine.on('connection_error', (error) => {
+      console.error('[socket:engine:connection_error]', {
+        code: error?.code || '',
+        message: error?.message || '',
+        type: error?.type || '',
+        context: error?.context || ''
+      });
+    });
+  }
 
   io.use(async (socket, next) => {
     try {
@@ -147,13 +257,25 @@ function init(server) {
       socket.accountRole = identity.accountRole;
       next();
     } catch (error) {
-      next(new Error('Unauthorized'));
+      console.error('[socket:auth:fail]', {
+        reason: error?.reason || '',
+        message: error?.message || 'Unauthorized',
+        details: error?.details || {},
+        handshakeAddress: socket.handshake?.address || '',
+        hasAuthToken: !!socket.handshake?.auth?.token,
+        hasQueryToken: !!socket.handshake?.query?.token
+      });
+      next(error instanceof Error ? error : createSocketAuthError('unknown'));
     }
   });
 
   io.on('connection', (socket) => {
-    console.log(`用户连接: ${socket.userId} (${socket.userRole})`);
+    console.log(`用户连接: ${socket.userId} (${socket.userRole})`, {
+      socketId: socket.id,
+      transport: socket.conn?.transport?.name || ''
+    });
 
+    // 真正建立连接后，按账号身份分配到不同连接池和房间。
     if (socket.userRole === 'merchant') {
       merchantSockets.set(socket.userId, socket);
       socket.join(`merchant_${socket.userId}`);
@@ -166,7 +288,7 @@ function init(server) {
       socket.join('dispatcher');
       socket.join('dispatcher_room');
 
-      // 【大屏刷新防丢失优化】当调度员连接时，主动将数据库里的活跃订单和骑手推给它
+      // 调度大屏刚连上时，主动补发一次当前活跃订单和骑手坐标，避免大屏空白。
       setTimeout(async () => {
         try {
           await broadcastDispatcherOrdersUpdate(socket);
@@ -204,6 +326,10 @@ function init(server) {
       socket.join(`user_${socket.userId}`);
     }
 
+    // 骑手通过 socket 上报位置后，这里会同步：
+    // 1. 更新内存中的最新坐标
+    // 2. 异步回写数据库
+    // 3. 广播给调度大屏
     socket.on('location_update', (data = {}) => {
       if (socket.userRole !== 'rider') {
         return;
@@ -260,7 +386,7 @@ function init(server) {
       }
     });
 
-    // 处理大屏端的派单指令核心逻辑
+    // 调度大屏派单主逻辑。
     const handleDispatchOrder = async (data) => {
       if (socket.userRole !== 'dispatcher') {
         return socket.emit('error_msg', { message: '无权派单' });
@@ -384,7 +510,7 @@ function init(server) {
 
     socket.on('dispatch_order', handleDispatchOrder);
 
-    // 处理原生 WebSocket 的 message (因为大屏用的 ws.send)
+    // 兼容原生 WebSocket 的 message 事件，因为调度大屏可能直接用 ws.send。
     socket.on('message', async (rawMsg) => {
       try {
         const msgStr = rawMsg.toString();
@@ -398,7 +524,7 @@ function init(server) {
       }
     });
 
-    // 处理大屏端发起的心跳 ping
+    // 给调度大屏提供简单心跳响应。
     socket.on('ping', () => {
       socket.emit('pong', { timestamp: Date.now() });
     });
@@ -442,6 +568,7 @@ function init(server) {
 
 /**
  * 获取 io 实例
+ * 其他服务如果想主动发实时消息，会先从这里拿到 io。
  */
 function getIO() {
   return io;
@@ -449,6 +576,7 @@ function getIO() {
 
 /**
  * 向指定用户推送消息
+ * 这里只做最基础的 emit，不拼业务消息结构。
  */
 function emitToUser(userId, event, data) {
   if (io) {
@@ -458,6 +586,7 @@ function emitToUser(userId, event, data) {
 
 /**
  * 向指定商家推送消息
+ * 这里只做最基础的 emit，不拼业务消息结构。
  */
 function emitToMerchant(userId, event, data) {
   if (io) {
@@ -467,6 +596,7 @@ function emitToMerchant(userId, event, data) {
 
 /**
  * 向指定骑手推送消息
+ * 这里只做最基础的 emit，不拼业务消息结构。
  */
 function emitToRider(userId, event, data) {
   if (io) {
@@ -498,19 +628,53 @@ function emitToAllRiders(event, data) {
 
 /**
  * 推送新订单通知给商家
+ * 商家端既会收到 socket 实时通知，也会尝试触发远程推送。
  */
-function notifyMerchantNewOrder(merchantUserId, order) {
-  emitToMerchant(merchantUserId, 'new_order', {
+function notifyMerchantNewOrder(merchantUserId, order, options = {}) {
+  const payload = {
     type: 'new_order',
-    title: '新订单',
-    message: `您有一个新订单，订单号: ${order.order_no}`,
+    eventType: options?.eventType || 'merchant_new_order',
+    title: options?.title || '新订单',
+    message: options?.message || `您有一个新订单，订单号: ${order.order_no}`,
+    speechText: options?.speechText || '您有新的订单，请及时处理',
+    soundType: options?.soundType || 'merchant_new_order',
+    priority: options?.priority || 'high',
+    jumpPath: options?.jumpPath || '/pages/order/list',
+    dedupeKey: options?.dedupeKey || `merchant_new_order:${order?.id || order?.order_no || Date.now()}`,
     data: order,
     timestamp: new Date()
-  });
+  };
+
+  emitToMerchant(merchantUserId, 'new_order', payload);
+  fireAndForgetMerchantPush(merchantUserId, payload);
+}
+
+/**
+ * 推送订单提醒给商家
+ * 这个入口偏提醒类事件，比如订单状态推进后提醒商家回到列表处理。
+ */
+function notifyMerchantReminder(merchantUserId, order, options = {}) {
+  const payload = {
+    type: options?.eventType || 'merchant_reminder',
+    eventType: options?.eventType || 'merchant_reminder',
+    title: options?.title || '商家提醒',
+    message: options?.message || '您有新的订单提醒',
+    speechText: options?.speechText || '您有新的订单提醒，请及时查看',
+    soundType: options?.soundType || 'merchant_reminder',
+    priority: options?.priority || 'medium',
+    jumpPath: options?.jumpPath || '/pages/order/list',
+    dedupeKey: options?.dedupeKey || `merchant_reminder:${order?.id || order?.order_no || Date.now()}`,
+    data: order,
+    timestamp: new Date()
+  };
+
+  emitToMerchant(merchantUserId, payload.type, payload);
+  fireAndForgetMerchantPush(merchantUserId, payload);
 }
 
 /**
  * 推送订单状态更新给用户
+ * 用户侧主要靠这个入口感知订单状态变化。
  */
 function notifyUserOrderUpdate(userId, order, statusText) {
   emitToUser(userId, 'order_update', {
@@ -524,15 +688,24 @@ function notifyUserOrderUpdate(userId, order, statusText) {
 
 /**
  * 推送派单通知给骑手
+ * 骑手拿到新配送任务时，主要从这里收到实时通知。
  */
-function notifyRiderNewOrder(riderUserId, order) {
-  emitToRider(riderUserId, 'new_delivery', {
+function notifyRiderNewOrder(riderUserId, order, options = {}) {
+  const payload = {
     type: 'new_delivery',
-    title: '新配送任务',
-    message: `您有一个新的配送任务`,
+    eventType: options?.eventType || 'rider_new_delivery',
+    title: options?.title || '新配送任务',
+    message: options?.message || '您有一个新的配送任务',
+    speechText: options?.speechText || '您有新的配送订单，请及时处理',
+    soundType: options?.soundType || 'rider_new_delivery',
+    priority: options?.priority || 'high',
+    jumpPath: options?.jumpPath || '/pages/orders/index',
+    dedupeKey: options?.dedupeKey || `rider_new_delivery:${order?.id || order?.order_no || Date.now()}:${riderUserId}`,
     data: order,
     timestamp: new Date()
-  });
+  };
+
+  emitToRider(riderUserId, 'new_delivery', payload);
 }
 
 module.exports = {
@@ -545,6 +718,7 @@ module.exports = {
   emitToAllMerchants,
   emitToAllRiders,
   notifyMerchantNewOrder,
+  notifyMerchantReminder,
   notifyUserOrderUpdate,
   notifyRiderNewOrder
 };

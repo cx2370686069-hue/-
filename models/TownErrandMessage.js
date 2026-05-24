@@ -1,6 +1,8 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
+// 这张表是“乡镇跑腿消息”模型。
+// 某个跑腿会话里的每一条消息、发送方、已读状态，都记录在这里。
 const TownErrandMessage = sequelize.define('TownErrandMessage', {
   id: {
     type: DataTypes.INTEGER,

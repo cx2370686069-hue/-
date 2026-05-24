@@ -1,4 +1,7 @@
-const { Merchant, Product, ProductCategory, ProductSpec, Order, Review, sequelize } = require('../models');
+// 这个文件可以当成“商家模块总入口”来看。
+// 只要和商家有关的事情，比如店铺资料、商品、分类、公开列表、搜索、订单、统计，基本都从这里进来。
+// 先引入后面会用到的模型、工具函数和配置。
+const { Merchant, Product, ProductCategory, ProductSpec, ProductDigitalProfile, Order, Review, ServiceArea, sequelize } = require('../models');
 const { successResponse, errorResponse, calculateDistance } = require('../utils/helpers');
 const { Op } = require('sequelize');
 const {
@@ -10,26 +13,82 @@ const {
   SUPERMARKET_DELIVERY_PERMISSIONS,
   normalizeSupermarketDeliveryPermission
 } = require('../config/supermarketDelivery');
+const {
+  buildImageAssetUrls,
+  buildImageAssetList,
+  parseStoredImageList,
+  serializeImageList
+} = require('../utils/imageAssets');
+const { generateUniqueMerchantBindingCode } = require('../utils/merchantBinding');
 
+// ==================== 基础常量区 ====================
+// 这里放商家模块里会反复用到的固定值。
+// 以后如果你想改类目名、业务线标识、预览数量，优先先看这里。
 const SUPERMARKET_CATEGORY = '超市';
+const DIGITAL_MERCHANT_CATEGORY = '手机数码';
 const NORMAL_SUPERMARKET_CHANNEL_LABEL = '普通超市';
 const COUNTY_FOOD_SCOPE = 'county_food';
 const COUNTY_SEARCH_PREVIEW_LIMIT = 4;
 const MERCHANT_LIST_PREVIEW_LIMIT = 4;
+// 数码商品扩展表对外只暴露下面这些字段。
+// 这样做的目的，是把返回结构收窄，避免把没用字段一股脑发给前端。
+const DIGITAL_PROFILE_ATTRIBUTES = [
+  'product_id',
+  'brand',
+  'model',
+  'storage',
+  'color',
+  'condition_grade',
+  'battery_health',
+  'network_status',
+  'repair_status',
+  'warranty_status',
+  'selling_points',
+  'attrs_json'
+];
+// 查商品列表时，商家侧只顺手带出这些必要字段。
+const PRODUCT_LIST_MERCHANT_ATTRIBUTES = [
+  'id',
+  'name',
+  'logo',
+  'address',
+  'phone',
+  'category',
+  'status',
+  'audit_status',
+  'delivery_radius',
+  'delivery_fee'
+];
 
+// 按当前登录用户的 user_id 查“他自己的店铺”。
+// 后面很多后台接口都要先确认“这家店是不是当前登录人自己的”，所以这里单独提成复用函数。
 const findOwnedMerchant = async (userId) => {
   return Merchant.findOne({ where: { user_id: userId } });
 };
 
+// 生成商家绑定码。
+// 不是随机生成完就直接用，而是会再查一次数据库，确保没有撞码。
+const createMerchantBindingCode = async () => {
+  return generateUniqueMerchantBindingCode(async (candidate) => {
+    const existing = await Merchant.findOne({
+      where: { binding_code: candidate },
+      attributes: ['id']
+    });
+    return Boolean(existing);
+  });
+};
+
+// 这些字段不允许商家自己通过“修改店铺资料”接口直接改。
+// 因为它们属于审核、归属、资金这类敏感信息，必须由后台或专门流程控制。
 const FORBIDDEN_MERCHANT_UPDATE_FIELDS = [
   'id',
   'user_id',
+  'binding_code',
   'business_scope',
   'town_code',
   'town_name',
   'audit_status',
   'status',
-  'supermarket_delivery_permission',
   'balance',
   'withdrawn_amount',
   'total_income',
@@ -37,10 +96,13 @@ const FORBIDDEN_MERCHANT_UPDATE_FIELDS = [
   'updated_at'
 ];
 
+// 检查前端这次提交里，有没有偷偷夹带这些敏感字段。
 const getForbiddenMerchantUpdateFields = (payload = {}) => {
   return FORBIDDEN_MERCHANT_UPDATE_FIELDS.filter((field) => Object.prototype.hasOwnProperty.call(payload, field));
 };
 
+// 查某个分类是不是“当前商家自己的分类”。
+// 这个校验很重要，能防止前端乱传别人的分类 id，造成越权修改。
 const findOwnedCategory = async (merchantId, categoryId) => {
   if (!categoryId) {
     return null;
@@ -54,8 +116,12 @@ const findOwnedCategory = async (merchantId, categoryId) => {
   });
 };
 
+// 这里只判断“前端有没有显式传这个字段”，不判断值本身真假。
+// 因为 0、false、空字符串在某些场景下本来就是合法值。
 const hasOwnField = (payload, field) => Object.prototype.hasOwnProperty.call(payload || {}, field);
 
+// 把前端传来的经纬度统一转成数字。
+// 如果转不了，统一记成 null，表示这个坐标后面不能参与业务计算。
 const normalizeCoordinate = (value) => {
   if (value === undefined || value === null || value === '') {
     return null;
@@ -64,6 +130,8 @@ const normalizeCoordinate = (value) => {
   return Number.isFinite(num) ? num : null;
 };
 
+// 判断一对经纬度是不是“像样的真实坐标”。
+// 这里主要拦两类脏数据：超出地球范围的值、接近 0/0 的假坐标。
 const hasValidLocationPair = (latitude, longitude) => {
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
     return false;
@@ -80,6 +148,8 @@ const hasValidLocationPair = (latitude, longitude) => {
   return true;
 };
 
+// 把值转成“必须大于 0”的数字。
+// 适合半径、距离这类字段；不是正数就直接当成无效值。
 const toPositiveNumberOrNull = (value) => {
   if (value === undefined || value === null || value === '') {
     return null;
@@ -88,6 +158,7 @@ const toPositiveNumberOrNull = (value) => {
   return Number.isFinite(num) && num > 0 ? num : null;
 };
 
+// 把距离数值转成前端能直接显示的文本，比如 1.2km。
 const formatDistanceText = (distanceKm) => {
   if (!Number.isFinite(distanceKm)) {
     return null;
@@ -95,10 +166,14 @@ const formatDistanceText = (distanceKm) => {
   return `${distanceKm.toFixed(1)}km`;
 };
 
+// 搜索词做最基础的清洗：去空格、限长度。
 const normalizeSearchKeyword = (value) => String(value || '').trim().slice(0, 50);
 
+// 分类名称做基础清洗，避免前后空格和超长内容。
 const normalizeCategoryName = (value) => String(value || '').trim().slice(0, 50);
 
+// 分类排序只接受非负整数。
+// 没传就走默认值；传了但不合法，就返回 null，让外层统一拦截。
 const normalizeCategorySort = (value, defaultValue = 0) => {
   if (value === undefined || value === null || value === '') {
     return defaultValue;
@@ -110,7 +185,88 @@ const normalizeCategorySort = (value, defaultValue = 0) => {
   return num;
 };
 
+// 商品搜索词也是一样，先做基础清洗。
 const normalizeProductKeyword = (value) => String(value || '').trim().slice(0, 50);
+
+// 短文本统一走这里清洗，比如名称、型号、颜色这类字段。
+// 清洗后如果是空字符串，就统一压成 null，方便后面判断“到底有没有值”。
+const normalizeShortText = (value, maxLength = 100) => {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const text = String(value).trim();
+  return text ? text.slice(0, maxLength) : null;
+};
+// 长文本统一走这里。
+// 如果前端传的是数组，也会先帮它拼成一段字符串，方便直接入库。
+const normalizeLongText = (value, maxLength = 5000) => {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (Array.isArray(value)) {
+    const tokens = value
+      .map((item) => String(item || '').trim())
+      .filter(Boolean);
+    return tokens.length ? tokens.join('；').slice(0, maxLength) : null;
+  }
+  const text = String(value).trim();
+  return text ? text.slice(0, maxLength) : null;
+};
+// 把前端传来的乡镇信息，解析成数据库里的服务区域记录。
+// 优先按 town_code 找；没传 code 或找不到时，再按 town_name 找。
+const resolveTownArea = async (payload = {}) => {
+  const townCode = normalizeShortText(payload.town_code ?? payload.townCode, 32);
+  const townName = normalizeShortText(payload.town_name ?? payload.townName ?? payload.town, 50);
+
+  if (townCode) {
+    return ServiceArea.findOne({
+      where: {
+        area_code: townCode,
+        area_type: 'town',
+        is_enabled: true
+      }
+    });
+  }
+
+  if (townName) {
+    return ServiceArea.findOne({
+      where: {
+        area_name: townName,
+        area_type: 'town',
+        is_enabled: true
+      }
+    });
+  }
+
+  return null;
+};
+// 某些扩展字段前端可能传对象，也可能直接传字符串。
+// 这里统一整理成数据库能安全存下来的 JSON 文本。
+const normalizeJsonText = (value, maxLength = 10000) => {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  if (typeof value === 'string') {
+    const text = value.trim();
+    return text ? text.slice(0, maxLength) : null;
+  }
+  try {
+    return JSON.stringify(value).slice(0, maxLength);
+  } catch (error) {
+    return null;
+  }
+};
+// 这个和“必须大于 0”的数字不同，它允许 0。
+// 所以最低价、最高价这种筛选值更适合走这里。
+const normalizeNonNegativeNumber = (value) => {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  const num = Number(value);
+  return Number.isFinite(num) && num >= 0 ? num : null;
+};
+// 频道标签前端可能会用很多种格式传过来。
+// 这里统一拆分、去重，并过滤掉“普通超市”这种占位标签，最后收成标准字符串。
 const normalizeMerchantChannelTags = (value) => {
   if (value === undefined || value === null) {
     return null;
@@ -126,6 +282,7 @@ const normalizeMerchantChannelTags = (value) => {
   return Array.from(new Set(tags)).join(',').slice(0, 255);
 };
 
+// 有些字段历史上改过名字，所以这里会从多个别名里挑第一个真正有值的。
 const pickFirstDefinedValue = (payload = {}, fields = []) => {
   for (const field of fields) {
     if (payload[field] !== undefined && payload[field] !== null && payload[field] !== '') {
@@ -135,6 +292,7 @@ const pickFirstDefinedValue = (payload = {}, fields = []) => {
   return null;
 };
 
+// 这些都是频道标签在历史版本里出现过的字段名。
 const MERCHANT_CHANNEL_TAG_FIELDS = [
   'channel_tags',
   'channelTags',
@@ -150,10 +308,66 @@ const MERCHANT_CHANNEL_TAG_FIELDS = [
   'storeDirection'
 ];
 
+// 不管前端传的是哪个旧字段，最后都统一收口到 channel_tags 这个标准字段。
 const resolveMerchantChannelTags = (payload = {}) => {
   return normalizeMerchantChannelTags(pickFirstDefinedValue(payload, MERCHANT_CHANNEL_TAG_FIELDS));
 };
 
+// 数码资料这块也存在新旧字段名混用，所以这里先准备一张“别名映射表”。
+const DIGITAL_PROFILE_FIELD_ALIASES = {
+  brand: ['brand'],
+  model: ['model'],
+  storage: ['storage', 'capacity'],
+  color: ['color'],
+  condition_grade: ['condition_grade', 'conditionGrade'],
+  battery_health: ['battery_health', 'batteryHealth'],
+  network_status: ['network_status', 'networkStatus'],
+  repair_status: ['repair_status', 'repairStatus'],
+  warranty_status: ['warranty_status', 'warrantyStatus'],
+  selling_points: ['selling_points', 'sellingPoints'],
+  attrs_json: ['attrs_json', 'attrsJson', 'attrs']
+};
+
+// 看这次请求有没有动到“数码扩展资料”这块。
+const hasDigitalProfileField = (payload = {}) =>
+  Object.values(DIGITAL_PROFILE_FIELD_ALIASES)
+    .flat()
+    .some((field) => hasOwnField(payload, field));
+
+// 读取某个数码字段时，顺手兼容旧字段名。
+const pickDigitalProfileValue = (payload = {}, fieldName) =>
+  pickFirstDefinedValue(payload, DIGITAL_PROFILE_FIELD_ALIASES[fieldName] || []);
+
+// 把数码扩展资料整理成统一格式。
+// touched 表示“这次请求有没有碰这一块”；
+// data 才是最后真正准备写进 product_digital_profiles 表的数据。
+const normalizeDigitalProfileInput = (payload = {}) => {
+  if (!hasDigitalProfileField(payload)) {
+    return { touched: false, data: null };
+  }
+
+  const data = {
+    brand: normalizeShortText(pickDigitalProfileValue(payload, 'brand'), 50),
+    model: normalizeShortText(pickDigitalProfileValue(payload, 'model'), 100),
+    storage: normalizeShortText(pickDigitalProfileValue(payload, 'storage'), 50),
+    color: normalizeShortText(pickDigitalProfileValue(payload, 'color'), 50),
+    condition_grade: normalizeShortText(pickDigitalProfileValue(payload, 'condition_grade'), 20),
+    battery_health: normalizeShortText(pickDigitalProfileValue(payload, 'battery_health'), 20),
+    network_status: normalizeShortText(pickDigitalProfileValue(payload, 'network_status'), 100),
+    repair_status: normalizeShortText(pickDigitalProfileValue(payload, 'repair_status'), 100),
+    warranty_status: normalizeShortText(pickDigitalProfileValue(payload, 'warranty_status'), 100),
+    selling_points: normalizeLongText(pickDigitalProfileValue(payload, 'selling_points'), 5000),
+    attrs_json: normalizeJsonText(pickDigitalProfileValue(payload, 'attrs_json'), 10000)
+  };
+
+  const hasActualValue = Object.values(data).some((value) => value !== null && value !== '');
+  return {
+    touched: true,
+    data: hasActualValue ? data : null
+  };
+};
+
+// 生成“频道标签为空”的查询条件。
 const buildBlankChannelTagsCondition = () => ({
   [Op.or]: [
     { [Op.is]: null },
@@ -161,6 +375,8 @@ const buildBlankChannelTagsCondition = () => ({
   ]
 });
 
+// 把分页参数统一整理成合法整数。
+// 比如 page、limit 这类值，都要求是指定范围内的正整数。
 const normalizePositiveInteger = (value, { min = 1, max = 100, defaultValue = null } = {}) => {
   if (value === undefined || value === null || value === '') {
     return defaultValue;
@@ -175,6 +391,8 @@ const normalizePositiveInteger = (value, { min = 1, max = 100, defaultValue = nu
   return num;
 };
 
+// 前端 query 里的布尔值经常传得很乱，可能是 1、true、yes。
+// 这里统一转成真正的 true / false。
 const parseBooleanQuery = (value) => {
   if (value === undefined || value === null || value === '') {
     return false;
@@ -183,6 +401,7 @@ const parseBooleanQuery = (value) => {
   return ['1', 'true', 'yes', 'y'].includes(normalized);
 };
 
+// 商品列表支持的排序方式都收在这里，避免把排序规则写散。
 const PRODUCT_SORT_ORDERS = {
   sort_desc: [['sort', 'DESC'], ['id', 'DESC']],
   sort_asc: [['sort', 'ASC'], ['id', 'ASC']],
@@ -192,14 +411,24 @@ const PRODUCT_SORT_ORDERS = {
   newest: [['id', 'DESC']]
 };
 
+// 把商品对象整理成“公开商品列表”要的返回结构。
+// 主要目的是把图片、商家摘要、数码信息摊平，前端拿到后能直接渲染。
 const buildPublicProductListItem = (product) => {
-  const productJson = typeof product?.toJSON === 'function' ? product.toJSON() : { ...product };
+  const productJson = decorateProductDigitalFields(decorateProductImageFields(product));
   return {
     id: Number(productJson.id),
     merchant_id: Number(productJson.merchant_id),
     category_id: productJson.category_id ? Number(productJson.category_id) : null,
     name: productJson.name || '',
     images: productJson.images || '',
+    image: productJson.image || '',
+    image_thumb: productJson.image_thumb || '',
+    image_list: productJson.image_list || '',
+    image_detail: productJson.image_detail || '',
+    images_thumb: Array.isArray(productJson.images_thumb) ? productJson.images_thumb : [],
+    images_list: Array.isArray(productJson.images_list) ? productJson.images_list : [],
+    images_detail: Array.isArray(productJson.images_detail) ? productJson.images_detail : [],
+    images_assets: Array.isArray(productJson.images_assets) ? productJson.images_assets : [],
     price: Number(productJson.price || 0),
     original_price: productJson.original_price === null || productJson.original_price === undefined
       ? null
@@ -207,43 +436,101 @@ const buildPublicProductListItem = (product) => {
     sales: Number(productJson.sales || 0),
     status: Number(productJson.status || 0),
     sort: Number(productJson.sort || 0),
+    merchant_name: productJson.merchant_name || '',
+    merchant_logo: productJson.merchant_logo || '',
+    merchant_logo_thumb: productJson.merchant_logo_thumb || '',
+    supports_local_delivery: productJson.supports_local_delivery,
+    brand: productJson.brand || '',
+    model: productJson.model || '',
+    storage: productJson.storage || '',
+    color: productJson.color || '',
+    condition_grade: productJson.condition_grade || '',
+    battery_health: productJson.battery_health || '',
+    network_status: productJson.network_status || '',
+    repair_status: productJson.repair_status || '',
+    warranty_status: productJson.warranty_status || '',
+    selling_points: productJson.selling_points || '',
+    digital_profile: productJson.digital_profile || null,
     spec_group_name: productJson.spec_group_name || '',
     spec_options: Array.isArray(productJson.spec_options) ? productJson.spec_options : []
   };
 };
 
+// 商品预览图默认只拿第一张。
 const pickProductPreviewImage = (value) => {
-  if (!value) {
-    return '';
-  }
-
-  if (Array.isArray(value)) {
-    return String(value[0] || '').trim();
-  }
-
-  const text = String(value).trim();
-  if (!text) {
-    return '';
-  }
-
-  if (text.startsWith('[')) {
-    try {
-      const parsed = JSON.parse(text);
-      if (Array.isArray(parsed)) {
-        return String(parsed[0] || '').trim();
-      }
-    } catch (error) {
-      // Ignore parse failure and fall back to raw text.
-    }
-  }
-
-  if (text.includes(',')) {
-    return String(text.split(',')[0] || '').trim();
-  }
-
-  return text;
+  const firstAsset = buildImageAssetList(value)[0];
+  return firstAsset?.list || firstAsset?.detail || firstAsset?.url || '';
 };
 
+// logo、封面、营业执照这种字段本来就只应该存 1 张图。
+// 如果前端误传了多张，这里只保留第一张。
+const normalizeSingleImageValue = (value) => {
+  return parseStoredImageList(value)[0] || '';
+};
+
+// 给商家图片补齐不同场景下要用的地址。
+// 这样前端就不用自己拼缩略图、列表图、详情图。
+const decorateMerchantImageFields = (merchant) => {
+  const merchantJson = typeof merchant?.toJSON === 'function' ? merchant.toJSON() : { ...merchant };
+  const logoAssets = buildImageAssetUrls(merchantJson.logo);
+  const coverAssets = buildImageAssetUrls(merchantJson.cover);
+
+  return {
+    ...merchantJson,
+    logo_thumb: logoAssets.thumb,
+    logo_list: logoAssets.list,
+    logo_detail: logoAssets.detail,
+    logo_original: logoAssets.original,
+    logo_assets: logoAssets,
+    cover_thumb: coverAssets.thumb,
+    cover_list: coverAssets.list,
+    cover_detail: coverAssets.detail,
+    cover_original: coverAssets.original,
+    cover_assets: coverAssets
+  };
+};
+
+// 商品图片也在这里做同样的补充。
+// 除了整组图片，还会顺手补一张主图，方便商品列表直接用。
+const decorateProductImageFields = (product) => {
+  const productJson = typeof product?.toJSON === 'function' ? product.toJSON() : { ...product };
+  const imageAssetsList = buildImageAssetList(productJson.images);
+  const primary = imageAssetsList[0] || {
+    url: '',
+    raw: '',
+    thumb: '',
+    list: '',
+    detail: '',
+    original: '',
+    best: ''
+  };
+
+  return {
+    ...productJson,
+    merchant: productJson.merchant ? decorateMerchantImageFields(productJson.merchant) : productJson.merchant,
+    image: primary.list || primary.detail || primary.url || '',
+    image_thumb: primary.thumb || primary.url || '',
+    image_list: primary.list || primary.detail || primary.url || '',
+    image_detail: primary.detail || primary.url || '',
+    image_original: primary.original || primary.url || '',
+    image_assets: primary,
+    images_assets: imageAssetsList,
+    images_thumb: imageAssetsList.map((item) => item.thumb || item.url).filter(Boolean),
+    images_list: imageAssetsList.map((item) => item.list || item.detail || item.url).filter(Boolean),
+    images_detail: imageAssetsList.map((item) => item.detail || item.url).filter(Boolean),
+    images_original: imageAssetsList.map((item) => item.original || item.url).filter(Boolean)
+  };
+};
+
+// 批量给商品补图片字段。
+const decorateProductsWithImageAssets = (products) => {
+  if (Array.isArray(products)) {
+    return products.map((product) => decorateProductImageFields(product));
+  }
+  return products ? decorateProductImageFields(products) : products;
+};
+
+// 如果传了用户坐标，就顺手把商家距离也算出来。
 const decorateMerchantWithDistance = (merchant, userLat, userLng) => {
   if (userLat === null || userLng === null) {
     return merchant;
@@ -263,13 +550,20 @@ const decorateMerchantWithDistance = (merchant, userLat, userLng) => {
   };
 };
 
+// 县城搜索里，每家店最后都会被整理成这种统一结构。
 const buildCountySearchMerchantEntry = (merchant, userLat, userLng) => {
-  const merchantJson = typeof merchant.toJSON === 'function' ? merchant.toJSON() : { ...merchant };
+  const merchantJson = decorateMerchantImageFields(merchant);
   return decorateMerchantWithDistance({
     merchant_id: Number(merchantJson.id),
     merchant_name: merchantJson.name || '',
     logo: merchantJson.logo || '',
+    logo_thumb: merchantJson.logo_thumb || '',
+    logo_list: merchantJson.logo_list || '',
+    logo_detail: merchantJson.logo_detail || '',
     cover: merchantJson.cover || '',
+    cover_thumb: merchantJson.cover_thumb || '',
+    cover_list: merchantJson.cover_list || '',
+    cover_detail: merchantJson.cover_detail || '',
     address: merchantJson.address || '',
     phone: merchantJson.phone || '',
     category: merchantJson.category || '',
@@ -283,6 +577,7 @@ const buildCountySearchMerchantEntry = (merchant, userLat, userLng) => {
   }, userLat, userLng);
 };
 
+// 如果这家店是通过“商品名命中”搜出来的，就把命中的商品顺手塞进预览区。
 const pushMatchedProductPreview = (entry, product) => {
   if (!entry || !product) {
     return;
@@ -307,6 +602,8 @@ const pushMatchedProductPreview = (entry, product) => {
   });
 };
 
+// 给商家列表补“店里卖什么”的预览商品。
+// 首页、列表页那种一行展示几件商品，基本就是这里做的。
 const attachMerchantPreviewProducts = async (merchantList = []) => {
   if (!Array.isArray(merchantList) || merchantList.length === 0) {
     return merchantList;
@@ -368,6 +665,7 @@ const attachMerchantPreviewProducts = async (merchantList = []) => {
   });
 };
 
+// 评分统一保留 1 位小数，前端展示更稳定。
 const formatMerchantRating = (value) => {
   const num = Number(value);
   if (!Number.isFinite(num) || num <= 0) {
@@ -376,6 +674,8 @@ const formatMerchantRating = (value) => {
   return Number(num.toFixed(1));
 };
 
+// 有些环境 reviews 表可能还没建好。
+// 这里单独拦一下，避免因为少一张表把整个商家列表接口打挂。
 const isReviewTableMissingError = (error) => {
   if (!error) {
     return false;
@@ -387,6 +687,7 @@ const isReviewTableMissingError = (error) => {
   return code === 'ER_NO_SUCH_TABLE' || /Table '.+\.reviews' doesn't exist/i.test(message);
 };
 
+// 给商家列表补评分和评价数量。
 const attachMerchantRatingSummaries = async (merchantList = []) => {
   if (!Array.isArray(merchantList) || merchantList.length === 0) {
     return merchantList;
@@ -455,6 +756,7 @@ const attachMerchantRatingSummaries = async (merchantList = []) => {
   });
 };
 
+// 给商家列表补近 30 天销量。
 const attachMerchantMonthSales = async (merchantList = []) => {
   if (!Array.isArray(merchantList) || merchantList.length === 0) {
     return merchantList;
@@ -508,34 +810,179 @@ const attachMerchantMonthSales = async (merchantList = []) => {
   });
 };
 
+// 判断这家店是不是超市。
 const isSupermarketMerchant = (merchant) =>
   normalizeMerchantCategory(merchant?.category) === SUPERMARKET_CATEGORY;
 
-const validateSupermarketDeliveryPermission = (merchantCategory, rawPermission) => {
-  if (merchantCategory !== SUPERMARKET_CATEGORY) {
-    return { value: null };
+// 判断这家店是不是手机数码店。
+const isDigitalMerchant = (merchant) =>
+  normalizeMerchantCategory(merchant?.category) === DIGITAL_MERCHANT_CATEGORY;
+
+// 目前只有超市和手机数码店允许配置轻规格。
+const canConfigureLightSpecs = (merchant) => isSupermarketMerchant(merchant) || isDigitalMerchant(merchant);
+
+// 这里不是直接看商品，而是看商家有没有配送半径。
+// 有配送半径，通常就可以认为这家店支持本地配送。
+const buildProductSupportsLocalDelivery = (merchant) => {
+  if (!merchant) {
+    return null;
+  }
+  const radius = Number(merchant.delivery_radius || 0);
+  return Number.isFinite(radius) ? radius > 0 : null;
+};
+
+// 数码扩展资料最后统一整理成这个返回格式。
+const buildDigitalProfileResponse = (digitalProfile) => {
+  if (!digitalProfile) {
+    return null;
+  }
+  const profileJson = typeof digitalProfile?.toJSON === 'function' ? digitalProfile.toJSON() : { ...digitalProfile };
+  return {
+    brand: profileJson.brand || '',
+    model: profileJson.model || '',
+    storage: profileJson.storage || '',
+    color: profileJson.color || '',
+    condition_grade: profileJson.condition_grade || '',
+    battery_health: profileJson.battery_health || '',
+    network_status: profileJson.network_status || '',
+    repair_status: profileJson.repair_status || '',
+    warranty_status: profileJson.warranty_status || '',
+    selling_points: profileJson.selling_points || '',
+    attrs_json: profileJson.attrs_json || ''
+  };
+};
+
+// 在商品对象上继续补数码资料和商家摘要。
+// 这样前端拿到商品后，不用再自己一层层去拆 merchant 和 digital_profile。
+const decorateProductDigitalFields = (product) => {
+  const productJson = typeof product?.toJSON === 'function' ? product.toJSON() : { ...product };
+  const merchant = productJson.merchant ? decorateMerchantImageFields(productJson.merchant) : null;
+  const digitalProfile = buildDigitalProfileResponse(productJson.digital_profile);
+
+  return {
+    ...productJson,
+    merchant,
+    merchant_name: merchant?.name || '',
+    merchant_logo: merchant?.logo || '',
+    merchant_logo_thumb: merchant?.logo_thumb || '',
+    supports_local_delivery: buildProductSupportsLocalDelivery(merchant),
+    digital_profile: digitalProfile,
+    brand: digitalProfile?.brand || '',
+    model: digitalProfile?.model || '',
+    storage: digitalProfile?.storage || '',
+    color: digitalProfile?.color || '',
+    condition_grade: digitalProfile?.condition_grade || '',
+    battery_health: digitalProfile?.battery_health || '',
+    network_status: digitalProfile?.network_status || '',
+    repair_status: digitalProfile?.repair_status || '',
+    warranty_status: digitalProfile?.warranty_status || '',
+    selling_points: digitalProfile?.selling_points || '',
+    attrs_json: digitalProfile?.attrs_json || ''
+  };
+};
+
+// 批量给商品补数码扩展字段。
+const decorateProductsWithDigitalFields = (products) => {
+  if (Array.isArray(products)) {
+    return products.map((product) => decorateProductDigitalFields(product));
+  }
+  return products ? decorateProductDigitalFields(products) : products;
+};
+
+// 商品联表查询的 include 配置统一收在这里。
+const buildProductQueryIncludes = ({
+  merchantRequired = false,
+  merchantWhere = null,
+  digitalRequired = false,
+  digitalWhere = null
+} = {}) => ([
+  {
+    model: Merchant,
+    as: 'merchant',
+    attributes: PRODUCT_LIST_MERCHANT_ATTRIBUTES,
+    required: merchantRequired,
+    ...(merchantWhere ? { where: merchantWhere } : {})
+  },
+  {
+    model: ProductDigitalProfile,
+    as: 'digital_profile',
+    attributes: DIGITAL_PROFILE_ATTRIBUTES,
+    required: digitalRequired,
+    ...(digitalWhere ? { where: digitalWhere } : {})
+  }
+]);
+
+// 这里专门负责把“商品详情”查完整。
+// 规格、图片、数码资料都会在这里一次性补齐，别的接口直接复用就行。
+const loadProductDetailForResponse = async (productId, where = {}) => {
+  const product = await Product.findOne({
+    where: {
+      id: productId,
+      ...where
+    },
+    include: buildProductQueryIncludes()
+  });
+  if (!product) {
+    return null;
+  }
+  return decorateProductsWithDigitalFields(
+    decorateProductsWithImageAssets(await decorateProductsWithLightSpecs(product))
+  );
+};
+
+// 同步商品的数码扩展资料。
+// 有内容就更新或新建；没内容就删掉，避免主表和扩展表对不上。
+const syncProductDigitalProfile = async ({ productId, profileData, transaction }) => {
+  if (!profileData) {
+    await ProductDigitalProfile.destroy({
+      where: { product_id: productId },
+      transaction
+    });
+    return;
   }
 
+  const existing = await ProductDigitalProfile.findOne({
+    where: { product_id: productId },
+    transaction
+  });
+
+  if (existing) {
+    await existing.update(profileData, { transaction });
+    return;
+  }
+
+  await ProductDigitalProfile.create({
+    product_id: productId,
+    ...profileData
+  }, { transaction });
+};
+
+// 检查超市配送方式是不是合法值。
+const validateSupermarketDeliveryPermission = (_merchantCategory, rawPermission) => {
   const normalized = normalizeSupermarketDeliveryPermission(rawPermission);
   if (!normalized) {
-    return { error: '超市商家必须选择配送方式：自己配送、骑手配送或两个都支持' };
+    return { error: '店铺必须选择配送方式：自己配送、骑手配送或两个都支持' };
   }
 
   if (!Object.values(SUPERMARKET_DELIVERY_PERMISSIONS).includes(normalized)) {
-    return { error: '超市配送方式参数不正确' };
+    return { error: '店铺配送方式参数不正确' };
   }
 
   return { value: normalized };
 };
 
+// 看这次提交有没有碰“轻规格”这块。
 const hasLightSpecField = (payload = {}) =>
   hasOwnField(payload, 'spec_group_name') || hasOwnField(payload, 'spec_options');
 
+// 规格组名称先做简单整理，比如“大小”“颜色”“容量”这种。
 const normalizeSpecGroupName = (value) => {
   const text = String(value || '').trim();
   return text ? text.slice(0, 50) : '';
 };
 
+// 规格项这里做了较多兼容。
+// 数组、JSON 字符串、逗号文本、换行文本，最后都会被收成统一数组。
 const normalizeSpecOptions = (value) => {
   let rawValues = [];
 
@@ -571,6 +1018,8 @@ const normalizeSpecOptions = (value) => {
   return options;
 };
 
+// 轻规格最终都会被整理成统一格式。
+// 这里还会顺手做成对校验：有组名没选项不行，有选项没组名也不行。
 const normalizeLightSpecInput = (payload = {}) => {
   if (!hasLightSpecField(payload)) {
     return { touched: false, specGroupName: '', specOptions: [] };
@@ -590,18 +1039,32 @@ const normalizeLightSpecInput = (payload = {}) => {
   return { touched: true, specGroupName, specOptions };
 };
 
+// 判断这次轻规格提交到底是不是“空操作”。
 const hasActualLightSpecConfig = (lightSpecInput = {}) =>
   Boolean(lightSpecInput.specGroupName || (lightSpecInput.specOptions || []).length > 0);
 
+// 这里准备的是写入 Product 主表的数据。
+// 规格和数码扩展资料不能直接塞进主表，所以会先剥出去。
 const buildProductPayloadWithoutSpecs = (payload = {}) => {
   const sanitizedPayload = { ...payload };
   delete sanitizedPayload.spec_group_name;
   delete sanitizedPayload.spec_options;
+  Object.values(DIGITAL_PROFILE_FIELD_ALIASES)
+    .flat()
+    .forEach((field) => delete sanitizedPayload[field]);
+  if (Object.prototype.hasOwnProperty.call(sanitizedPayload, 'images')) {
+    sanitizedPayload.images = serializeImageList(sanitizedPayload.images);
+  }
   return sanitizedPayload;
 };
 
-const syncProductLightSpecs = async ({ productId, specGroupName, specOptions }) => {
-  await ProductSpec.destroy({ where: { product_id: productId } });
+// 轻规格这里采用“先删后建”。
+// 这么做虽然笨一点，但最稳，能保证数据库里的规格和前端这次提交完全一致。
+const syncProductLightSpecs = async ({ productId, specGroupName, specOptions, transaction }) => {
+  await ProductSpec.destroy({
+    where: { product_id: productId },
+    transaction
+  });
 
   if (!specGroupName || specOptions.length === 0) {
     return;
@@ -617,10 +1080,12 @@ const syncProductLightSpecs = async ({ productId, specGroupName, specOptions }) 
       is_multiple: false,
       status: 1,
       sort: index
-    }))
+    })),
+    { transaction }
   );
 };
 
+// 查出商品规格后，再挂回商品对象里，方便前端直接使用。
 const decorateProductsWithLightSpecs = async (products) => {
   const productList = Array.isArray(products) ? products : [products].filter(Boolean);
   if (productList.length === 0) {
@@ -666,6 +1131,8 @@ const decorateProductsWithLightSpecs = async (products) => {
   return Array.isArray(products) ? decorated : decorated[0];
 };
 
+// 商家查订单时，不是所有订单都能看。
+// 这里会先根据业务线和乡镇归属，把查询范围收紧，避免越权看到别人的单。
 const buildMerchantOrderScopeWhere = (merchant) => {
   const where = { merchant_id: merchant.id };
 
@@ -685,7 +1152,9 @@ const buildMerchantOrderScopeWhere = (merchant) => {
 };
 
 /**
- * 获取商家列表
+ * 公开商家列表接口
+ * 这是用户端最常用的商家列表入口：首页、频道页、店铺列表基本都走这里。
+ * 它不只是“查店铺”，还会顺手补评分、销量、预览商品、距离这些展示字段。
  */
 exports.getMerchantList = async (req, res, next) => {
   try {
@@ -749,7 +1218,8 @@ exports.getMerchantList = async (req, res, next) => {
         [Op.like]: `%${normalizedMerchantCategoryKeyword}%`
       };
     } else if (normalizedCategory === SUPERMARKET_CATEGORY) {
-      // 普通超市频道默认只显示未打子频道标签的超市，避免混入冷饮雪糕批发等子频道商家。
+      // 普通超市频道默认只显示“没有子频道标签”的超市，
+      // 这样可以避免把冷饮雪糕批发这类子频道商家混进来。
       whereClause.channel_tags = buildBlankChannelTagsCondition();
     }
     if (business_scope === 'county_food' || business_scope === 'town_food') {
@@ -849,6 +1319,7 @@ exports.getMerchantList = async (req, res, next) => {
     list = await attachMerchantPreviewProducts(list);
     list = await attachMerchantRatingSummaries(list);
     list = await attachMerchantMonthSales(list);
+    list = list.map((merchant) => decorateMerchantImageFields(merchant));
 
     res.json(successResponse({
       list,
@@ -862,7 +1333,8 @@ exports.getMerchantList = async (req, res, next) => {
 };
 
 /**
- * 获取商家详情
+ * 公开商家详情接口
+ * 作用很直接：按商家 id 查某一家店，再补评分、销量、图片字段后返回。
  */
 exports.getMerchantDetail = async (req, res, next) => {
   try {
@@ -884,14 +1356,15 @@ exports.getMerchantDetail = async (req, res, next) => {
     const [merchantWithRating] = await attachMerchantRatingSummaries([merchant]);
     const [merchantWithSales] = await attachMerchantMonthSales([merchantWithRating]);
 
-    res.json(successResponse(merchantWithSales));
+    res.json(successResponse(decorateMerchantImageFields(merchantWithSales)));
   } catch (error) {
     next(error);
   }
 };
 
 /**
- * 获取我的商品分类（商家端）
+ * 商家后台分类列表接口
+ * 这里只查当前登录商家自己的分类，不会去看别人的分类。
  */
 exports.getMyCategories = async (req, res, next) => {
   try {
@@ -914,7 +1387,8 @@ exports.getMyCategories = async (req, res, next) => {
 };
 
 /**
- * 获取商家商品分类（公开）
+ * 公开分类列表接口
+ * 根据商家 id 查这家店铺下面的分类，给用户端点店铺详情时使用。
  */
 exports.getCategories = async (req, res, next) => {
   try {
@@ -936,7 +1410,9 @@ exports.getCategories = async (req, res, next) => {
 };
 
 /**
- * 获取商家商品列表
+ * 商品列表接口
+ * 这个接口同时兼容公开侧和商家后台，所以筛选条件比较多。
+ * 返回前会把规格、图片、商家摘要、数码资料一次性补齐。
  */
 exports.getProducts = async (req, res, next) => {
   try {
@@ -948,10 +1424,20 @@ exports.getProducts = async (req, res, next) => {
       limit,
       keyword,
       sort,
-      lite
+      lite,
+      brand,
+      condition_grade,
+      min_price,
+      max_price,
+      merchant_category,
+      merchantCategory,
+      conditionGrade,
+      minPrice,
+      maxPrice
     } = req.query;
     
-    // 修复：如果前端没有传 merchant_id，且当前是商家登录，则默认使用当前商家的 id
+    // 如果前端没传 merchant_id，但当前又是商家登录，
+    // 那就默认查“我自己的店”的商品，避免前端还要重复传一次店铺 id。
     let targetMerchantId = merchant_id;
     if (!targetMerchantId && req.user) {
       const merchant = await Merchant.findOne({ where: { user_id: req.user.id } });
@@ -967,9 +1453,33 @@ exports.getProducts = async (req, res, next) => {
     }
 
     const normalizedKeyword = normalizeProductKeyword(keyword);
+    const normalizedBrand = normalizeShortText(brand, 50);
+    const normalizedConditionGrade = normalizeShortText(condition_grade ?? conditionGrade, 20);
+    const normalizedMinPrice = normalizeNonNegativeNumber(min_price ?? minPrice);
+    const normalizedMaxPrice = normalizeNonNegativeNumber(max_price ?? maxPrice);
+    const normalizedMerchantCategory = normalizeMerchantCategory(merchant_category ?? merchantCategory);
     const sortMode = String(sort || '').trim();
     if (sortMode && !PRODUCT_SORT_ORDERS[sortMode]) {
       return res.status(400).json(errorResponse('商品排序参数不正确'));
+    }
+    if (
+      ((min_price !== undefined || minPrice !== undefined) && normalizedMinPrice === null) ||
+      ((max_price !== undefined || maxPrice !== undefined) && normalizedMaxPrice === null)
+    ) {
+      return res.status(400).json(errorResponse('价格筛选参数不正确'));
+    }
+    if (
+      (merchant_category !== undefined || merchantCategory !== undefined) &&
+      (!normalizedMerchantCategory || !isValidMerchantCategory(normalizedMerchantCategory))
+    ) {
+      return res.status(400).json(errorResponse(getMerchantCategoryErrorMessage()));
+    }
+    if (
+      normalizedMinPrice !== null &&
+      normalizedMaxPrice !== null &&
+      normalizedMinPrice > normalizedMaxPrice
+    ) {
+      return res.status(400).json(errorResponse('最低价格不能大于最高价格'));
     }
 
     const useLitePayload = parseBooleanQuery(lite);
@@ -981,12 +1491,50 @@ exports.getProducts = async (req, res, next) => {
     if (targetMerchantId) where.merchant_id = targetMerchantId;
     if (category_id) where.category_id = category_id;
     if (normalizedKeyword) {
-      where.name = { [Op.like]: `%${normalizedKeyword}%` };
+      const keywordLike = `%${normalizedKeyword}%`;
+      where[Op.or] = [
+        { name: { [Op.like]: keywordLike } },
+        { '$digital_profile.brand$': { [Op.like]: keywordLike } },
+        { '$digital_profile.model$': { [Op.like]: keywordLike } }
+      ];
     }
+    if (normalizedMinPrice !== null || normalizedMaxPrice !== null) {
+      where.price = {};
+      if (normalizedMinPrice !== null) {
+        where.price[Op.gte] = normalizedMinPrice;
+      }
+      if (normalizedMaxPrice !== null) {
+        where.price[Op.lte] = normalizedMaxPrice;
+      }
+    }
+
+    const digitalWhere = {};
+    if (normalizedBrand) {
+      digitalWhere.brand = { [Op.like]: `%${normalizedBrand}%` };
+    }
+    if (normalizedConditionGrade) {
+      digitalWhere.condition_grade = normalizedConditionGrade;
+    }
+    const hasDigitalFilters = Object.keys(digitalWhere).length > 0;
+    const merchantWhere = normalizedMerchantCategory
+      ? {
+        category: normalizedMerchantCategory,
+        status: 1,
+        audit_status: 1
+      }
+      : null;
 
     const queryOptions = {
       where,
-      order: PRODUCT_SORT_ORDERS[sortMode] || PRODUCT_SORT_ORDERS.sort_desc
+      order: PRODUCT_SORT_ORDERS[sortMode] || PRODUCT_SORT_ORDERS.sort_desc,
+      include: buildProductQueryIncludes({
+        merchantRequired: Boolean(merchantWhere),
+        merchantWhere,
+        digitalRequired: hasDigitalFilters || Boolean(normalizedKeyword),
+        digitalWhere: hasDigitalFilters ? digitalWhere : null
+      }),
+      distinct: true,
+      subQuery: false
     };
     if (useLitePayload) {
       queryOptions.attributes = [
@@ -1018,7 +1566,9 @@ exports.getProducts = async (req, res, next) => {
       total = rawProducts.length;
     }
 
-    const decoratedProducts = await decorateProductsWithLightSpecs(rawProducts);
+    const decoratedProducts = decorateProductsWithDigitalFields(
+      decorateProductsWithImageAssets(await decorateProductsWithLightSpecs(rawProducts))
+    );
 
     if (shouldPaginate) {
       const list = useLitePayload
@@ -1044,7 +1594,8 @@ exports.getProducts = async (req, res, next) => {
 };
 
 /**
- * 县城外卖聚合搜索：按店名或商品名反查商家
+ * 县城搜索接口
+ * 搜索顺序是：先按店名搜，再按商品名搜，最后把结果统一合成商家列表。
  */
 exports.searchCountyMerchants = async (req, res, next) => {
   try {
@@ -1166,11 +1717,14 @@ exports.searchCountyMerchants = async (req, res, next) => {
 };
 
 /**
- * 创建商家（商家端）
+ * 创建店铺接口
+ * 用户申请开店时走这里。
+ * 这个接口会先校验类目、坐标、业务线、乡镇归属，再真正创建店铺。
  */
 exports.createMerchant = async (req, res, next) => {
   try {
     const user = req.user;
+    const businessScope = normalizeShortText(req.body.business_scope, 20) || COUNTY_FOOD_SCOPE;
     const merchantCategory = normalizeMerchantCategory(req.body.category);
     const supermarketDeliveryPermissionCheck = validateSupermarketDeliveryPermission(
       merchantCategory,
@@ -1179,7 +1733,7 @@ exports.createMerchant = async (req, res, next) => {
     const latitude = normalizeCoordinate(req.body.latitude ?? req.body.lat);
     const longitude = normalizeCoordinate(req.body.longitude ?? req.body.lng);
     
-    // 检查是否已经是商家
+    // 一个用户只能拥有一个店铺，所以这里先拦重复开店。
     const existingMerchant = await Merchant.findOne({ where: { user_id: user.id } });
     if (existingMerchant) {
       return res.status(400).json(errorResponse('您已经拥有店铺'));
@@ -1205,25 +1759,55 @@ exports.createMerchant = async (req, res, next) => {
       return res.status(400).json(errorResponse('店铺地图坐标无效，请重新地图选点后再提交'));
     }
 
-    const merchant = await Merchant.create({
-      user_id: user.id,
+    if (![COUNTY_FOOD_SCOPE, 'town_food'].includes(businessScope)) {
+      return res.status(400).json(errorResponse('商家业务线参数不正确'));
+    }
+
+    const rawTownCode = normalizeShortText(req.body.town_code ?? req.body.townCode, 32);
+    const rawTownName = normalizeShortText(req.body.town_name ?? req.body.townName ?? req.body.town, 50);
+    if (businessScope === COUNTY_FOOD_SCOPE && (rawTownCode || rawTownName)) {
+      return res.status(400).json(errorResponse('县城商家不能绑定乡镇'));
+    }
+
+    let townArea = null;
+    if (businessScope === 'town_food') {
+      townArea = await resolveTownArea(req.body);
+      if (!townArea) {
+        return res.status(400).json(errorResponse('乡镇商家必须绑定有效乡镇'));
+      }
+    }
+
+    const merchantPayload = {
       ...req.body,
+      logo: normalizeSingleImageValue(req.body.logo),
+      cover: normalizeSingleImageValue(req.body.cover),
+      business_license: normalizeSingleImageValue(req.body.business_license),
       latitude,
       longitude,
       category: merchantCategory,
+      business_scope: businessScope,
+      town_code: townArea ? townArea.area_code : null,
+      town_name: townArea ? townArea.area_name : null,
       channel_tags: resolveMerchantChannelTags(req.body),
       supermarket_delivery_permission: supermarketDeliveryPermissionCheck.value,
       audit_status: 0
+    };
+
+    const merchant = await Merchant.create({
+      user_id: user.id,
+      binding_code: await createMerchantBindingCode(),
+      ...merchantPayload
     });
 
-    res.status(201).json(successResponse(merchant, '店铺创建成功，请等待审核'));
+    res.status(201).json(successResponse(decorateMerchantImageFields(merchant), '店铺创建成功，请等待审核'));
   } catch (error) {
     next(error);
   }
 };
 
 /**
- * 获取我的店铺（商家端）
+ * 查询我的店铺接口
+ * 商家后台打开“店铺资料页”时，一般就是走这里。
  */
 exports.getMyMerchant = async (req, res, next) => {
   try {
@@ -1235,14 +1819,16 @@ exports.getMyMerchant = async (req, res, next) => {
       return res.status(404).json(errorResponse('您还没有店铺'));
     }
 
-    res.json(successResponse(merchant));
+    res.json(successResponse(decorateMerchantImageFields(merchant)));
   } catch (error) {
     next(error);
   }
 };
 
 /**
- * 更新店铺信息（商家端）
+ * 修改店铺资料接口
+ * 商家只能改展示类信息。
+ * 审核状态、资金、业务归属这类敏感字段，会在这里直接拦掉。
  */
 exports.updateMerchant = async (req, res, next) => {
   try {
@@ -1288,13 +1874,33 @@ exports.updateMerchant = async (req, res, next) => {
       if (!isValidMerchantCategory(merchantCategory)) {
         return res.status(400).json(errorResponse(getMerchantCategoryErrorMessage()));
       }
-      if (
-        merchantCategory === SUPERMARKET_CATEGORY &&
-        !merchant.supermarket_delivery_permission
-      ) {
-        return res.status(400).json(errorResponse('当前店铺未配置超市配送权限，请联系平台处理'));
-      }
       updatePayload.category = merchantCategory;
+    }
+
+    if (
+      hasOwnField(updatePayload, 'supermarket_delivery_permission') ||
+      hasOwnField(updatePayload, 'delivery_permission')
+    ) {
+      const nextCategory = updatePayload.category || merchant.category;
+      const permissionCheck = validateSupermarketDeliveryPermission(
+        nextCategory,
+        updatePayload.supermarket_delivery_permission ?? updatePayload.delivery_permission
+      );
+      if (permissionCheck.error) {
+        return res.status(400).json(errorResponse(permissionCheck.error));
+      }
+      updatePayload.supermarket_delivery_permission = permissionCheck.value;
+      delete updatePayload.delivery_permission;
+    }
+
+    if (hasOwnField(updatePayload, 'logo')) {
+      updatePayload.logo = normalizeSingleImageValue(updatePayload.logo);
+    }
+    if (hasOwnField(updatePayload, 'cover')) {
+      updatePayload.cover = normalizeSingleImageValue(updatePayload.cover);
+    }
+    if (hasOwnField(updatePayload, 'business_license')) {
+      updatePayload.business_license = normalizeSingleImageValue(updatePayload.business_license);
     }
 
     if (hasOwnField(updatePayload, 'channel_tags') || hasOwnField(updatePayload, 'channelTags')) {
@@ -1309,14 +1915,15 @@ exports.updateMerchant = async (req, res, next) => {
 
     await merchant.update(updatePayload);
 
-    res.json(successResponse(merchant, '更新成功'));
+    res.json(successResponse(decorateMerchantImageFields(merchant), '更新成功'));
   } catch (error) {
     next(error);
   }
 };
 
 /**
- * 创建商品分类（商家端）
+ * 新建分类接口
+ * 这里只允许当前登录商家给自己的店新增分类，不接受前端乱传 merchant_id。
  */
 exports.createCategory = async (req, res, next) => {
   try {
@@ -1354,7 +1961,8 @@ exports.createCategory = async (req, res, next) => {
 };
 
 /**
- * 更新商品分类（商家端）
+ * 修改分类接口
+ * 这里只能修改当前商家自己的分类，主要改名称和排序。
  */
 exports.updateCategory = async (req, res, next) => {
   try {
@@ -1403,7 +2011,8 @@ exports.updateCategory = async (req, res, next) => {
 };
 
 /**
- * 删除商品分类（商家端）
+ * 删除分类接口
+ * 如果分类下面还有商品，这里会直接拦住，不允许删除。
  */
 exports.deleteCategory = async (req, res, next) => {
   try {
@@ -1437,7 +2046,9 @@ exports.deleteCategory = async (req, res, next) => {
 };
 
 /**
- * 创建商品（商家端）
+ * 新建商品接口
+ * 这里不只是写 products 主表。
+ * 轻规格和数码扩展资料也会在同一个事务里一起处理。
  */
 exports.createProduct = async (req, res, next) => {
   try {
@@ -1460,30 +2071,43 @@ exports.createProduct = async (req, res, next) => {
     }
 
     const lightSpecInput = normalizeLightSpecInput(req.body);
+    const digitalProfileInput = normalizeDigitalProfileInput(req.body);
     if (lightSpecInput.error) {
       return res.status(400).json(errorResponse(lightSpecInput.error));
     }
 
-    if (hasActualLightSpecConfig(lightSpecInput) && !isSupermarketMerchant(merchant)) {
-      return res.status(400).json(errorResponse('只有超市商家才能配置商品规格'));
+    if (hasActualLightSpecConfig(lightSpecInput) && !canConfigureLightSpecs(merchant)) {
+      return res.status(400).json(errorResponse('只有超市或手机数码商家才能配置商品规格'));
     }
 
     const productPayload = buildProductPayloadWithoutSpecs(req.body);
+    const product = await sequelize.transaction(async (transaction) => {
+      const createdProduct = await Product.create({
+        merchant_id: merchant.id,
+        ...productPayload
+      }, { transaction });
 
-    const product = await Product.create({
-      merchant_id: merchant.id,
-      ...productPayload
+      if (lightSpecInput.touched && canConfigureLightSpecs(merchant)) {
+        await syncProductLightSpecs({
+          productId: createdProduct.id,
+          specGroupName: lightSpecInput.specGroupName,
+          specOptions: lightSpecInput.specOptions,
+          transaction
+        });
+      }
+
+      if (digitalProfileInput.touched) {
+        await syncProductDigitalProfile({
+          productId: createdProduct.id,
+          profileData: digitalProfileInput.data,
+          transaction
+        });
+      }
+
+      return createdProduct;
     });
 
-    if (lightSpecInput.touched && isSupermarketMerchant(merchant)) {
-      await syncProductLightSpecs({
-        productId: product.id,
-        specGroupName: lightSpecInput.specGroupName,
-        specOptions: lightSpecInput.specOptions
-      });
-    }
-
-    const decoratedProduct = await decorateProductsWithLightSpecs(product);
+    const decoratedProduct = await loadProductDetailForResponse(product.id);
 
     res.status(201).json(successResponse(decoratedProduct, '商品创建成功'));
   } catch (error) {
@@ -1492,7 +2116,9 @@ exports.createProduct = async (req, res, next) => {
 };
 
 /**
- * 更新商品（商家端）
+ * 修改商品接口
+ * 这里只允许修改当前商家自己店里的商品。
+ * 商品主表、轻规格、数码扩展资料会一起同步。
  */
 exports.updateProduct = async (req, res, next) => {
   try {
@@ -1523,27 +2149,38 @@ exports.updateProduct = async (req, res, next) => {
     }
 
     const lightSpecInput = normalizeLightSpecInput(req.body);
+    const digitalProfileInput = normalizeDigitalProfileInput(req.body);
     if (lightSpecInput.error) {
       return res.status(400).json(errorResponse(lightSpecInput.error));
     }
 
-    if (hasActualLightSpecConfig(lightSpecInput) && !isSupermarketMerchant(merchant)) {
-      return res.status(400).json(errorResponse('只有超市商家才能配置商品规格'));
+    if (hasActualLightSpecConfig(lightSpecInput) && !canConfigureLightSpecs(merchant)) {
+      return res.status(400).json(errorResponse('只有超市或手机数码商家才能配置商品规格'));
     }
 
     const updatePayload = buildProductPayloadWithoutSpecs(req.body);
+    await sequelize.transaction(async (transaction) => {
+      await product.update(updatePayload, { transaction });
 
-    await product.update(updatePayload);
+      if (lightSpecInput.touched && canConfigureLightSpecs(merchant)) {
+        await syncProductLightSpecs({
+          productId: product.id,
+          specGroupName: lightSpecInput.specGroupName,
+          specOptions: lightSpecInput.specOptions,
+          transaction
+        });
+      }
 
-    if (lightSpecInput.touched && isSupermarketMerchant(merchant)) {
-      await syncProductLightSpecs({
-        productId: product.id,
-        specGroupName: lightSpecInput.specGroupName,
-        specOptions: lightSpecInput.specOptions
-      });
-    }
+      if (digitalProfileInput.touched) {
+        await syncProductDigitalProfile({
+          productId: product.id,
+          profileData: digitalProfileInput.data,
+          transaction
+        });
+      }
+    });
 
-    const decoratedProduct = await decorateProductsWithLightSpecs(product);
+    const decoratedProduct = await loadProductDetailForResponse(product.id);
 
     res.json(successResponse(decoratedProduct, '更新成功'));
   } catch (error) {
@@ -1552,7 +2189,8 @@ exports.updateProduct = async (req, res, next) => {
 };
 
 /**
- * 获取店铺订单（商家端）
+ * 商家后台订单列表接口
+ * 查询订单前，会先按县城/乡镇范围收口，避免看到不属于自己的订单。
  */
 exports.getMerchantOrders = async (req, res, next) => {
   try {
@@ -1588,7 +2226,8 @@ exports.getMerchantOrders = async (req, res, next) => {
 };
 
 /**
- * 删除商品（商家端）
+ * 删除商品接口
+ * 删除前会先把关联的规格和数码扩展资料一起清掉。
  */
 exports.deleteProduct = async (req, res, next) => {
   try {
@@ -1607,8 +2246,17 @@ exports.deleteProduct = async (req, res, next) => {
       return res.status(404).json(errorResponse('商品不存在'));
     }
 
-    await ProductSpec.destroy({ where: { product_id: product.id } });
-    await product.destroy();
+    await sequelize.transaction(async (transaction) => {
+      await ProductSpec.destroy({
+        where: { product_id: product.id },
+        transaction
+      });
+      await ProductDigitalProfile.destroy({
+        where: { product_id: product.id },
+        transaction
+      });
+      await product.destroy({ transaction });
+    });
 
     res.json(successResponse(null, '商品已删除'));
   } catch (error) {
@@ -1617,7 +2265,8 @@ exports.deleteProduct = async (req, res, next) => {
 };
 
 /**
- * 更新商品状态（上下架）
+ * 商品上下架接口
+ * 这里只负责切换商品状态，逻辑比较简单。
  */
 exports.updateProductStatus = async (req, res, next) => {
   try {
@@ -1639,42 +2288,36 @@ exports.updateProductStatus = async (req, res, next) => {
     const { status } = req.body;
     await product.update({ status: status ? 1 : 0 });
 
-    res.json(successResponse(product, status ? '已上架' : '已下架'));
+    const decoratedProduct = await loadProductDetailForResponse(product.id);
+    res.json(successResponse(decoratedProduct, status ? '已上架' : '已下架'));
   } catch (error) {
     next(error);
   }
 };
 
 /**
- * 获取商品详情（公开）
+ * 公开商品详情接口
+ * 这里只允许外部查询“已上架”的商品详情。
  */
 exports.getProductDetail = async (req, res, next) => {
   try {
     const { id } = req.params;
-    
-    const product = await Product.findOne({
-      where: { id },
-      include: [{
-        model: Merchant,
-        as: 'merchant',
-        attributes: ['id', 'name', 'logo', 'phone', 'address']
-      }]
-    });
+
+    const product = await loadProductDetailForResponse(id, { status: 1 });
 
     if (!product) {
       return res.status(404).json(errorResponse('商品不存在'));
     }
 
-    const decoratedProduct = await decorateProductsWithLightSpecs(product);
-
-    res.json(successResponse(decoratedProduct));
+    res.json(successResponse(product));
   } catch (error) {
     next(error);
   }
 };
 
 /**
- * 获取我的商品列表（商家端）
+ * 商家后台商品列表接口
+ * 返回前会把分类、图片、规格、数码资料这些都补齐。
  */
 exports.getMyProducts = async (req, res, next) => {
   try {
@@ -1690,19 +2333,30 @@ exports.getMyProducts = async (req, res, next) => {
     if (status !== undefined) where.status = status;
     if (category_id) where.category_id = category_id;
 
-    // 为了兼容，我们这里使用 left outer join，不强制要求商品必须有分类
+    // 这里用 left outer join 做兼容处理。
+    // 也就是说：就算商品暂时没有分类，也不会因为联表失败把整条商品记录丢掉。
     const products = await Product.findAll({
       where,
-      include: [{
-        model: ProductCategory,
-        as: 'category',
-        attributes: ['id', 'name'],
-        required: false // 允许商品没有分类
-      }],
+      include: [
+        {
+          model: ProductCategory,
+          as: 'category',
+          attributes: ['id', 'name'],
+          required: false
+        },
+        {
+          model: ProductDigitalProfile,
+          as: 'digital_profile',
+          attributes: DIGITAL_PROFILE_ATTRIBUTES,
+          required: false
+        }
+      ],
       order: [['id', 'DESC']]
     });
 
-    const decoratedProducts = await decorateProductsWithLightSpecs(products);
+    const decoratedProducts = decorateProductsWithDigitalFields(
+      decorateProductsWithImageAssets(await decorateProductsWithLightSpecs(products))
+    );
 
     res.json(successResponse(decoratedProducts));
   } catch (error) {
@@ -1712,7 +2366,8 @@ exports.getMyProducts = async (req, res, next) => {
 };
 
 /**
- * 更新店铺营业状态
+ * 店铺营业状态切换接口
+ * 商家手动切换“营业 / 休息”就是走这里。
  */
 exports.updateMerchantStatus = async (req, res, next) => {
   try {
@@ -1733,7 +2388,8 @@ exports.updateMerchantStatus = async (req, res, next) => {
 };
 
 /**
- * 获取店铺统计数据
+ * 店铺统计接口
+ * 商家后台首页那几个经营数字，基本都是这里算出来的。
  */
 exports.getMerchantStats = async (req, res, next) => {
   try {
@@ -1744,9 +2400,11 @@ exports.getMerchantStats = async (req, res, next) => {
       return res.status(404).json(errorResponse('您还没有店铺'));
     }
 
-    // 今日订单
+    // 统计今天新创建的订单数量。
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
     
     const todayOrders = await Order.count({
       where: {
@@ -1755,29 +2413,33 @@ exports.getMerchantStats = async (req, res, next) => {
       }
     });
 
-    // 今日销售额
+    // 今日销售额只按“已完成订单”统计。
+    // 这里的业务规则是：配送中不算营收，只有 status=6 的订单才记入营收。
     const todaySales = await Order.sum('pay_amount', {
       where: {
         merchant_id: merchant.id,
-        status: { [Op.ne]: 7 }, // 排除已取消
-        created_at: { [Op.gte]: today }
+        status: 6,
+        delivered_at: {
+          [Op.gte]: today,
+          [Op.lt]: tomorrow
+        }
       }
     }) || 0;
 
-    // 总订单数
+    // 统计这家店的总订单数。
     const totalOrders = await Order.count({
       where: { merchant_id: merchant.id }
     });
 
-    // 总销售额
+    // 总销售额也统一按“已完成订单”累计。
     const totalSales = await Order.sum('pay_amount', {
       where: {
         merchant_id: merchant.id,
-        status: { [Op.ne]: 7 }
+        status: 6
       }
     }) || 0;
 
-    // 商品数量
+    // 统计当前店铺一共有多少商品。
     const productCount = await Product.count({
       where: { merchant_id: merchant.id }
     });

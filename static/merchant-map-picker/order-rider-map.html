@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>订单地图</title>
+  <script>
+    (function () {
+      function getQP(name) {
+        var match = location.search.match(new RegExp('(?:[?&])' + name + '=([^&]*)'));
+        return match ? decodeURIComponent(match[1].replace(/\+/g, '%20')) : '';
+      }
+      var key = getQP('key');
+      window.__TENCENT_MAP_BOOT_KEY__ = key;
+      if (!key) return;
+      document.write('<script charset="utf-8" src="https://map.qq.com/api/gljs?v=1.exp&key=' + encodeURIComponent(key) + '"><\/script>');
+    })();
+  </script>
+  <style>
+    :root {
+      --theme-color: #ff6b35;
+      --theme-shadow: rgba(255, 107, 53, 0.24);
+      --rider-color: #2f7cf6;
+    }
+    html, body, #map {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    .panel {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      right: 12px;
+      z-index: 20;
+      background: rgba(255, 255, 255, 0.96);
+      border-radius: 12px;
+      box-shadow: 0 6px 24px var(--theme-shadow);
+      padding: 14px 16px;
+    }
+    .panel.is-hidden {
+      display: none;
+    }
+    .title {
+      font-size: 16px;
+      color: #222;
+      font-weight: 600;
+    }
+    .title.is-hidden {
+      display: none;
+    }
+    .desc {
+      font-size: 13px;
+      color: #666;
+      line-height: 1.5;
+      margin-top: 6px;
+    }
+    .desc.is-hidden {
+      display: none;
+    }
+    .order {
+      font-size: 12px;
+      color: #999;
+      margin-top: 6px;
+      word-break: break-all;
+    }
+    .empty {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 40;
+      background: rgba(255, 255, 255, 0.96);
+      border-radius: 12px;
+      padding: 16px 18px;
+      font-size: 14px;
+      color: #666;
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.16);
+      display: none;
+    }
+    .marker {
+      width: 44px;
+      height: 56px;
+      position: relative;
+      transform: translate(-50%, -100%);
+    }
+    .marker-pin {
+      width: 44px;
+      height: 44px;
+      border-radius: 50% 50% 50% 0;
+      transform: rotate(-45deg);
+      position: absolute;
+      left: 0;
+      top: 0;
+      box-shadow: 0 6px 14px rgba(0, 0, 0, 0.18);
+      border: 2px solid #fff;
+      box-sizing: border-box;
+    }
+    .marker-inner {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 16px;
+      height: 16px;
+      margin-left: -8px;
+      margin-top: -8px;
+      border-radius: 50%;
+      background: #fff;
+      transform: rotate(45deg);
+      color: inherit;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 16px;
+      text-align: center;
+    }
+    .marker-car {
+      width: 52px;
+      height: 32px;
+      position: absolute;
+      left: -4px;
+      top: 10px;
+      filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.18));
+      transform-origin: center center;
+    }
+    .marker-label {
+      position: absolute;
+      left: 50%;
+      bottom: 58px;
+      transform: translateX(-50%);
+      min-width: 54px;
+      max-width: 140px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.95);
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+      font-size: 12px;
+      color: #333;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div class="panel">
+    <div id="title" class="title">等待骑手接单</div>
+    <div id="desc" class="desc">当前地图停留在商家位置</div>
+    <div id="order" class="order"></div>
+  </div>
+  <div id="empty" class="empty">暂未获取到可展示的位置</div>
+
+  <script>
+    ;(function () {
+      var params = new URLSearchParams(location.search);
+      var key = params.get('key') || '';
+      var hidePanel = params.get('hidePanel') === '1';
+      var hideTitle = params.get('hideTitle') === '1';
+      var statusText = hideTitle ? '' : (params.get('statusText') || '等待骑手接单');
+      var statusDesc = params.get('statusDesc') || '当前地图停留在商家位置';
+      var merchantName = params.get('merchantName') || '商家位置';
+      var theme = params.get('theme') === 'town' ? 'town' : 'county';
+      var orderNo = params.get('orderNo') || '';
+      function parseCoord(value) {
+        var text = String(value == null ? '' : value).trim();
+        if (!text) return null;
+        var num = Number(text);
+        return Number.isFinite(num) ? num : null;
+      }
+
+      function isValidBusinessCoord(lng, lat) {
+        if (!Number.isFinite(lng) || !Number.isFinite(lat)) return false;
+        if (Math.abs(lng) < 0.000001 && Math.abs(lat) < 0.000001) return false;
+        return lng >= 72.004 && lng <= 137.8347 && lat >= 0.8293 && lat <= 55.8271;
+      }
+
+      var merchantLng = parseCoord(params.get('merchantLng'));
+      var merchantLat = parseCoord(params.get('merchantLat'));
+      var customerLng = parseCoord(params.get('customerLng'));
+      var customerLat = parseCoord(params.get('customerLat'));
+      var customerLabel = params.get('customerLabel') || '我的位置';
+      var riderLng = parseCoord(params.get('riderLng'));
+      var riderLat = parseCoord(params.get('riderLat'));
+      var currentLng = parseCoord(params.get('currentLng'));
+      var currentLat = parseCoord(params.get('currentLat'));
+      var currentLabel = params.get('currentLabel') || '';
+      var currentTag = params.get('currentTag') || '';
+      var currentType = params.get('currentType') || 'pin';
+      var currentColor = params.get('currentColor') || '';
+
+      var themeColor = theme === 'town' ? '#1f6f43' : '#ff6b35';
+      var riderColor = theme === 'town' ? '#165235' : '#2f7cf6';
+      var themeShadow = theme === 'town' ? 'rgba(31,111,67,0.24)' : 'rgba(255,107,53,0.24)';
+      document.documentElement.style.setProperty('--theme-color', themeColor);
+      document.documentElement.style.setProperty('--theme-shadow', themeShadow);
+      document.documentElement.style.setProperty('--rider-color', riderColor);
+
+      var panelEl = document.querySelector('.panel');
+      var titleEl = document.getElementById('title');
+      var descEl = document.getElementById('desc');
+      if (hidePanel && panelEl) {
+        panelEl.classList.add('is-hidden');
+      }
+      titleEl.innerText = statusText;
+      if (hideTitle || !String(statusText || '').trim()) {
+        titleEl.classList.add('is-hidden');
+      }
+      descEl.innerText = statusDesc;
+      if (hideTitle || !String(statusDesc || '').trim()) {
+        descEl.classList.add('is-hidden');
+      }
+      document.getElementById('order').innerText = orderNo ? '订单号：' + orderNo : '';
+      var liveLng = isValidBusinessCoord(currentLng, currentLat) ? currentLng : riderLng;
+      var liveLat = isValidBusinessCoord(currentLng, currentLat) ? currentLat : riderLat;
+      var liveLabel = currentLabel || '订单实时位置';
+      var liveTag = currentTag || (isValidBusinessCoord(currentLng, currentLat) ? '送' : '骑');
+      var liveType = currentType || 'pin';
+      var liveColor = currentColor || riderColor;
+
+      function showEmpty(text) {
+        var empty = document.getElementById('empty');
+        empty.innerText = text;
+        empty.style.display = 'block';
+      }
+
+      function hideEmpty() {
+        document.getElementById('empty').style.display = 'none';
+      }
+
+      function isOutOfChina(lng, lat) {
+        if (!Number.isFinite(lng) || !Number.isFinite(lat)) return true;
+        return lng < 72.004 || lng > 137.8347 || lat < 0.8293 || lat > 55.8271;
+      }
+
+      function transformLat(x, y) {
+        var ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
+        ret += ((20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0) / 3.0;
+        ret += ((20.0 * Math.sin(y * Math.PI) + 40.0 * Math.sin((y / 3.0) * Math.PI)) * 2.0) / 3.0;
+        ret += ((160.0 * Math.sin((y / 12.0) * Math.PI) + 320.0 * Math.sin((y * Math.PI) / 30.0)) * 2.0) / 3.0;
+        return ret;
+      }
+
+      function transformLng(x, y) {
+        var ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+        ret += ((20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0) / 3.0;
+        ret += ((20.0 * Math.sin(x * Math.PI) + 40.0 * Math.sin((x / 3.0) * Math.PI)) * 2.0) / 3.0;
+        ret += ((150.0 * Math.sin((x / 12.0) * Math.PI) + 300.0 * Math.sin((x / 30.0) * Math.PI)) * 2.0) / 3.0;
+        return ret;
+      }
+
+      function delta(lng, lat) {
+        if (isOutOfChina(lng, lat)) {
+          return { lng: 0, lat: 0 };
+        }
+        var a = 6378245.0;
+        var ee = 0.00669342162296594323;
+        var dLat = transformLat(lng - 105.0, lat - 35.0);
+        var dLng = transformLng(lng - 105.0, lat - 35.0);
+        var radLat = (lat / 180.0) * Math.PI;
+        var magic = Math.sin(radLat);
+        magic = 1 - ee * magic * magic;
+        var sqrtMagic = Math.sqrt(magic);
+        dLat = (dLat * 180.0) / (((a * (1 - ee)) / (magic * sqrtMagic)) * Math.PI);
+        dLng = (dLng * 180.0) / ((a / sqrtMagic) * Math.cos(radLat) * Math.PI);
+        return { lng: dLng, lat: dLat };
+      }
+
+      function wgs84ToGcj02(lng, lat) {
+        if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
+          return { lng: null, lat: null };
+        }
+        if (isOutOfChina(lng, lat)) {
+          return { lng: lng, lat: lat };
+        }
+        var offset = delta(lng, lat);
+        return {
+          lng: lng + offset.lng,
+          lat: lat + offset.lat
+        };
+      }
+
+      var MarkerOverlay = null;
+
+      function ensureMarkerOverlay() {
+        if (MarkerOverlay || !window.TMap || !TMap.DOMOverlay) return;
+        MarkerOverlay = class extends TMap.DOMOverlay {
+          constructor(options) {
+            super(options);
+          }
+          onInit(options) {
+            this.position = options.position;
+            this.labelText = String(options.labelText || '').trim();
+            this.color = options.color || '#ff6b35';
+            this.tagText = String(options.tagText || '').trim();
+            this.markerType = String(options.markerType || 'pin').trim();
+          }
+          createDOM() {
+            var dom = document.createElement('div');
+            dom.className = 'marker';
+            dom.style.position = 'absolute';
+            if (this.markerType === 'car') {
+              dom.innerHTML =
+                '<div class="marker-label"></div>' +
+                '<div class="marker-car"></div>';
+            } else {
+              dom.innerHTML =
+                '<div class="marker-label"></div>' +
+                '<div class="marker-pin"><div class="marker-inner"></div></div>';
+            }
+            dom.querySelector('.marker-label').innerText = this.labelText;
+            if (this.markerType === 'car') {
+              var car = dom.querySelector('.marker-car');
+              car.innerHTML =
+                '<svg viewBox="0 0 64 40" width="52" height="32" xmlns="http://www.w3.org/2000/svg">' +
+                '<path fill="' + this.color + '" d="M18 8h20c3.3 0 6.2 1.9 7.6 4.8L49 20h4c3.3 0 6 2.7 6 6v4h-4a7 7 0 0 1-14 0H23a7 7 0 0 1-14 0H5v-6c0-2.2 1.8-4 4-4h2.8l3.4-7.2A8.4 8.4 0 0 1 18 8Z"/>' +
+                '<path fill="#fff" d="M19 12h18c2 0 3.8 1.2 4.6 3l2.4 5H14.2l2.1-4.6A4.8 4.8 0 0 1 19 12Z"/>' +
+                '<circle cx="17" cy="30" r="6" fill="#1f2937"/>' +
+                '<circle cx="47" cy="30" r="6" fill="#1f2937"/>' +
+                '<circle cx="17" cy="30" r="2.5" fill="#fff"/>' +
+                '<circle cx="47" cy="30" r="2.5" fill="#fff"/>' +
+                '</svg>';
+            } else {
+              var pin = dom.querySelector('.marker-pin');
+              var inner = dom.querySelector('.marker-inner');
+              pin.style.background = this.color;
+              inner.style.color = this.color;
+              inner.innerText = this.tagText;
+            }
+            this.dom = dom;
+            return dom;
+          }
+          updateDOM() {
+            if (!this.map || !this.dom || !this.position) return;
+            var pixel = this.map.projectToContainer(this.position);
+            this.dom.style.left = pixel.getX() + 'px';
+            this.dom.style.top = pixel.getY() + 'px';
+          }
+        };
+      }
+
+      function createMarker(map, lat, lng, labelText, color, tagText, markerType) {
+        ensureMarkerOverlay();
+        var latLng = new TMap.LatLng(lat, lng);
+        var overlay = new MarkerOverlay({
+          map: map,
+          position: latLng,
+          labelText: labelText,
+          color: color,
+          tagText: tagText,
+          markerType: markerType
+        });
+        return { overlay: overlay, latLng: latLng };
+      }
+
+      function fitBounds(map, points) {
+        if (!points.length) return;
+        if (points.length === 1) {
+          map.setCenter(points[0]);
+          map.setZoom(16);
+          return;
+        }
+        var bounds = new TMap.LatLngBounds();
+        points.forEach(function (point) {
+          bounds.extend(point);
+        });
+        map.fitBounds(bounds, { padding: 80 });
+      }
+
+      if (!key) {
+        showEmpty('未配置腾讯地图 key');
+        return;
+      }
+
+      var merchantValid = isValidBusinessCoord(merchantLng, merchantLat);
+      var customerValid = isValidBusinessCoord(customerLng, customerLat);
+      var liveValid = isValidBusinessCoord(liveLng, liveLat);
+      if (!merchantValid && !liveValid && !customerValid) {
+        showEmpty('暂未获取到可展示的位置');
+        return;
+      }
+
+      function initMap() {
+        if (!window.TMap || !TMap.Map) {
+          showEmpty('腾讯地图初始化失败');
+          return;
+        }
+        hideEmpty();
+        var baseLng = merchantValid ? merchantLng : (liveValid ? liveLng : customerLng);
+        var baseLat = merchantValid ? merchantLat : (liveValid ? liveLat : customerLat);
+        var baseDisplay = wgs84ToGcj02(baseLng, baseLat);
+        if (!Number.isFinite(baseDisplay.lng) || !Number.isFinite(baseDisplay.lat)) {
+          showEmpty('订单位置转换失败');
+          return;
+        }
+        var map = new TMap.Map(document.getElementById('map'), {
+          center: new TMap.LatLng(baseDisplay.lat, baseDisplay.lng),
+          zoom: 16,
+          pitch: 0,
+          rotation: 0,
+          mapStyleId: 'style1'
+        });
+        var points = [];
+        if (customerValid) {
+          var customerDisplay = wgs84ToGcj02(customerLng, customerLat);
+          if (Number.isFinite(customerDisplay.lng) && Number.isFinite(customerDisplay.lat)) {
+            var customer = createMarker(map, customerDisplay.lat, customerDisplay.lng, customerLabel, '#ef4444', '我', 'pin');
+            points.push(customer.latLng);
+          }
+        }
+        if (merchantValid) {
+          var merchantDisplay = wgs84ToGcj02(merchantLng, merchantLat);
+          if (Number.isFinite(merchantDisplay.lng) && Number.isFinite(merchantDisplay.lat)) {
+            var merchant = createMarker(map, merchantDisplay.lat, merchantDisplay.lng, merchantName || '商家位置', themeColor, '店', 'pin');
+            points.push(merchant.latLng);
+          }
+        }
+
+        if (liveValid) {
+          var riderDisplay = wgs84ToGcj02(liveLng, liveLat);
+          if (Number.isFinite(riderDisplay.lng) && Number.isFinite(riderDisplay.lat)) {
+            var rider = createMarker(map, riderDisplay.lat, riderDisplay.lng, liveLabel, liveColor, liveTag, liveType);
+            points.push(rider.latLng);
+          }
+        }
+
+        fitBounds(map, points);
+      }
+
+      initMap();
+    })();
+  </script>
+</body>
+</html>

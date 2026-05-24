@@ -1,7 +1,8 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
-// 订单模型
+// 这张表是“订单主表”模型。
+// 外卖单、跑腿单、县城单、乡镇单、转派链路、结算字段，核心都汇总在这一张表里。
 const Order = sequelize.define('Order', {
   id: {
     type: DataTypes.INTEGER,
@@ -26,7 +27,7 @@ const Order = sequelize.define('Order', {
   },
   merchant_id: {
     type: DataTypes.INTEGER,
-    allowNull: false,
+    allowNull: true,
     comment: '商家 ID'
   },
   rider_id: {
@@ -59,6 +60,64 @@ const Order = sequelize.define('Order', {
   dispatch_sent_at: {
     type: DataTypes.DATE,
     comment: '推送调度中心时间'
+  },
+  is_transfer_order: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+    comment: '是否转派单'
+  },
+  transfer_status: {
+    type: DataTypes.STRING(32),
+    allowNull: true,
+    comment: '转派状态摘要：transferred/revoked'
+  },
+  transfer_round: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+    comment: '累计转派次数'
+  },
+  current_responsible_user_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    comment: '当前责任人用户ID'
+  },
+  current_responsible_role: {
+    type: DataTypes.STRING(32),
+    allowNull: true,
+    comment: '当前责任人角色摘要'
+  },
+  transfer_from_user_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    comment: '最近一次转派发起人'
+  },
+  transfer_to_user_id: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    comment: '最近一次转派目标人'
+  },
+  transfer_to_town_name: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    comment: '最近一次目标乡镇'
+  },
+  transfer_last_action_at: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    comment: '最近一次转派动作时间'
+  },
+  transfer_last_action_type: {
+    type: DataTypes.STRING(32),
+    allowNull: true,
+    comment: '最近一次转派动作类型：transfer/revoke'
+  },
+  transfer_revoke_used: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+    comment: '是否已经使用过撤回'
   },
   merge_group_id: {
     type: DataTypes.INTEGER,
@@ -95,8 +154,6 @@ const Order = sequelize.define('Order', {
       if (this.rider_id) {
         return this.status === 5 ? 'delivering' : 'dispatched';
       }
-      if (this.status <= 2) return 'pending';
-      if (this.status === 3 || this.status === 4) return 'dispatched';
       if (this.status === 5) return 'delivering';
       return 'pending';
     }
@@ -134,7 +191,7 @@ const Order = sequelize.define('Order', {
   },
   total_amount: {
     type: DataTypes.DECIMAL(10, 2),
-    allowNull: false,
+    allowNull: true,
     comment: '订单总金额'
   },
   delivery_fee: {
@@ -154,12 +211,12 @@ const Order = sequelize.define('Order', {
   },
   pay_amount: {
     type: DataTypes.DECIMAL(10, 2),
-    allowNull: false,
+    allowNull: true,
     comment: '实付金额'
   },
   total_price: {
     type: DataTypes.FLOAT,
-    allowNull: false,
+    allowNull: true,
     comment: '订单总价'
   },
   rider_fee: {
@@ -167,11 +224,22 @@ const Order = sequelize.define('Order', {
     defaultValue: 0.00,
     comment: '骑手费用'
   },
-  // 配送信息
+  // 配送信息区
   delivery_type: {
     type: DataTypes.INTEGER,
     defaultValue: 1,
     comment: '配送方式：1-配送，2-自取'
+  },
+  delivery_time_type: {
+    type: DataTypes.ENUM('asap', 'scheduled'),
+    allowNull: false,
+    defaultValue: 'asap',
+    comment: '配送时间类型：asap-尽快送达，scheduled-预约时间'
+  },
+  scheduled_delivery_at: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    comment: '预约配送时间'
   },
   supermarket_delivery_permission_snapshot: {
     type: DataTypes.ENUM('self_only', 'rider_only', 'hybrid'),
@@ -213,7 +281,7 @@ const Order = sequelize.define('Order', {
   },
   address: {
     type: DataTypes.STRING(200),
-    allowNull: false,
+    allowNull: true,
     comment: '地址'
   },
   delivery_latitude: {
@@ -282,7 +350,7 @@ const Order = sequelize.define('Order', {
     type: DataTypes.TEXT,
     comment: '跑腿需求描述'
   },
-  // 时间戳
+  // 时间与结算字段
   paid_at: {
     type: DataTypes.DATE,
     comment: '支付时间'

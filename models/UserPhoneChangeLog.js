@@ -1,6 +1,8 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
+// 这张表是“手机号变更日志”模型。
+// 用户每次换绑手机号，都会记录旧号、新号、年份和校验方式，方便做年度次数限制。
 const UserPhoneChangeLog = sequelize.define('UserPhoneChangeLog', {
   id: {
     type: DataTypes.INTEGER,

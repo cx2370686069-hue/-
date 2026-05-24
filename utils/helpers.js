@@ -1,6 +1,9 @@
 const crypto = require('crypto');
 const { User } = require('../models');
 
+// 这个文件是“通用基础工具”。
+// 这里放的是全项目很多地方都会复用的小工具，比如订单号、距离、token、统一响应格式。
+
 // 生成订单号
 const generateOrderNo = () => {
   const timestamp = Date.now().toString();

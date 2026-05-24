@@ -1,8 +1,9 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
-// 购物车项模型
-// 复用历史 cart_items 表，沿用 food_* 老字段名，代码层兼容当前 product 语义。
+// 这张表是“购物车项”模型。
+// 它复用了历史 cart_items(购物车表) 的旧字段名，所以你会看到 food_* 这类名字，
+// 但现在代码层已经把它当作 product(商品) 购物车来使用。
 const CartItem = sequelize.define('CartItem', {
   id: {
     type: DataTypes.INTEGER,

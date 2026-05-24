@@ -1,7 +1,10 @@
+// 这个文件是“骑手分配服务”。
+// 当前主要解决“给某个商家优先挑一个合适骑手”这件事，供订单派单链路复用。
 const { User } = require('../models');
 const { calculateDistance } = require('../utils/helpers');
 const { Op } = require('sequelize');
 
+// 按商家位置挑选一个最近、且最近定位仍然有效的骑手。
 const selectRiderForMerchant = async (merchant) => {
   const since = new Date(Date.now() - 10 * 60 * 1000);
 

@@ -1,10 +1,15 @@
 const jwt = require('jsonwebtoken');
 const { User } = require('../models');
 
+// 这个文件是“登录鉴权中间件”。
+// 它主要提供两层能力：
+// 1. authMiddleware(登录鉴权)：把 token 解析成当前登录用户
+// 2. roleMiddleware(角色鉴权)：在已登录基础上继续校验角色
+
 // 验证 JWT Token
 const authMiddleware = async (req, res, next) => {
   try {
-    // 从请求头获取 token
+    // 同时兼容 Authorization: Bearer xxx 和旧版 token 请求头。
     const authValue = req.headers.authorization;
     const rawToken = req.headers.token;
     const token = authValue
@@ -20,10 +25,10 @@ const authMiddleware = async (req, res, next) => {
       });
     }
 
-    // 验证 token
+    // 先验 token，再去数据库确认这个账号仍然有效。
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     
-    // 查询用户
+    // 账号被禁用或不存在，也视为登录失效。
     const user = await User.findByPk(decoded.userId);
     
     if (!user || user.status !== 1) {
@@ -33,7 +38,7 @@ const authMiddleware = async (req, res, next) => {
       });
     }
 
-    // 将用户信息附加到请求对象
+    // 通过鉴权后，把当前用户对象挂到 req.user，供后面的控制器和中间件复用。
     req.user = user;
     next();
   } catch (error) {
@@ -45,7 +50,7 @@ const authMiddleware = async (req, res, next) => {
   }
 };
 
-// 验证角色
+// 角色鉴权：只允许指定角色继续访问。
 const roleMiddleware = (...roles) => {
   return (req, res, next) => {
     if (!req.user) {

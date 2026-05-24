@@ -1,6 +1,8 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
+// 这张表是“系统通知主表”模型。
+// 通知标题、正文、目标角色、发布状态、置顶状态，主要都在这里维护。
 const SYSTEM_NOTIFICATION_TARGET_ROLES = ['all', 'user', 'merchant', 'rider'];
 const SYSTEM_NOTIFICATION_STATUSES = ['draft', 'published', 'offline'];
 

@@ -1,6 +1,8 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
+// 这张表是“县城拼单组”模型。
+// 一次县城多店拼单会先有一个组，再挂多笔子订单。
 const CountyOrderGroup = sequelize.define('CountyOrderGroup', {
   id: {
     type: DataTypes.INTEGER,

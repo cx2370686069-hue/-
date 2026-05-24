@@ -1,3 +1,5 @@
+// 这个文件是“后台系统通知控制器”。
+// 后台创建通知、编辑通知、发布、下线、置顶、删除，都是走这里。
 const { Op } = require('sequelize');
 const { SystemNotification } = require('../models');
 const { successResponse, errorResponse } = require('../utils/helpers');
@@ -6,8 +8,11 @@ const {
   SYSTEM_NOTIFICATION_STATUSES
 } = require('../models/SystemNotification');
 
+// 文本统一先做去空格处理，避免后台表单带着空格入库。
 const normalizeText = (value) => String(value || '').trim();
 
+// 后台表单里的布尔值经常会混着 true / false / 1 / 0 / yes / no。
+// 这里统一把它们收口成真正的布尔值，避免每个接口自己重复判断。
 const normalizeBoolean = (value, defaultValue = false) => {
   if (value === undefined || value === null || value === '') {
     return defaultValue;
@@ -25,6 +30,7 @@ const normalizeBoolean = (value, defaultValue = false) => {
   return defaultValue;
 };
 
+// 这里把通知对象整理成后台前端稳定使用的返回结构。
 const formatNotification = (item) => ({
   id: item.id,
   title: item.title,
@@ -40,6 +46,7 @@ const formatNotification = (item) => ({
   updated_by: item.updated_by || null
 });
 
+// 创建和更新通知时，标题、正文、目标角色、状态都走这里统一校验。
 const validateNotificationPayload = ({
   title,
   content,
@@ -64,6 +71,10 @@ const validateNotificationPayload = ({
   return '';
 };
 
+/**
+ * 后台通知列表
+ * 支持按关键词、状态、目标角色筛选，并按置顶优先、发布时间倒序返回。
+ */
 exports.getNotifications = async (req, res, next) => {
   try {
     const keyword = normalizeText(req.query.keyword);
@@ -100,6 +111,10 @@ exports.getNotifications = async (req, res, next) => {
   }
 };
 
+/**
+ * 创建系统通知
+ * 如果创建时状态就是 published，这里会顺手把发布时间一起写进去。
+ */
 exports.createNotification = async (req, res, next) => {
   try {
     const title = normalizeText(req.body.title);
@@ -138,6 +153,10 @@ exports.createNotification = async (req, res, next) => {
   }
 };
 
+/**
+ * 更新系统通知
+ * 这里只改通知本身的内容和状态，不负责真正的前端推送。
+ */
 exports.updateNotification = async (req, res, next) => {
   try {
     const id = Number(req.params.id);
@@ -193,6 +212,10 @@ exports.updateNotification = async (req, res, next) => {
   }
 };
 
+/**
+ * 发布通知
+ * 只有标题和正文都完整时，才允许从草稿切到已发布。
+ */
 exports.publishNotification = async (req, res, next) => {
   try {
     const id = Number(req.params.id);
@@ -221,6 +244,10 @@ exports.publishNotification = async (req, res, next) => {
   }
 };
 
+/**
+ * 下线通知
+ * 下线后通知仍然保留在库里，只是状态变成 offline，不再对外展示。
+ */
 exports.offlineNotification = async (req, res, next) => {
   try {
     const id = Number(req.params.id);
@@ -244,6 +271,10 @@ exports.offlineNotification = async (req, res, next) => {
   }
 };
 
+/**
+ * 置顶 / 取消置顶通知
+ * 这里只切换 is_pinned 状态，让后台列表和用户端列表可以优先展示重点通知。
+ */
 exports.pinNotification = async (req, res, next) => {
   try {
     const id = Number(req.params.id);
@@ -269,6 +300,10 @@ exports.pinNotification = async (req, res, next) => {
   }
 };
 
+/**
+ * 删除通知
+ * 这里是真删数据，所以只有后台入口才应该调用这个接口。
+ */
 exports.deleteNotification = async (req, res, next) => {
   try {
     const id = Number(req.params.id);

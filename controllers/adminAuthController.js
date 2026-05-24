@@ -1,6 +1,10 @@
+// 这个文件是“后台管理员认证控制器”。
+// 只管后台管理员自己的登录、读取当前登录信息、退出登录，不处理普通用户或商家登录。
 const { User } = require('../models');
 const { generateToken, successResponse, errorResponse } = require('../utils/helpers');
 
+// 这里专门把管理员资料整理成前端真正需要的返回结构。
+// 这样登录接口和“当前登录人信息”接口都能复用同一套格式。
 const formatAdminProfile = (user) => ({
   id: user.id,
   phone: user.phone,
@@ -10,6 +14,10 @@ const formatAdminProfile = (user) => ({
   status: user.status
 });
 
+/**
+ * 管理员登录
+ * 这里只允许 role=admin 的账号登录后台，普通用户账号就算手机号和密码对，也进不来。
+ */
 exports.login = async (req, res, next) => {
   try {
     const phone = String(req.body.phone || '').trim();
@@ -48,6 +56,10 @@ exports.login = async (req, res, next) => {
   }
 };
 
+/**
+ * 获取当前管理员信息
+ * 后台刷新页面后想恢复登录态，通常会再调一次这个接口。
+ */
 exports.me = async (req, res, next) => {
   try {
     res.json(successResponse(formatAdminProfile(req.user)));
@@ -56,6 +68,10 @@ exports.me = async (req, res, next) => {
   }
 };
 
+/**
+ * 管理员退出登录
+ * 目前这里主要是返回一个成功结果，真正的登录态失效还是以前端清 token 为主。
+ */
 exports.logout = async (req, res, next) => {
   try {
     res.json(successResponse(null, '退出成功'));

@@ -1,3 +1,5 @@
+// 这个文件是“乡镇跑腿代购控制器”。
+// 用户联系乡镇站长、聊天消息、创建乡镇跑腿订单，整条链路都在这里。
 const { Op } = require('sequelize');
 const {
   User,
@@ -13,6 +15,7 @@ const dispatchCenterService = require('../services/dispatchCenterService');
 
 const MAX_MESSAGE_LENGTH = 500;
 
+// ==================== 基础清洗与身份判断区 ====================
 const normalizeTownName = (value) => String(value || '').trim();
 const normalizeMessageContent = (value) => String(value || '').trim().replace(/\s+/g, ' ').slice(0, MAX_MESSAGE_LENGTH);
 const normalizeText = (value, maxLength = 255) => String(value || '').trim().slice(0, maxLength);
@@ -26,6 +29,7 @@ const normalizeOptionalNumber = (value) => {
 const round2 = (value) => Number(Number(value || 0).toFixed(2));
 const isPositiveAmount = (value) => Number.isFinite(value) && value > 0;
 
+// 判断当前用户是不是乡镇站长。
 const isTownStationmaster = (user) => {
   if (!user) {
     return false;
@@ -38,6 +42,7 @@ const isTownStationmaster = (user) => {
   );
 };
 
+// 根据当前登录人身份，拼出他能看到哪些跑腿会话。
 const buildConversationWhereForUser = (user) => {
   if (user.role === 'user') {
     return { user_id: user.id };
@@ -50,6 +55,7 @@ const buildConversationWhereForUser = (user) => {
   return null;
 };
 
+// 把会话整理成前端好用的摘要结构，并顺手补未读数。
 const buildConversationSummary = async (conversation, currentUserId) => {
   const unreadWhere = {
     conversation_id: conversation.id,
@@ -89,6 +95,7 @@ const buildConversationSummary = async (conversation, currentUserId) => {
   };
 };
 
+// 校验当前用户是不是这个会话的参与者。
 const ensureConversationParticipant = (conversation, user) => {
   if (!conversation || !user) {
     return false;
@@ -96,6 +103,7 @@ const ensureConversationParticipant = (conversation, user) => {
   return Number(conversation.user_id) === Number(user.id) || Number(conversation.stationmaster_id) === Number(user.id);
 };
 
+// 找某个乡镇当前可联系的站长。
 const findTownStationmaster = async (townName) => {
   return User.findOne({
     where: {
@@ -113,6 +121,7 @@ const findTownStationmaster = async (townName) => {
   });
 };
 
+// 找某个乡镇可用来落单的商家数据。
 const findTownErrandMerchant = async (townName) => {
   return Merchant.findOne({
     where: {
@@ -126,6 +135,7 @@ const findTownErrandMerchant = async (townName) => {
   });
 };
 
+// 把取件地址 / 收货地址整理成统一结构。
 const buildAddressPayload = ({ text, lng, lat, townName, fallbackLabel }) => {
   const detail = normalizeText(text, 255);
   const normalizedTown = normalizeTownName(townName);
@@ -139,6 +149,7 @@ const buildAddressPayload = ({ text, lng, lat, townName, fallbackLabel }) => {
   };
 };
 
+// 生成订单主地址文本，优先显示收货地址，其次回退取件地址。
 const buildOrderAddressText = ({ deliveryAddressText, pickupAddressText, townName }) => {
   const delivery = normalizeText(deliveryAddressText, 200);
   const pickup = normalizeText(pickupAddressText, 200);
@@ -146,6 +157,7 @@ const buildOrderAddressText = ({ deliveryAddressText, pickupAddressText, townNam
   return delivery || pickup || `${town}地址待沟通`;
 };
 
+// 把跑腿订单备注整理成一段易读文本，方便后台和站长快速看懂。
 const buildTownErrandRemark = ({ pickupAddressText, deliveryAddressText, amount }) => {
   const parts = [];
   if (pickupAddressText) {
@@ -160,6 +172,10 @@ const buildTownErrandRemark = ({ pickupAddressText, deliveryAddressText, amount 
   return parts.join('；') || '乡镇跑腿代购';
 };
 
+/**
+ * 获取乡镇站长信息
+ * 用户输入乡镇后，前端通常先调这个接口看看当前乡镇有没有可联系的站长。
+ */
 exports.getTownErrandStationmaster = async (req, res, next) => {
   try {
     const townName = normalizeTownName(req.query.town_name || req.query.townName);
@@ -185,6 +201,10 @@ exports.getTownErrandStationmaster = async (req, res, next) => {
   }
 };
 
+/**
+ * 打开乡镇跑腿会话
+ * 如果这个用户和站长之间还没有会话，这里会自动创建一条。
+ */
 exports.openTownErrandConversation = async (req, res, next) => {
   try {
     const user = req.user;
@@ -222,6 +242,10 @@ exports.openTownErrandConversation = async (req, res, next) => {
   }
 };
 
+/**
+ * 获取跑腿会话列表
+ * 用户看自己和站长的会话，或者站长看自己负责的会话，都走这个接口。
+ */
 exports.getTownErrandConversations = async (req, res, next) => {
   try {
     const user = req.user;
@@ -253,6 +277,10 @@ exports.getTownErrandConversations = async (req, res, next) => {
   }
 };
 
+/**
+ * 获取跑腿消息列表
+ * 打开会话时会顺手把“对方发来的未读消息”标记成已读。
+ */
 exports.getTownErrandMessages = async (req, res, next) => {
   try {
     const user = req.user;
@@ -300,6 +328,10 @@ exports.getTownErrandMessages = async (req, res, next) => {
   }
 };
 
+/**
+ * 发送跑腿消息
+ * 发完后会通过 socket 把消息实时推给会话另一方。
+ */
 exports.sendTownErrandMessage = async (req, res, next) => {
   try {
     const user = req.user;
@@ -378,6 +410,10 @@ exports.sendTownErrandMessage = async (req, res, next) => {
   }
 };
 
+/**
+ * 创建乡镇跑腿代购订单
+ * 这里会先落一笔 errand(跑腿) 订单，再尝试交给调度中心分配到对应乡镇站长。
+ */
 exports.createTownErrandOrder = async (req, res, next) => {
   try {
     const user = req.user;

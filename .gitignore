@@ -35,14 +35,17 @@ secrets/
 Thumbs.db
 *.swp
 *.swo
+.dbg/
 
 # 打包/外部前端构建产物
 external/**/unpackage/dist/
+external/**/node_modules/
 
 # 备份/归档
 *.zip
 *.tar.gz
 *.bak
+*.keystore
 
 # 其他
 .cache/

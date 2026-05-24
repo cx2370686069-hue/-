@@ -1,7 +1,8 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
-// 退款/售后工单表
+// 这张表是“退款 / 售后工单”模型。
+// 用户发起退款后，退款金额、原因、审核状态、到账结果都会记录在这里。
 const Refund = sequelize.define('Refund', {
   id: {
     type: DataTypes.INTEGER,

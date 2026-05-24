@@ -1,7 +1,8 @@
 const { DataTypes } = require('sequelize');
 const sequelize = require('../config/database');
 
-// 商品规格及属性表（支持“大中小杯”、“微辣/中辣/不加葱”等扩展）
+// 这张表是“商品规格”模型。
+// 杯型、口味、加料、尺寸这些规格项，都通过这张表挂到商品上。
 const ProductSpec = sequelize.define('ProductSpec', {
   id: {
     type: DataTypes.INTEGER,

@@ -1,11 +1,19 @@
 const crypto = require('crypto');
-const { Order, OrderLog, PaymentTransaction, CountyOrderGroup, sequelize } = require('../../models');
+const { Order, OrderLog, PaymentTransaction, CountyOrderGroup, Refund, sequelize } = require('../../models');
 const { computeTakeoutSettlement, normalizePayChannel, round2 } = require('./utils');
+const { generateOrderNo } = require('../../utils/helpers');
 
+// 这个文件是“支付服务核心层”。
+// 真正会改数据库状态的地方主要都在这里：
+// 1. 创建预支付流水
+// 2. 确认支付成功并回写订单 / 拼单组
+// 3. 创建退款记录
 const generateOutTradeNo = (orderNo) => {
   return `${orderNo}-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
 };
 
+// 外卖订单支付成功后，很多分账字段要一起补齐。
+// 这一步集中生成 patch，避免控制器和回调里到处手写一份。
 const buildTakeoutSettlementPatch = (order) => {
   const settlement = computeTakeoutSettlement(order);
   return {
@@ -19,6 +27,7 @@ const buildTakeoutSettlementPatch = (order) => {
   };
 };
 
+// ==================== 预支付流水创建区 ====================
 const createPrepay = async ({
   order,
   countyOrderGroup,
@@ -54,6 +63,8 @@ const createPrepay = async ({
   return tx;
 };
 
+// ==================== 支付成功确认区 ====================
+// 第三方回调或 mock 成功后，最终都汇总到这里做事务处理。
 const confirmSuccess = async ({
   outTradeNo,
   tradeNo,
@@ -79,6 +90,7 @@ const confirmSuccess = async ({
     }
 
     if (tx.status === 'success') {
+      // 支付平台可能重复回调，所以这里要做幂等处理。
       const order = tx.order_id ? await Order.findByPk(tx.order_id, { transaction: t }) : null;
       const countyOrderGroup = tx.group_id
         ? await CountyOrderGroup.findByPk(tx.group_id, { transaction: t })
@@ -109,6 +121,7 @@ const confirmSuccess = async ({
     );
 
     if (tx.biz_type === 'county_order_group') {
+      // 县城拼单是“一次支付，批量放行多笔订单”，所以这里要整组一起更新。
       const countyOrderGroup = await CountyOrderGroup.findByPk(tx.group_id, {
         transaction: t,
         lock: t.LOCK.UPDATE
@@ -242,7 +255,38 @@ const confirmSuccess = async ({
   return result;
 };
 
+// ==================== 退款记录区 ====================
+const processRefund = async ({ order, reason_type, description, transaction }) => {
+  if (!order || !order.id) throw new Error('退款必须提供订单');
+  const t = transaction;
+
+  const refund = await Refund.create({
+    refund_no: generateOrderNo(),
+    order_id: order.id,
+    order_no: order.order_no,
+    user_id: order.user_id,
+    merchant_id: order.merchant_id,
+    amount: order.pay_amount,
+    reason_type: reason_type || '系统退款',
+    description: description || '订单取消退款',
+    status: 2, // 直接退款成功
+    success_at: new Date()
+  }, { transaction: t });
+
+  await OrderLog.create({
+    order_id: order.id,
+    operator_type: 'system',
+    action: '自动退款',
+    from_status: order.status,
+    to_status: 7,
+    remark: `已发起全额退款 ${order.pay_amount} 元`
+  }, { transaction: t });
+
+  return refund;
+};
+
 module.exports = {
   createPrepay,
-  confirmSuccess
+  confirmSuccess,
+  processRefund
 };

@@ -1,9 +1,11 @@
+// 这个文件是“开发沙箱路由”。
+// 它只给本地联调或测试环境使用，方便快速查商品、造订单，绝对不能挂到生产环境。
 const express = require('express');
 const router = express.Router();
 const { Product, Order, Merchant } = require('../models');
 const { successResponse, errorResponse, generateOrderNo } = require('../utils/helpers');
 
-// GET /api/products
+// 开发环境快速查看当前上架商品列表。
 router.get('/products', async (req, res, next) => {
   try {
     const products = await Product.findAll({
@@ -16,7 +18,7 @@ router.get('/products', async (req, res, next) => {
   }
 });
 
-// POST /api/orders
+// 开发环境快速创建测试订单。
 router.post('/orders', async (req, res, next) => {
   try {
     const { product_id } = req.body;
@@ -41,7 +43,7 @@ router.post('/orders', async (req, res, next) => {
     const order = await Order.create({
       order_no,
       order_id: order_no,
-      user_id: 1, // 固定测试用户ID
+      user_id: 1, // 固定测试用户 ID，用于本地联调
       merchant_id: merchant_id,
       type: 'takeout',
       products_info: items_json,

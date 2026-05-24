@@ -253,6 +253,28 @@ PORT=3001
 
 项目已配置 CORS，允许所有来源访问。如需限制，修改 `src/index.js` 中的 CORS 配置。
 
+### 4. 骑手端 Socket 真机超时
+
+如果骑手端真机可以正常请求 HTTP API，但 `socket.io` 长时间 `timeout`，不要继续让 App 直接连 `http://IP:3000`。
+
+建议改为：
+
+```text
+手机 App -> 80/443 域名 -> Nginx/反向代理 -> 127.0.0.1:3000
+```
+
+仓库已提供示例配置：
+
+- `deploy/nginx/gushi-waimai-socket.conf.example`
+
+生产环境至少要保证：
+
+- `/api/` 正常转发
+- `/uploads/` 正常转发
+- `/socket.io/` 带 `Upgrade/Connection` 头转发
+- `.env` 中配置 `TRUST_PROXY=1`
+- `.env` 中配置 `SOCKET_CORS_ORIGIN` 为真实域名白名单
+
 ---
 
 ## 📝 开发说明
