@@ -156,10 +156,14 @@
 
   <script>
     ;(function () {
+      // 这个页面是 APP 订单实时地图的远端静态页。
+      // 这里拿到的商家点、用户点、骑手点坐标口径不完全一样，
+      // 所以进腾讯地图前必须先按 coordType 分开处理，不能再一把梭统一转换。
       var params = new URLSearchParams(location.search);
       var key = params.get('key') || '';
       var hidePanel = params.get('hidePanel') === '1';
       var hideTitle = params.get('hideTitle') === '1';
+      var bridgeKey = params.get('bridgeKey') || '';
       var statusText = hideTitle ? '' : (params.get('statusText') || '等待骑手接单');
       var statusDesc = params.get('statusDesc') || '当前地图停留在商家位置';
       var merchantName = params.get('merchantName') || '商家位置';
@@ -172,6 +176,12 @@
         return Number.isFinite(num) ? num : null;
       }
 
+      function parseCoordType(value, fallback) {
+        var text = String(value == null ? '' : value).trim().toLowerCase();
+        if (!text) return fallback || 'wgs84';
+        return text === 'gcj02' ? 'gcj02' : 'wgs84';
+      }
+
       function isValidBusinessCoord(lng, lat) {
         if (!Number.isFinite(lng) || !Number.isFinite(lat)) return false;
         if (Math.abs(lng) < 0.000001 && Math.abs(lat) < 0.000001) return false;
@@ -180,13 +190,17 @@
 
       var merchantLng = parseCoord(params.get('merchantLng'));
       var merchantLat = parseCoord(params.get('merchantLat'));
+      var merchantCoordType = parseCoordType(params.get('merchantCoordType'), 'gcj02');
       var customerLng = parseCoord(params.get('customerLng'));
       var customerLat = parseCoord(params.get('customerLat'));
+      var customerCoordType = parseCoordType(params.get('customerCoordType'), 'wgs84');
       var customerLabel = params.get('customerLabel') || '我的位置';
       var riderLng = parseCoord(params.get('riderLng'));
       var riderLat = parseCoord(params.get('riderLat'));
+      var riderCoordType = parseCoordType(params.get('riderCoordType'), 'gcj02');
       var currentLng = parseCoord(params.get('currentLng'));
       var currentLat = parseCoord(params.get('currentLat'));
+      var currentCoordType = parseCoordType(params.get('currentCoordType'), riderCoordType);
       var currentLabel = params.get('currentLabel') || '';
       var currentTag = params.get('currentTag') || '';
       var currentType = params.get('currentType') || 'pin';
@@ -205,21 +219,33 @@
       if (hidePanel && panelEl) {
         panelEl.classList.add('is-hidden');
       }
-      titleEl.innerText = statusText;
-      if (hideTitle || !String(statusText || '').trim()) {
-        titleEl.classList.add('is-hidden');
-      }
-      descEl.innerText = statusDesc;
-      if (hideTitle || !String(statusDesc || '').trim()) {
-        descEl.classList.add('is-hidden');
-      }
-      document.getElementById('order').innerText = orderNo ? '订单号：' + orderNo : '';
+      setPanelText(statusText, statusDesc, orderNo);
       var liveLng = isValidBusinessCoord(currentLng, currentLat) ? currentLng : riderLng;
       var liveLat = isValidBusinessCoord(currentLng, currentLat) ? currentLat : riderLat;
       var liveLabel = currentLabel || '订单实时位置';
       var liveTag = currentTag || (isValidBusinessCoord(currentLng, currentLat) ? '送' : '骑');
       var liveType = currentType || 'pin';
       var liveColor = currentColor || riderColor;
+      var map = null;
+      var riderMarker = null;
+      var basePoints = [];
+      var lastBridgeUpdatedAt = '';
+
+      function setPanelText(nextStatusText, nextStatusDesc, nextOrderNo) {
+        titleEl.innerText = nextStatusText || '';
+        if (hideTitle || !String(nextStatusText || '').trim()) {
+          titleEl.classList.add('is-hidden');
+        } else {
+          titleEl.classList.remove('is-hidden');
+        }
+        descEl.innerText = nextStatusDesc || '';
+        if (hideTitle || !String(nextStatusDesc || '').trim()) {
+          descEl.classList.add('is-hidden');
+        } else {
+          descEl.classList.remove('is-hidden');
+        }
+        document.getElementById('order').innerText = nextOrderNo ? '订单号：' + nextOrderNo : '';
+      }
 
       function showEmpty(text) {
         var empty = document.getElementById('empty');
@@ -283,6 +309,21 @@
         };
       }
 
+      function toDisplayCoord(lng, lat, coordType, fallbackCoordType) {
+        if (!isValidBusinessCoord(lng, lat)) {
+          return { lng: null, lat: null };
+        }
+        var normalizedType = parseCoordType(coordType, fallbackCoordType || 'wgs84');
+        // 这里要把商家点和用户点拆开看：
+        // 商家端腾讯地图选点保存下来的商家坐标本身就是 gcj02，不能再转一次，不然会被二次偏移。
+        // 用户收货点现在还是按 wgs84 存库，所以进腾讯地图显示前还得补一次 wgs84 -> gcj02。
+        // 骑手实时点则继续按 riderCoordType / currentCoordType 走，默认就是 gcj02。
+        if (normalizedType === 'gcj02') {
+          return { lng: lng, lat: lat };
+        }
+        return wgs84ToGcj02(lng, lat);
+      }
+
       var MarkerOverlay = null;
 
       function ensureMarkerOverlay() {
@@ -339,6 +380,22 @@
             this.dom.style.left = pixel.getX() + 'px';
             this.dom.style.top = pixel.getY() + 'px';
           }
+          setState(options) {
+            options = options || {};
+            var prevDom = this.dom;
+            this.position = options.position || this.position;
+            this.labelText = String(options.labelText == null ? this.labelText : options.labelText).trim();
+            this.color = options.color || this.color;
+            this.tagText = String(options.tagText == null ? this.tagText : options.tagText).trim();
+            this.markerType = String(options.markerType == null ? this.markerType : options.markerType).trim() || 'pin';
+            if (!prevDom) {
+              return;
+            }
+            var nextDom = this.createDOM();
+            prevDom.replaceWith(nextDom);
+            this.dom = nextDom;
+            this.updateDOM();
+          }
         };
       }
 
@@ -370,6 +427,88 @@
         map.fitBounds(bounds, { padding: 80 });
       }
 
+      function getBridgePayload() {
+        if (!bridgeKey) {
+          return null;
+        }
+        try {
+          var plusRef = typeof plus !== 'undefined' ? plus : null;
+          var text = plusRef && plusRef.storage ? plusRef.storage.getItem(bridgeKey) : '';
+          if (!text) {
+            return null;
+          }
+          var payload = JSON.parse(text);
+          return payload && typeof payload === 'object' ? payload : null;
+        } catch (error) {
+          return null;
+        }
+      }
+
+      function applyBridgePayload(payload) {
+        if (!payload || typeof payload !== 'object') {
+          return;
+        }
+        var bridgeUpdatedAt = String(payload.bridgeUpdatedAt || '');
+        if (!bridgeUpdatedAt || bridgeUpdatedAt === lastBridgeUpdatedAt) {
+          return;
+        }
+        lastBridgeUpdatedAt = bridgeUpdatedAt;
+        setPanelText(payload.statusText || '', payload.statusDesc || '', payload.orderNo || orderNo);
+        var nextRiderLng = parseCoord(payload.currentLng != null ? payload.currentLng : payload.riderLng);
+        var nextRiderLat = parseCoord(payload.currentLat != null ? payload.currentLat : payload.riderLat);
+        var nextCoordType = parseCoordType(payload.currentCoordType || payload.riderCoordType, 'gcj02');
+        var nextLabel = payload.currentLabel || liveLabel || '订单实时位置';
+        var nextTag = payload.currentTag || '';
+        var nextType = payload.currentType || 'car';
+        var nextColor = payload.currentColor || riderColor;
+        var nextValid = isValidBusinessCoord(nextRiderLng, nextRiderLat);
+        liveLng = nextValid ? nextRiderLng : null;
+        liveLat = nextValid ? nextRiderLat : null;
+        currentCoordType = nextCoordType;
+        liveLabel = nextLabel;
+        liveTag = nextTag;
+        liveType = nextType;
+        liveColor = nextColor;
+        if (!map) {
+          return;
+        }
+        if (!nextValid) {
+          if (riderMarker && riderMarker.overlay) {
+            riderMarker.overlay.setMap(null);
+          }
+          riderMarker = null;
+          fitBounds(map, basePoints.slice());
+          return;
+        }
+        var display = toDisplayCoord(nextRiderLng, nextRiderLat, nextCoordType, 'gcj02');
+        if (!Number.isFinite(display.lng) || !Number.isFinite(display.lat)) {
+          return;
+        }
+        var nextLatLng = new TMap.LatLng(display.lat, display.lng);
+        if (!riderMarker) {
+          riderMarker = createMarker(map, display.lat, display.lng, nextLabel, nextColor, nextTag, nextType);
+          fitBounds(map, basePoints.concat([riderMarker.latLng]));
+          return;
+        }
+        riderMarker.latLng = nextLatLng;
+        riderMarker.overlay.setState({
+          position: nextLatLng,
+          labelText: nextLabel,
+          color: nextColor,
+          tagText: nextTag,
+          markerType: nextType
+        });
+      }
+
+      function startBridgeSync() {
+        if (!bridgeKey) {
+          return;
+        }
+        setInterval(function () {
+          applyBridgePayload(getBridgePayload());
+        }, 1000);
+      }
+
       if (!key) {
         showEmpty('未配置腾讯地图 key');
         return;
@@ -391,12 +530,20 @@
         hideEmpty();
         var baseLng = merchantValid ? merchantLng : (liveValid ? liveLng : customerLng);
         var baseLat = merchantValid ? merchantLat : (liveValid ? liveLat : customerLat);
-        var baseDisplay = wgs84ToGcj02(baseLng, baseLat);
+        var baseCoordType = merchantValid
+          ? merchantCoordType
+          : (liveValid ? currentCoordType : customerCoordType);
+        var baseDisplay = toDisplayCoord(
+          baseLng,
+          baseLat,
+          baseCoordType,
+          merchantValid ? 'gcj02' : (liveValid ? 'gcj02' : 'wgs84')
+        );
         if (!Number.isFinite(baseDisplay.lng) || !Number.isFinite(baseDisplay.lat)) {
           showEmpty('订单位置转换失败');
           return;
         }
-        var map = new TMap.Map(document.getElementById('map'), {
+        map = new TMap.Map(document.getElementById('map'), {
           center: new TMap.LatLng(baseDisplay.lat, baseDisplay.lng),
           zoom: 16,
           pitch: 0,
@@ -405,14 +552,14 @@
         });
         var points = [];
         if (customerValid) {
-          var customerDisplay = wgs84ToGcj02(customerLng, customerLat);
+          var customerDisplay = toDisplayCoord(customerLng, customerLat, customerCoordType, 'wgs84');
           if (Number.isFinite(customerDisplay.lng) && Number.isFinite(customerDisplay.lat)) {
             var customer = createMarker(map, customerDisplay.lat, customerDisplay.lng, customerLabel, '#ef4444', '我', 'pin');
             points.push(customer.latLng);
           }
         }
         if (merchantValid) {
-          var merchantDisplay = wgs84ToGcj02(merchantLng, merchantLat);
+          var merchantDisplay = toDisplayCoord(merchantLng, merchantLat, merchantCoordType, 'gcj02');
           if (Number.isFinite(merchantDisplay.lng) && Number.isFinite(merchantDisplay.lat)) {
             var merchant = createMarker(map, merchantDisplay.lat, merchantDisplay.lng, merchantName || '商家位置', themeColor, '店', 'pin');
             points.push(merchant.latLng);
@@ -420,17 +567,30 @@
         }
 
         if (liveValid) {
-          var riderDisplay = wgs84ToGcj02(liveLng, liveLat);
+          var liveCoordType = isValidBusinessCoord(currentLng, currentLat) ? currentCoordType : riderCoordType;
+          var riderDisplay = toDisplayCoord(
+            liveLng,
+            liveLat,
+            liveCoordType,
+            'gcj02'
+          );
           if (Number.isFinite(riderDisplay.lng) && Number.isFinite(riderDisplay.lat)) {
-            var rider = createMarker(map, riderDisplay.lat, riderDisplay.lng, liveLabel, liveColor, liveTag, liveType);
-            points.push(rider.latLng);
+            riderMarker = createMarker(map, riderDisplay.lat, riderDisplay.lng, liveLabel, liveColor, liveTag, liveType);
+            points.push(riderMarker.latLng);
           }
         }
 
+        basePoints = points.filter(function (point) {
+          if (!riderMarker) {
+            return true;
+          }
+          return point !== riderMarker.latLng;
+        });
         fitBounds(map, points);
       }
 
       initMap();
+      startBridgeSync();
     })();
   </script>
 </body>

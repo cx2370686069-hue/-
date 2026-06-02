@@ -27,6 +27,9 @@ router.put('/info', authMiddleware, roleMiddleware('merchant'), merchantControll
 router.put('/status', authMiddleware, roleMiddleware('merchant'), merchantController.updateMerchantStatus);  // 店铺状态
 router.get('/stats', authMiddleware, roleMiddleware('merchant'), merchantController.getMerchantStats);  // 店铺统计
 router.post('/push/device/register', authMiddleware, roleMiddleware('merchant'), merchantPushController.registerDevice);
+// 商家退出登录时，需要把当前设备从商家推送目标里解绑。
+// 不然同一台手机后面切到用户端继续使用时，旧商家推送还有可能误打过来。
+router.post('/push/device/unregister', authMiddleware, roleMiddleware('merchant'), merchantPushController.unregisterDevice);
 
 // 商品分类管理
 router.post('/category', authMiddleware, roleMiddleware('merchant'), merchantController.createCategory);

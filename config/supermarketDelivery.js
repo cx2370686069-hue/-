@@ -15,11 +15,13 @@ const SUPERMARKET_DELIVERY_MODES = {
   RIDER_DELIVERY: 'rider_delivery'
 };
 
+// 这里存的是“订单创建当下用的分润规则快照名”。
+// 现在一期先不抽成，所以名字也直接写清楚，后面查订单就知道当时按哪套规则算的。
 const SUPERMARKET_SETTLEMENT_RULES = {
-  DEFAULT: 'default_takeout',
+  DEFAULT: 'default_takeout_phase1_no_commission',
   HYBRID_PENDING: 'supermarket_hybrid_pending',
-  SELF_DELIVERY_FIXED: 'supermarket_self_delivery_fixed_3',
-  RIDER_DELIVERY_FIXED: 'supermarket_rider_delivery_fixed_1'
+  SELF_DELIVERY_FIXED: 'supermarket_self_delivery_phase1_no_commission',
+  RIDER_DELIVERY_FIXED: 'supermarket_rider_delivery_phase1_no_commission'
 };
 
 // 老数据、中文输入、前端别名，最后都要被折算成系统内部统一值。

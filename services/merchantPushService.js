@@ -9,6 +9,7 @@ const GETUI_APP_ID = String(process.env.GETUI_APP_ID || process.env.UNIPUSH_APP_
 const GETUI_APP_KEY = String(process.env.GETUI_APP_KEY || process.env.UNIPUSH_APP_KEY || '').trim();
 const GETUI_MASTER_SECRET = String(process.env.GETUI_MASTER_SECRET || process.env.UNIPUSH_MASTER_SECRET || '').trim();
 const DEFAULT_PUSH_TTL_MS = Number(process.env.MERCHANT_PUSH_TTL_MS || 60 * 60 * 1000);
+const NEW_ORDER_PUSH_TTL_MS = Number(process.env.MERCHANT_NEW_ORDER_PUSH_TTL_MS || 60 * 1000);
 
 let cachedToken = '';
 let cachedTokenExpireAt = 0;
@@ -29,6 +30,18 @@ function sha256(text) {
 
 function safeTrim(value) {
   return String(value || '').trim();
+}
+
+// 这里专门判断“这条设备绑定还能不能作为商家推送目标”。
+// 现在同一个账号允许同时登录用户端 / 商家端 / 骑手端，
+// 所以后端不能只看 client_id，还得保证这条记录本身带着有效 app_id。
+// 否则旧脏数据、错误端上报、历史遗留绑定，都可能把商家推送误打到别的端上。
+function hasValidPushBinding(device = {}) {
+  const appId = safeTrim(device && device.app_id);
+  const bindingVersion = Number(device && device.binding_version || 0);
+  // 这里只认“新版商家端重新注册过”的设备。
+  // 历史旧记录即使还留在表里，也先不允许继续吃商家推送，避免把语音串到错误设备。
+  return !!appId && bindingVersion >= 2;
 }
 
 function safeJsonParse(value) {
@@ -143,13 +156,28 @@ function buildRemotePayload(payload = {}) {
   };
 }
 
+function isMerchantNewOrderPayload(payload = {}) {
+  const eventType = safeTrim(payload.eventType || payload.type).toLowerCase();
+  return ['new_order', 'merchant_new_order'].includes(eventType);
+}
+
+// 新订单是强实时消息，过了这一小段窗口再送达，商家端很容易把旧消息当成当前新单。
+// 所以新订单推送单独给一个更短的 TTL，避免骑手接单后旧推送才姗姗来迟。
+function resolvePushTtlMs(payload = {}) {
+  const ttl = isMerchantNewOrderPayload(payload) ? NEW_ORDER_PUSH_TTL_MS : DEFAULT_PUSH_TTL_MS;
+  if (!Number.isFinite(ttl) || ttl <= 0) {
+    return 60 * 1000;
+  }
+  return ttl;
+}
+
 // 这里生成真正发给个推的请求体。
 function buildGetuiBody(clientId, payload = {}) {
   const remotePayload = buildRemotePayload(payload);
   return {
     request_id: createRequestId('merchant_push'),
     settings: {
-      ttl: Number.isFinite(DEFAULT_PUSH_TTL_MS) ? DEFAULT_PUSH_TTL_MS : 60 * 60 * 1000
+      ttl: resolvePushTtlMs(payload)
     },
     audience: {
       cid: [clientId]
@@ -201,7 +229,7 @@ async function markDevicePushResult(deviceId, result = {}) {
 
 // 查当前商家账号下所有启用中的推送设备。
 async function getMerchantDevicesByUserId(merchantUserId) {
-  return MerchantPushDevice.findAll({
+  const devices = await MerchantPushDevice.findAll({
     where: {
       user_id: merchantUserId,
       push_enabled: true,
@@ -209,6 +237,7 @@ async function getMerchantDevicesByUserId(merchantUserId) {
     },
     order: [['last_seen_at', 'DESC']]
   });
+  return devices.filter((device) => hasValidPushBinding(device));
 }
 
 // 给某个商家账号下的所有设备群发远程通知。

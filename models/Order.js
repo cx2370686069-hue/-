@@ -45,6 +45,11 @@ const Order = sequelize.define('Order', {
     defaultValue: 'county',
     comment: '外卖业务类型：county-县城外卖（调度中心派单），town-乡镇外卖（站长直送）'
   },
+  dispatch_portal_snapshot: {
+    type: DataTypes.ENUM('county', 'town', 'merchant'),
+    allowNull: true,
+    comment: '下单时固化的调度落户快照：county-县城入口，town-乡镇入口，merchant-商家自配送入口'
+  },
   customer_town: {
     type: DataTypes.STRING(50),
     comment: '客户所在乡镇（用于站长分配/调度中心聚类）'
@@ -398,6 +403,11 @@ const Order = sequelize.define('Order', {
   cancel_reason: {
     type: DataTypes.STRING(255),
     comment: '取消原因'
+  },
+  special_cancel_locked: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false,
+    comment: '是否为定制/不可取消商品订单'
   },
   buyer_deleted_at: {
     type: DataTypes.DATE,

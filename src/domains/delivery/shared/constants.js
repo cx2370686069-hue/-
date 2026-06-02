@@ -2,6 +2,9 @@
 // 配送相关的域、身份、动作、责任角色、默认状态文案，统一从这里出，避免各文件写出不同口径。
 const DELIVERY_DOMAINS = {
   PLATFORM_DELIVERY: 'platform_delivery',
+  COUNTY_DISPATCH: 'county_dispatch',
+  TOWN_NATIVE_DELIVERY: 'town_native_delivery',
+  COUNTY_TO_TOWN_TRANSFER: 'county_to_town_transfer',
   SELF_DELIVERY: 'self_delivery'
 };
 
@@ -26,6 +29,7 @@ const DELIVERY_ACTIONS = {
 };
 
 const DELIVERY_RESPONSIBLE_ROLES = {
+  COUNTY_RIDER: 'county_rider',
   RIDER: 'rider',
   MERCHANT_DELIVERY: 'merchant_delivery',
   TOWN_STATIONMASTER: 'town_stationmaster',

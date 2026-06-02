@@ -46,6 +46,7 @@ router.delete('/rider/:id', adminRiderController.deleteMerchantDeliveryRider);
 // 后台订单管理
 router.get('/orders', adminOrderController.getOrderList);
 router.get('/orders/:id', adminOrderController.getOrderDetail);
+router.put('/orders/:id/cancel-audit', adminOrderController.auditCancelOrder);
 
 // 后台系统通知管理
 router.get('/notifications', adminNotificationController.getNotifications);

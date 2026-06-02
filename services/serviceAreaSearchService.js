@@ -225,6 +225,9 @@ const requestReverseGeocode = async ({ lng, lat }) => {
       key: TENCENT_MAP_CONFIG.key,
       location: `${gcjCoord.lat},${gcjCoord.lng}`,
       get_poi: 1,
+      // 地图选址页依赖这里的 POI 做“附近位置”列表。
+      // 默认逆地理有时只回地址不回足够 POI，所以这里按外卖收货地址场景扩大半径和数量。
+      poi_options: 'address_format=short;radius=1000;page_size=20;page_index=1;policy=2',
       output: 'json'
     },
     timeout: TENCENT_MAP_CONFIG.timeoutMs
@@ -967,6 +970,55 @@ const requestTencentSearchItems = async ({ keyword, region, lng, lat, pageSize }
   return Array.isArray(response?.data?.data) ? response.data.data : [];
 };
 
+const DEFAULT_NEARBY_KEYWORDS = ['小区', '学校', '超市', '村'];
+
+const normalizeNearbyKeywords = (keywords) => {
+  const rawList = Array.isArray(keywords)
+    ? keywords
+    : String(keywords || '').split(/[,\s，、|]+/);
+  const list = rawList
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .slice(0, 4);
+  return list.length ? Array.from(new Set(list)) : DEFAULT_NEARBY_KEYWORDS;
+};
+
+const clampNearbyRadius = (value) => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) {
+    return 1500;
+  }
+  return Math.min(Math.max(Math.floor(num), 200), 5000);
+};
+
+const requestTencentNearbyItems = async ({ keyword, lng, lat, pageSize, radius }) => {
+  if (!TENCENT_MAP_CONFIG.key) {
+    return [];
+  }
+
+  const gcjPoint = wgs84ToGcj02(lng, lat);
+  if (gcjPoint.lng === null || gcjPoint.lat === null) {
+    return [];
+  }
+
+  const response = await axios.get(TENCENT_MAP_CONFIG.placeSearchUrl, {
+    params: {
+      key: TENCENT_MAP_CONFIG.key,
+      keyword: String(keyword || '').trim(),
+      boundary: `nearby(${gcjPoint.lat},${gcjPoint.lng},${clampNearbyRadius(radius)},1)`,
+      page_size: clampLimit(pageSize, 5, 10),
+      output: 'json'
+    },
+    timeout: TENCENT_MAP_CONFIG.timeoutMs
+  });
+
+  if (Number(response?.data?.status) !== 0) {
+    throw new Error(response?.data?.message || '腾讯地图附近位置搜索失败');
+  }
+
+  return Array.isArray(response?.data?.data) ? response.data.data : [];
+};
+
 const suggestLocations = async ({ keyword, region, lng, lat, limit = 8 }) => {
   const keywordText = String(keyword || '').trim();
   if (!keywordText) {
@@ -1034,11 +1086,48 @@ const searchLocations = async ({ keyword, region, lng, lat, limit = 10 }) => {
   return dedupeLocationItems([...areaItems, ...tencentItems], safeLimit);
 };
 
+const searchNearbyLocations = async ({ lng, lat, keywords, limit = 10, radius = 1500 }) => {
+  const targetLng = toFiniteNumber(lng);
+  const targetLat = toFiniteNumber(lat);
+  if (!isUsableCoordinate(targetLng, targetLat)) {
+    return [];
+  }
+
+  const safeLimit = clampLimit(limit, 10, 20);
+  const keywordList = normalizeNearbyKeywords(keywords);
+  const perKeywordLimit = Math.max(3, Math.ceil(safeLimit / Math.min(keywordList.length, 4)));
+
+  // 这个接口只给地图选点页做兜底：逆地理 POI 为空时，按常见收货场景补一批附近地点。
+  // 不在每次拖动都强制打多次腾讯接口，避免用户同时在线时把地图服务打得太重。
+  const batches = await Promise.all(keywordList.map(async (keyword) => {
+    try {
+      return (await requestTencentNearbyItems({
+        keyword,
+        lng: targetLng,
+        lat: targetLat,
+        pageSize: perKeywordLimit,
+        radius
+      })).map((item) => normalizeTencentLocationItem(item, 'tencent_nearby'));
+    } catch (error) {
+      console.warn('[AreaSearch] 附近位置搜索失败', {
+        keyword,
+        lng: targetLng,
+        lat: targetLat,
+        message: error.message
+      });
+      return [];
+    }
+  }));
+
+  return dedupeLocationItems(batches.flat(), safeLimit);
+};
+
 module.exports = {
   searchAreas,
   resolveAreaByCoordinate,
   resolveLocationContextByCoordinate,
   reverseGeocodeByCoordinate,
   suggestLocations,
-  searchLocations
+  searchLocations,
+  searchNearbyLocations
 };

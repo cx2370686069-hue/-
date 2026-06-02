@@ -55,6 +55,12 @@ const MerchantPushDevice = sequelize.define('MerchantPushDevice', {
     allowNull: true,
     comment: '应用版本'
   },
+  binding_version: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 1,
+    comment: '推送绑定版本：1-历史旧版，2-新版商家端专用绑定'
+  },
   app_state: {
     type: DataTypes.ENUM('foreground', 'background', 'unknown'),
     allowNull: false,
@@ -97,7 +103,9 @@ const MerchantPushDevice = sequelize.define('MerchantPushDevice', {
 }, {
   tableName: 'merchant_push_devices',
   indexes: [
-    { unique: true, fields: ['client_id'] },
+    // 这里不能再只按 client_id 唯一。
+    // 同一套推送体系里，不同应用端必须再带上 app_id 一起隔离，避免历史旧绑定互相覆盖。
+    { unique: true, fields: ['client_id', 'app_id'] },
     { fields: ['merchant_id', 'push_enabled'] },
     { fields: ['user_id', 'push_enabled'] },
     { fields: ['last_seen_at'] }

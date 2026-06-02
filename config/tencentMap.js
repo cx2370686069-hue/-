@@ -11,6 +11,11 @@ module.exports = {
   directionDrivingUrl: String(
     process.env.TENCENT_DIRECTION_DRIVING_URL || 'https://apis.map.qq.com/ws/direction/v1/driving/'
   ).trim(),
+  // 骑手真实导航现在走的是腾讯原生“骑行”模式。
+  // 总览图蓝线如果还拿驾车接口去画，就会和原生导航路线对不上。
+  directionBicyclingUrl: String(
+    process.env.TENCENT_DIRECTION_BICYCLING_URL || 'https://apis.map.qq.com/ws/direction/v1/bicycling/'
+  ).trim(),
   geocoderUrl: String(
     process.env.TENCENT_GEOCODER_URL || 'https://apis.map.qq.com/ws/geocoder/v1/'
   ).trim(),

@@ -1,7 +1,7 @@
 // 这个文件可以当成“商家模块总入口”来看。
 // 只要和商家有关的事情，比如店铺资料、商品、分类、公开列表、搜索、订单、统计，基本都从这里进来。
 // 先引入后面会用到的模型、工具函数和配置。
-const { Merchant, Product, ProductCategory, ProductSpec, ProductDigitalProfile, Order, Review, ServiceArea, sequelize } = require('../models');
+const { Merchant, Product, ProductCategory, ProductSpec, ProductDigitalProfile, Order, Review, Refund, ServiceArea, sequelize } = require('../models');
 const { successResponse, errorResponse, calculateDistance } = require('../utils/helpers');
 const { Op } = require('sequelize');
 const {
@@ -13,6 +13,9 @@ const {
   SUPERMARKET_DELIVERY_PERMISSIONS,
   normalizeSupermarketDeliveryPermission
 } = require('../config/supermarketDelivery');
+const {
+  resolveMerchantDispatchPortal
+} = require('../config/dispatchPortal');
 const {
   buildImageAssetUrls,
   buildImageAssetList,
@@ -30,6 +33,41 @@ const NORMAL_SUPERMARKET_CHANNEL_LABEL = '普通超市';
 const COUNTY_FOOD_SCOPE = 'county_food';
 const COUNTY_SEARCH_PREVIEW_LIMIT = 4;
 const MERCHANT_LIST_PREVIEW_LIMIT = 4;
+const CANCEL_REFUND_APPLY_SOURCE = 'cancel';
+const REFUND_STATUS_LABEL_MAP = {
+  0: '待后台审核',
+  1: '审核通过，退款处理中',
+  2: '退款成功',
+  3: '后台已驳回',
+  4: '用户已撤销申请'
+};
+
+// 商家侧这次不负责审核取消申请，但至少要能看到“用户提过申请、后台怎么处理了”。
+// 这里把取消申请整理成一小段稳定结构，避免前端到处猜字段名。
+const serializeMerchantCancelRefund = (refund) => {
+  if (!refund) {
+    return null;
+  }
+  const plain = typeof refund.get === 'function' ? refund.get({ plain: true }) : refund;
+  return {
+    id: plain.id,
+    refund_no: plain.refund_no,
+    amount: Number(plain.amount || 0).toFixed(2),
+    status: Number(plain.status),
+    status_label: REFUND_STATUS_LABEL_MAP[Number(plain.status)] || '未知状态',
+    reason_type: plain.reason_type || '',
+    description: plain.description || '',
+    reject_reason: plain.reject_reason || '',
+    apply_source: plain.apply_source || '',
+    cancel_fee_amount: Number(plain.cancel_fee_amount || 0).toFixed(2),
+    is_full_refund: Boolean(plain.is_full_refund),
+    audit_note: plain.audit_note || '',
+    audit_role: plain.audit_role || '',
+    audit_user_id: plain.audit_user_id || null,
+    merchant_audit_at: plain.merchant_audit_at || null,
+    success_at: plain.success_at || null
+  };
+};
 // 数码商品扩展表对外只暴露下面这些字段。
 // 这样做的目的，是把返回结构收窄，避免把没用字段一股脑发给前端。
 const DIGITAL_PROFILE_ATTRIBUTES = [
@@ -85,6 +123,7 @@ const FORBIDDEN_MERCHANT_UPDATE_FIELDS = [
   'user_id',
   'binding_code',
   'business_scope',
+  'dispatch_portal',
   'town_code',
   'town_name',
   'audit_status',
@@ -1132,7 +1171,10 @@ const decorateProductsWithLightSpecs = async (products) => {
 };
 
 // 商家查订单时，不是所有订单都能看。
-// 这里会先根据业务线和乡镇归属，把查询范围收紧，避免越权看到别人的单。
+// merchant_id 本身已经把订单锁在“当前这家店”下面，所以这是最关键、也最稳的权限边界。
+// 乡镇店这里只保留 order_type，不再用 customer_town 精确匹配。
+// 原因是老地址/旧订单里可能存“郭陆滩”，商家表存“郭陆滩镇”，它们是同一个乡镇，
+// 如果这里强行相等，商家自己的待接单订单会被过滤掉，前端就像“没有收到订单”。
 const buildMerchantOrderScopeWhere = (merchant) => {
   const where = { merchant_id: merchant.id };
 
@@ -1143,9 +1185,6 @@ const buildMerchantOrderScopeWhere = (merchant) => {
 
   if (merchant.business_scope === 'town_food') {
     where.order_type = 'town';
-    if (merchant.town_name) {
-      where.customer_town = merchant.town_name;
-    }
   }
 
   return where;
@@ -1751,6 +1790,12 @@ exports.createMerchant = async (req, res, next) => {
       return res.status(400).json(errorResponse(supermarketDeliveryPermissionCheck.error));
     }
 
+    // 建店时就把调度入口定死，后面订单和调度地图直接继承这个归属。
+    const dispatchPortal = resolveMerchantDispatchPortal({
+      businessScope,
+      supermarketDeliveryPermission: supermarketDeliveryPermissionCheck.value
+    });
+
     if (latitude === null || longitude === null) {
       return res.status(400).json(errorResponse('店铺位置不能为空，请先完成地图选点'));
     }
@@ -1786,6 +1831,7 @@ exports.createMerchant = async (req, res, next) => {
       longitude,
       category: merchantCategory,
       business_scope: businessScope,
+      dispatch_portal: dispatchPortal,
       town_code: townArea ? townArea.area_code : null,
       town_name: townArea ? townArea.area_name : null,
       channel_tags: resolveMerchantChannelTags(req.body),
@@ -1890,6 +1936,12 @@ exports.updateMerchant = async (req, res, next) => {
         return res.status(400).json(errorResponse(permissionCheck.error));
       }
       updatePayload.supermarket_delivery_permission = permissionCheck.value;
+      // 商家不能手改 dispatch_portal，但只要配送权限合法变更，这里要同步刷新调度入口。
+      // 这样能避免“店铺权限变了，调度地图入口还停在旧口”的脏数据。
+      updatePayload.dispatch_portal = resolveMerchantDispatchPortal({
+        businessScope: merchant.business_scope,
+        supermarketDeliveryPermission: permissionCheck.value
+      });
       delete updatePayload.delivery_permission;
     }
 
@@ -2215,11 +2267,46 @@ exports.getMerchantOrders = async (req, res, next) => {
         model: require('../models').User,
         as: 'rider',
         attributes: ['nickname', 'phone']
+      }, {
+        model: Refund,
+        as: 'refunds',
+        attributes: [
+          'id',
+          'refund_no',
+          'amount',
+          'status',
+          'reason_type',
+          'description',
+          'reject_reason',
+          'apply_source',
+          'cancel_fee_amount',
+          'is_full_refund',
+          'audit_note',
+          'audit_role',
+          'audit_user_id',
+          'merchant_audit_at',
+          'success_at'
+        ],
+        separate: true,
+        order: [['id', 'DESC']]
       }],
       order: [['id', 'DESC']]
     });
 
-    res.json(successResponse(orders));
+    // 商家列表页主要看概览，所以这里只额外补“最近一条取消申请”。
+    // 这样商家一眼就能看出这单有没有用户申请过取消，不用每单点进详情里翻。
+    const decoratedOrders = orders.map((item) => {
+      const plain = item.get({ plain: true });
+      const latestCancelRefund = Array.isArray(plain.refunds)
+        ? plain.refunds.find((refund) => refund?.apply_source === CANCEL_REFUND_APPLY_SOURCE) || null
+        : null;
+      return {
+        ...plain,
+        latest_cancel_refund: serializeMerchantCancelRefund(latestCancelRefund)
+      };
+    });
+
+    res.json(successResponse(decoratedOrders));
   } catch (error) {
     next(error);
   }

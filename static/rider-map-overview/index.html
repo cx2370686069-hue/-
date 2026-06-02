@@ -1,0 +1,1145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <title>骑手配送总览</title>
+  <style>
+    html, body, #map-root {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #F8FAFC;
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+
+    #map-root {
+      position: relative;
+    }
+
+    /* 地图画布和底部操作区分开，避免后面初始化地图时把操作按钮一起清空。 */
+    #map-canvas {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+    }
+
+    .loading,
+    .error-panel {
+      position: absolute;
+      inset: 0;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      box-sizing: border-box;
+      color: #ffffff;
+      z-index: 2;
+    }
+
+    .loading {
+      /* 这个加载层现在改成静默模式。
+         原来每次进出地图页都会先看到一整屏黑底“腾讯地图总览加载中...”，
+         体感很像又进了一个无意义的过场页。
+         现在默认直接隐藏，只在真正失败时显示错误面板，让进入和退出都更干脆。 */
+      display: none;
+      pointer-events: none;
+      background: transparent;
+    }
+
+    .error-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      align-items: flex-start;
+      justify-content: flex-start;
+      padding-top: 96px;
+      background: #0f172a;
+    }
+
+    .error-title {
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    .error-desc {
+      font-size: 14px;
+      line-height: 1.8;
+      color: rgba(255, 255, 255, 0.78);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* 这个底部操作条专门给骑手在 H5 总览页里点完用户点位后使用。
+       因为 app 端的 web-view 会盖住外层普通 view，所以“开始导航”必须放在 H5 页面内部，真机上才能稳定看到。 */
+    .selection-panel {
+      position: absolute;
+      left: 16px;
+      right: 16px;
+      bottom: 20px;
+      z-index: 3;
+      display: none;
+    }
+
+    .selection-panel.is-visible {
+      display: block;
+    }
+
+    .selection-card {
+      position: relative;
+      border-radius: 16px;
+      padding: 14px 16px;
+      background: rgba(255, 255, 255, 0.96);
+      box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18);
+    }
+
+    .selection-close-btn {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      width: 40px;
+      height: 40px;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: #475569;
+      font-size: 28px;
+      line-height: 40px;
+      font-weight: 700;
+      text-align: center;
+      cursor: pointer;
+    }
+
+    .selection-close-btn:active {
+      background: rgba(148, 163, 184, 0.12);
+    }
+
+    .selection-info {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: #F8FAFC;
+    }
+
+    .selection-info-row + .selection-info-row {
+      margin-top: 8px;
+    }
+
+    .selection-info-label {
+      font-size: 14px;
+      color: #64748B;
+    }
+
+    .selection-info-value {
+      margin-top: 4px;
+      font-size: 16px;
+      line-height: 1.6;
+      color: #0F172A;
+      word-break: break-word;
+    }
+
+    .selection-goods-list {
+      margin-top: 4px;
+      padding-left: 18px;
+      color: #0F172A;
+    }
+
+    .selection-goods-item {
+      font-size: 15px;
+      line-height: 1.7;
+    }
+
+    .selection-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .selection-btn {
+      width: 100%;
+      border: 0;
+      border-radius: 12px;
+      height: 44px;
+      font-size: 15px;
+      font-weight: 700;
+      color: #ffffff;
+      background: #1677FF;
+    }
+
+    .selection-btn:disabled {
+      opacity: 0.6;
+    }
+
+    .selection-btn-confirm {
+      color: #E11D48;
+      background: #FFF1F2;
+    }
+
+    .confirm-mask {
+      position: absolute;
+      inset: 0;
+      z-index: 4;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      box-sizing: border-box;
+      background: rgba(15, 23, 42, 0.48);
+    }
+
+    .confirm-mask.is-visible {
+      display: flex;
+    }
+
+    .confirm-dialog {
+      width: 100%;
+      max-width: 320px;
+      border-radius: 18px;
+      padding: 18px 16px;
+      box-sizing: border-box;
+      background: #ffffff;
+      box-shadow: 0 18px 44px rgba(15, 23, 42, 0.22);
+    }
+
+    .confirm-title {
+      font-size: 17px;
+      font-weight: 700;
+      color: #0f172a;
+    }
+
+    .confirm-order {
+      margin-top: 10px;
+      font-size: 14px;
+      font-weight: 700;
+      color: #111827;
+    }
+
+    .confirm-desc {
+      margin-top: 8px;
+      font-size: 13px;
+      line-height: 1.7;
+      color: #475569;
+    }
+
+    .confirm-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .confirm-btn {
+      flex: 1;
+      border: 0;
+      border-radius: 12px;
+      height: 42px;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .confirm-btn-cancel {
+      background: #F3F4F6;
+      color: #374151;
+    }
+
+    .confirm-btn-submit {
+      background: #E11D48;
+      color: #ffffff;
+    }
+
+    .confirm-btn:disabled {
+      opacity: 0.65;
+    }
+
+    .success-toast {
+      position: absolute;
+      left: 50%;
+      top: 88px;
+      transform: translateX(-50%);
+      z-index: 5;
+      display: none;
+      padding: 10px 16px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.88);
+      color: #ffffff;
+      font-size: 15px;
+      font-weight: 700;
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.22);
+    }
+
+    .success-toast.is-visible {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div id="map-root">
+    <div id="map-canvas"></div>
+    <div id="loading" class="loading">腾讯地图总览加载中...</div>
+    <div id="success-toast" class="success-toast">送达成功</div>
+    <div id="selection-panel" class="selection-panel">
+      <div class="selection-card">
+        <!-- 这个 X 只负责收起底部白卡片，不清地图点位。
+             骑手如果想再看这单，重新点一下用户点位就能把白卡片展开回来。 -->
+        <button id="selection-close-btn" class="selection-close-btn" type="button" aria-label="关闭">×</button>
+        <div class="selection-info">
+          <div class="selection-info-row">
+            <div class="selection-info-label">商家名称</div>
+            <div id="selection-merchant" class="selection-info-value">未选中订单</div>
+          </div>
+          <div class="selection-info-row">
+            <div class="selection-info-label">用户信息</div>
+            <div id="selection-contact" class="selection-info-value">请先点一个用户点位</div>
+          </div>
+          <div class="selection-info-row">
+            <div class="selection-info-label">商品信息</div>
+            <ul id="selection-goods" class="selection-goods-list">
+              <li class="selection-goods-item">点红色用户点位后，这里会显示商品列表</li>
+            </ul>
+          </div>
+        </div>
+        <div class="selection-actions">
+          <button id="confirm-delivery-btn" class="selection-btn selection-btn-confirm" type="button">确认送达</button>
+          <button id="selection-btn" class="selection-btn" type="button">开始导航</button>
+        </div>
+      </div>
+    </div>
+    <div id="confirm-mask" class="confirm-mask">
+      <div class="confirm-dialog">
+        <div class="confirm-title">确认送达</div>
+        <div id="confirm-order" class="confirm-order">当前未选中订单</div>
+        <div class="confirm-desc">请确认这单已经送到客户手里，倒计时结束后才能真正提交。</div>
+        <div class="confirm-actions">
+          <button id="confirm-cancel-btn" class="confirm-btn confirm-btn-cancel" type="button">取消</button>
+          <button id="confirm-submit-btn" class="confirm-btn confirm-btn-submit" type="button">确认送达(3s)</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var OVERVIEW_BRIDGE_STORAGE_KEY = '__rider_overview_bridge_message__';
+      var OVERVIEW_HOST_PAYLOAD_STORAGE_KEY = '__rider_overview_host_payload__';
+      var SUPPRESSED_ORDER_STORAGE_KEY = '__rider_overview_suppressed_orders__';
+      var SUPPRESSED_ORDER_TTL_MS = 30000;
+      var CONFIRM_COUNTDOWN_SECONDS = 3;
+      var RIDER_POSITION_MAX_DISTANCE_METERS = 80000;
+
+      function getQueryValue(name) {
+        var search = window.location.search || '';
+        var params = new URLSearchParams(search);
+        return params.get(name) || '';
+      }
+
+      function safeText(value) {
+        return value == null ? '' : String(value).trim();
+      }
+
+      function escapeHtml(value) {
+        return safeText(value)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      function toNumber(value) {
+        var num = Number(value);
+        return Number.isFinite(num) ? num : null;
+      }
+
+      function hasValidCoords(lng, lat) {
+        return Number.isFinite(lng) && Number.isFinite(lat) && !(lng === 0 && lat === 0);
+      }
+
+      function parseCoordType(value, fallback) {
+        var normalized = safeText(value).toLowerCase();
+        if (normalized === 'gcj02' || normalized === 'wgs84') {
+          return normalized;
+        }
+        return fallback === 'gcj02' ? 'gcj02' : 'wgs84';
+      }
+
+      function isOutOfChina(lng, lat) {
+        if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
+          return true;
+        }
+        return lng < 72.004 || lng > 137.8347 || lat < 0.8293 || lat > 55.8271;
+      }
+
+      function transformLat(x, y) {
+        var ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
+        ret += ((20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0) / 3.0;
+        ret += ((20.0 * Math.sin(y * Math.PI) + 40.0 * Math.sin((y / 3.0) * Math.PI)) * 2.0) / 3.0;
+        ret += ((160.0 * Math.sin((y / 12.0) * Math.PI) + 320.0 * Math.sin((y * Math.PI) / 30.0)) * 2.0) / 3.0;
+        return ret;
+      }
+
+      function transformLng(x, y) {
+        var ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+        ret += ((20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0) / 3.0;
+        ret += ((20.0 * Math.sin(x * Math.PI) + 40.0 * Math.sin((x / 3.0) * Math.PI)) * 2.0) / 3.0;
+        ret += ((150.0 * Math.sin((x / 12.0) * Math.PI) + 300.0 * Math.sin((x / 30.0) * Math.PI)) * 2.0) / 3.0;
+        return ret;
+      }
+
+      function wgs84ToGcj02(lng, lat) {
+        if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
+          return { lng: null, lat: null };
+        }
+        if (isOutOfChina(lng, lat)) {
+          return { lng: lng, lat: lat };
+        }
+        var a = 6378245.0;
+        var ee = 0.00669342162296594323;
+        var dLat = transformLat(lng - 105.0, lat - 35.0);
+        var dLng = transformLng(lng - 105.0, lat - 35.0);
+        var radLat = (lat / 180.0) * Math.PI;
+        var magic = Math.sin(radLat);
+        magic = 1 - ee * magic * magic;
+        var sqrtMagic = Math.sqrt(magic);
+        dLat = (dLat * 180.0) / (((a * (1 - ee)) / (magic * sqrtMagic)) * Math.PI);
+        dLng = (dLng * 180.0) / ((a / sqrtMagic) * Math.cos(radLat) * Math.PI);
+        return {
+          lng: lng + dLng,
+          lat: lat + dLat
+        };
+      }
+
+      function toDisplayCoord(lng, lat, coordType) {
+        if (!hasValidCoords(lng, lat)) {
+          return { lng: null, lat: null };
+        }
+        // 这里把坐标口径写死：
+        // 1. 骑手实时定位按 gcj02 使用
+        // 2. 订单商家 / 用户坐标按 wgs84 存库
+        // 3. 进入腾讯地图前统一转成 gcj02
+        if (parseCoordType(coordType, 'wgs84') === 'gcj02') {
+          return { lng: lng, lat: lat };
+        }
+        return wgs84ToGcj02(lng, lat);
+      }
+
+      function toRadians(value) {
+        return Number(value) * Math.PI / 180;
+      }
+
+      function calculateDistanceMeters(fromLng, fromLat, toLng, toLat) {
+        if (!hasValidCoords(fromLng, fromLat) || !hasValidCoords(toLng, toLat)) {
+          return Number.NaN;
+        }
+        var earthRadius = 6371000;
+        var latDiff = toRadians(toLat - fromLat);
+        var lngDiff = toRadians(toLng - fromLng);
+        var a = Math.sin(latDiff / 2) * Math.sin(latDiff / 2)
+          + Math.cos(toRadians(fromLat)) * Math.cos(toRadians(toLat))
+          * Math.sin(lngDiff / 2) * Math.sin(lngDiff / 2);
+        var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return earthRadius * c;
+      }
+
+      function shouldUseRiderGeometry(riderLng, riderLat, orderPoints) {
+        if (!hasValidCoords(riderLng, riderLat)) {
+          return false;
+        }
+        if (!Array.isArray(orderPoints) || !orderPoints.length) {
+          return true;
+        }
+        var nearestDistance = Number.POSITIVE_INFINITY;
+        orderPoints.forEach(function (item) {
+          var distance = calculateDistanceMeters(riderLng, riderLat, item.lng, item.lat);
+          if (Number.isFinite(distance) && distance < nearestDistance) {
+            nearestDistance = distance;
+          }
+        });
+        if (!Number.isFinite(nearestDistance)) {
+          return false;
+        }
+        // 这里专门挡“偶发一次飞到千里之外”的脏骑手定位。
+        // 订单点位是后端订单里带出来的，相对更稳定；如果骑手点离最近订单都超过 80 公里，
+        // 基本可以判断这次定位样本不可信，再拿它去 fitBounds 只会把整张图拉飞。
+        if (nearestDistance > RIDER_POSITION_MAX_DISTANCE_METERS) {
+          console.warn('[rider-map-overview] 已忽略异常骑手定位，避免地图被拉到远处', {
+            riderLng: riderLng,
+            riderLat: riderLat,
+            nearestDistance: nearestDistance
+          });
+          return false;
+        }
+        return true;
+      }
+
+      function parsePayload() {
+        try {
+          var raw = getQueryValue('payload');
+          var payload = raw ? JSON.parse(decodeURIComponent(raw)) : {};
+          return filterSuppressedOrders(payload);
+        } catch (error) {
+          return {};
+        }
+      }
+
+      function readSuppressedOrders() {
+        try {
+          var raw = window.sessionStorage.getItem(SUPPRESSED_ORDER_STORAGE_KEY);
+          var parsed = raw ? JSON.parse(raw) : {};
+          return parsed && typeof parsed === 'object' ? parsed : {};
+        } catch (error) {
+          return {};
+        }
+      }
+
+      function writeSuppressedOrders(map) {
+        try {
+          window.sessionStorage.setItem(SUPPRESSED_ORDER_STORAGE_KEY, JSON.stringify(map || {}));
+        } catch (error) {
+          // 这里静默处理就行，本地缓存失败不能影响骑手继续送单。
+        }
+      }
+
+      function cleanupSuppressedOrders(map) {
+        var now = Date.now();
+        var nextMap = {};
+        Object.keys(map || {}).forEach(function (orderId) {
+          var expireAt = Number(map[orderId] || 0);
+          if (expireAt > now) {
+            nextMap[orderId] = expireAt;
+          }
+        });
+        return nextMap;
+      }
+
+      function rememberSuppressedOrder(orderId) {
+        var normalizedOrderId = safeText(orderId);
+        if (!normalizedOrderId) {
+          return;
+        }
+        var suppressedMap = cleanupSuppressedOrders(readSuppressedOrders());
+        suppressedMap[normalizedOrderId] = Date.now() + SUPPRESSED_ORDER_TTL_MS;
+        writeSuppressedOrders(suppressedMap);
+      }
+
+      function filterSuppressedOrders(payload) {
+        var nextPayload = payload && typeof payload === 'object' ? Object.assign({}, payload) : {};
+        var suppressedMap = cleanupSuppressedOrders(readSuppressedOrders());
+        writeSuppressedOrders(suppressedMap);
+        var suppressedIds = Object.keys(suppressedMap);
+        if (!suppressedIds.length) {
+          return nextPayload;
+        }
+        var orders = Array.isArray(nextPayload.orders) ? nextPayload.orders : [];
+        nextPayload.orders = orders.filter(function (item) {
+          return !suppressedMap[safeText(item && item.id)];
+        });
+        if (suppressedMap[safeText(nextPayload.selectedOrderId)]) {
+          nextPayload.selectedOrderId = '';
+        }
+        return nextPayload;
+      }
+
+      function createMarkerSvg(color, text) {
+        var encodedText = safeText(text || '').slice(0, 2);
+        var svg = [
+          '<svg xmlns="http://www.w3.org/2000/svg" width="44" height="56" viewBox="0 0 44 56">',
+          '<path d="M22 54C22 54 40 34.27 40 22C40 10.95 31.05 2 20 2S0 10.95 0 22c0 12.27 18 32 18 32z" transform="translate(2 0)" fill="' + color + '"/>',
+          '<circle cx="22" cy="22" r="10" fill="#ffffff"/>',
+          '<text x="22" y="26" text-anchor="middle" font-size="11" font-weight="700" fill="' + color + '">' + encodedText + '</text>',
+          '</svg>'
+        ].join('');
+        return 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
+      }
+
+      function showError(message) {
+        var root = document.getElementById('map-root');
+        if (!root) return;
+        root.innerHTML = [
+          '<div class="error-panel">',
+          '<div class="error-title">腾讯地图总览加载失败</div>',
+          '<div class="error-desc">' + escapeHtml(message || '未知错误') + '</div>',
+          '</div>'
+        ].join('');
+      }
+
+      function hideLoading() {
+        var loadingEl = document.getElementById('loading');
+        if (!loadingEl) return;
+        // 地图点位准备好后，就把加载蒙版关掉。
+        // 现在总览页不再强依赖蓝线，只保留点位和点击后开始导航这条主链。
+        loadingEl.style.display = 'none';
+      }
+
+      function postSelectedOrder(payload) {
+        return postMessageToUni('orderSelected', payload);
+      }
+
+      function postStartNavigation(payload) {
+        return postMessageToUni('startSelectedNavigation', payload);
+      }
+
+      function postConfirmDelivery(payload) {
+        return postMessageToUni('confirmSelectedDelivery', payload);
+      }
+
+      function postMessageToUni(action, payload) {
+        if (!payload) {
+          return false;
+        }
+        if (window.uni && typeof window.uni.postMessage === 'function') {
+          window.uni.postMessage({
+            data: {
+              action: action,
+              payload: payload
+            }
+          });
+          return true;
+        }
+        return postMessageByStorage(action, payload);
+      }
+
+      function postMessageByStorage(action, payload) {
+        if (!window.plus || !window.plus.storage) {
+          return false;
+        }
+        try {
+          var storageMessage = {
+            action: action,
+            payload: payload,
+            token: String(Date.now()) + '-' + Math.random().toString(16).slice(2)
+          };
+          window.plus.storage.setItem(OVERVIEW_BRIDGE_STORAGE_KEY, JSON.stringify(storageMessage));
+          return true;
+        } catch (error) {
+          return false;
+        }
+      }
+
+      function consumeHostPayloadStorage() {
+        // 这里专门接宿主页推过来的“最新总览 payload(载荷)”。
+        // 目的不是多做一层通信，而是避免宿主每次刷新都重设 web-view 的 src。
+        // 只要 src 不反复变化，H5 内部就不会越堆越多历史记录，返回时也不会先退网页自己那一层。
+        if (!window.plus || !window.plus.storage) {
+          return;
+        }
+        try {
+          var rawText = window.plus.storage.getItem(OVERVIEW_HOST_PAYLOAD_STORAGE_KEY);
+          if (!rawText) {
+            return;
+          }
+          var message = JSON.parse(rawText);
+          var token = safeText(message && message.token);
+          if (!token || token === window.__hostPayloadToken) {
+            return;
+          }
+          window.__hostPayloadToken = token;
+          if (message && message.payload && typeof message.payload === 'object') {
+            renderOverview(message.payload);
+          }
+        } catch (error) {
+          // 宿主推送失败时，这里静默跳过，至少保留当前地图可用。
+        }
+      }
+
+      function getSelectionLabel(orderPayload) {
+        var label = safeText(orderPayload && orderPayload.label);
+        if (label) {
+          return label;
+        }
+        var orderNo = safeText(orderPayload && orderPayload.orderNo);
+        return orderNo ? ('尾号' + orderNo.slice(-4)) : '当前订单';
+      }
+
+      function getPrivacyContactText(orderPayload) {
+        var name = safeText(orderPayload && orderPayload.privacyContactName);
+        var phone = safeText(orderPayload && orderPayload.privacyContactPhone);
+        if (name && phone) {
+          return name + ' · ' + phone;
+        }
+        return name || phone || '未提供';
+      }
+
+      function renderGoodsList(orderPayload) {
+        var goodsEl = document.getElementById('selection-goods');
+        if (!goodsEl) {
+          return;
+        }
+        var list = Array.isArray(orderPayload && orderPayload.goodsSummaryList)
+          ? orderPayload.goodsSummaryList.filter(function (item) {
+              return safeText(item);
+            })
+          : [];
+        if (!list.length) {
+          goodsEl.innerHTML = '<li class="selection-goods-item">当前订单暂未提供商品信息</li>';
+          return;
+        }
+        goodsEl.innerHTML = list.map(function (item) {
+          return '<li class="selection-goods-item">' + escapeHtml(item) + '</li>';
+        }).join('');
+      }
+
+      function renderSelectionPanel(orderPayload) {
+        var panel = document.getElementById('selection-panel');
+        var merchantEl = document.getElementById('selection-merchant');
+        var contactEl = document.getElementById('selection-contact');
+        var buttonEl = document.getElementById('selection-btn');
+        var confirmButtonEl = document.getElementById('confirm-delivery-btn');
+        if (!panel || !merchantEl || !contactEl || !buttonEl || !confirmButtonEl) {
+          return;
+        }
+        merchantEl.innerText = safeText(orderPayload && orderPayload.merchantName) || '未提供';
+        contactEl.innerText = getPrivacyContactText(orderPayload);
+        renderGoodsList(orderPayload);
+        buttonEl.disabled = false;
+        buttonEl.innerText = '开始导航';
+        confirmButtonEl.disabled = false;
+        // 这里按钮文案固定成“确认送达”，避免和上面的订单尾号重复，卡片更清爽。
+        confirmButtonEl.innerText = '确认送达';
+        panel.classList.add('is-visible');
+      }
+
+      function hideSelectionPanel() {
+        var panel = document.getElementById('selection-panel');
+        if (!panel) {
+          return;
+        }
+        panel.classList.remove('is-visible');
+      }
+
+      function showSuccessToast(message) {
+        var toastEl = document.getElementById('success-toast');
+        if (!toastEl) {
+          return;
+        }
+        toastEl.innerText = safeText(message) || '送达成功';
+        toastEl.classList.add('is-visible');
+      }
+
+      function hideSuccessToast() {
+        var toastEl = document.getElementById('success-toast');
+        if (!toastEl) {
+          return;
+        }
+        toastEl.classList.remove('is-visible');
+      }
+
+      function closeConfirmDialog() {
+        var maskEl = document.getElementById('confirm-mask');
+        if (window.__confirmCountdownTimer) {
+          clearInterval(window.__confirmCountdownTimer);
+          window.__confirmCountdownTimer = null;
+        }
+        if (maskEl) {
+          maskEl.classList.remove('is-visible');
+        }
+      }
+
+      function openConfirmDialog(orderPayload) {
+        var maskEl = document.getElementById('confirm-mask');
+        var orderEl = document.getElementById('confirm-order');
+        var submitButtonEl = document.getElementById('confirm-submit-btn');
+        if (!maskEl || !orderEl || !submitButtonEl) {
+          return;
+        }
+        var label = getSelectionLabel(orderPayload);
+        var statusText = safeText(orderPayload && orderPayload.statusText) || '配送中';
+        var countdown = CONFIRM_COUNTDOWN_SECONDS;
+        var countdownTimer = null;
+        orderEl.innerText = label + '，当前状态 ' + statusText;
+        submitButtonEl.disabled = true;
+        submitButtonEl.innerText = '确认送达(' + countdown + 's)';
+        submitButtonEl.onclick = function () {
+          if (submitButtonEl.disabled) {
+            return;
+          }
+          closeConfirmDialog();
+          setDeliverySubmittingState(true, label);
+          var posted = postConfirmDelivery(orderPayload);
+          if (!posted) {
+            setDeliverySubmittingState(false, label);
+            return;
+          }
+          // 这层 H5 目前拿不到外层页面的真实接口回执，
+          // 所以这里先做“本地成功提示 + 删掉当前订单”的即时反馈，避免骑手点完后又回到原卡片。
+          window.setTimeout(function () {
+            handleDeliverySuccess(orderPayload);
+          }, 900);
+        };
+        if (window.__confirmCountdownTimer) {
+          clearInterval(window.__confirmCountdownTimer);
+        }
+        countdownTimer = setInterval(function () {
+          countdown -= 1;
+          if (countdown <= 0) {
+            clearInterval(countdownTimer);
+            window.__confirmCountdownTimer = null;
+            submitButtonEl.disabled = false;
+            submitButtonEl.innerText = '确认送达';
+            return;
+          }
+          submitButtonEl.innerText = '确认送达(' + countdown + 's)';
+        }, 1000);
+        window.__confirmCountdownTimer = countdownTimer;
+        maskEl.classList.add('is-visible');
+      }
+
+      function setDeliverySubmittingState(isSubmitting, label) {
+        var confirmButtonEl = document.getElementById('confirm-delivery-btn');
+        var startButtonEl = document.getElementById('selection-btn');
+        if (!confirmButtonEl || !startButtonEl) {
+          return;
+        }
+        if (isSubmitting) {
+          confirmButtonEl.disabled = true;
+          confirmButtonEl.innerText = '正在送达...';
+          startButtonEl.disabled = true;
+          return;
+        }
+        confirmButtonEl.disabled = false;
+        confirmButtonEl.innerText = '确认送达';
+        startButtonEl.disabled = false;
+        startButtonEl.innerText = '开始导航';
+      }
+
+      function buildPayloadWithoutOrder(orderId) {
+        var currentPayload = window.__overviewPayload || {};
+        var currentOrders = Array.isArray(currentPayload.orders) ? currentPayload.orders : [];
+        var normalizedOrderId = safeText(orderId);
+        var nextOrders = currentOrders.filter(function (item) {
+          return safeText(item && item.id) !== normalizedOrderId;
+        });
+        return Object.assign({}, currentPayload, {
+          selectedOrderId: '',
+          orders: nextOrders
+        });
+      }
+
+      function handleDeliverySuccess(orderPayload) {
+        var orderId = safeText(orderPayload && orderPayload.orderId);
+        if (!orderId) {
+          setDeliverySubmittingState(false, '');
+          return;
+        }
+        rememberSuppressedOrder(orderId);
+        window.__overviewPayload = buildPayloadWithoutOrder(orderId);
+        window.__selectedOrderPayload = null;
+        showSuccessToast('送达成功');
+        closeConfirmDialog();
+        hideSelectionPanel();
+        setDeliverySubmittingState(false, '');
+        window.setTimeout(function () {
+          hideSuccessToast();
+          renderOverview(window.__overviewPayload);
+        }, 850);
+      }
+
+      function getMarkerStyleId(order, selectedOrderId) {
+        // 用户坐标现在统一改成红色，方便骑手一眼就知道“这些都是送货终点”。
+        // 这里不再区分“当前默认订单”和“其他订单”的颜色，只保留：
+        // 1. 选中的点：红色更突出
+        // 2. 其他用户点：同样红色系，避免地图上出现一红一紫看着像两种不同含义
+        if (safeText(order && order.id) === safeText(selectedOrderId)) {
+          return 'selected';
+        }
+        return 'primary';
+      }
+
+      function buildGeometries(payload) {
+        var geometries = [];
+        var riderDisplay = toDisplayCoord(
+          toNumber(payload.riderLng),
+          toNumber(payload.riderLat),
+          payload.riderCoordType || 'gcj02'
+        );
+        var selectedOrderId = safeText(payload.selectedOrderId);
+        var orderPoints = [];
+
+        var orders = Array.isArray(payload.orders) ? payload.orders : [];
+        orders.forEach(function (item, index) {
+          var display = toDisplayCoord(
+            toNumber(item && item.customerLng),
+            toNumber(item && item.customerLat),
+            item && item.customerCoordType || payload.customerCoordType || 'wgs84'
+          );
+          if (!hasValidCoords(display.lng, display.lat)) {
+            return;
+          }
+          orderPoints.push({ lng: display.lng, lat: display.lat });
+          var label = safeText(item && item.label) || ('订单' + (index + 1));
+          var statusText = safeText(item && item.statusText);
+          geometries.push({
+            id: 'order-' + safeText(item && item.id || index),
+            styleId: getMarkerStyleId(item, selectedOrderId),
+            position: new TMap.LatLng(display.lat, display.lng),
+            properties: {
+              title: safeText(item && item.merchantName) || (statusText ? (label + ' · ' + statusText) : label),
+              orderPayload: {
+                orderId: safeText(item && item.id),
+                orderNo: safeText(item && item.orderNo),
+                label: label,
+                status: item && item.status,
+                statusText: statusText,
+                merchantName: safeText(item && item.merchantName),
+                privacyContactName: safeText(item && item.privacyContactName),
+                privacyContactPhone: safeText(item && item.privacyContactPhone),
+                goodsSummaryList: Array.isArray(item && item.goodsSummaryList) ? item.goodsSummaryList : [],
+                merchantLng: safeText(item && item.merchantLng),
+                merchantLat: safeText(item && item.merchantLat),
+                merchantCoordType: safeText(item && item.merchantCoordType || payload.merchantCoordType || 'wgs84') || 'wgs84',
+                customerLng: safeText(item && item.customerLng),
+                customerLat: safeText(item && item.customerLat),
+                customerCoordType: safeText(item && item.customerCoordType || payload.customerCoordType || 'wgs84') || 'wgs84'
+              }
+            }
+          });
+        });
+
+        if (shouldUseRiderGeometry(riderDisplay.lng, riderDisplay.lat, orderPoints)) {
+          geometries.push({
+            id: 'rider',
+            styleId: 'rider',
+            position: new TMap.LatLng(riderDisplay.lat, riderDisplay.lng),
+            properties: {
+              title: '骑手当前位置'
+            }
+          });
+        }
+
+        return geometries;
+      }
+
+      function fitMapBounds(map, geometries) {
+        if (!map || !Array.isArray(geometries) || !geometries.length) {
+          return;
+        }
+        if (geometries.length === 1) {
+          map.setCenter(geometries[0].position);
+          map.setZoom(14);
+          return;
+        }
+        var bounds = new TMap.LatLngBounds();
+        geometries.forEach(function (item) {
+          bounds.extend(item.position);
+        });
+        map.fitBounds(bounds, { padding: 72 });
+      }
+
+      function renderOverview(payload) {
+        var safePayload = filterSuppressedOrders(payload);
+        window.__overviewPayload = safePayload;
+        window.__selectedOrderPayload = null;
+        hideSelectionPanel();
+        closeConfirmDialog();
+        hideSuccessToast();
+
+        var map = window.__overviewMap;
+        var marker = window.__overviewMarker;
+        var infoWindow = window.__overviewInfoWindow;
+        if (!map || !marker || !infoWindow) {
+          return;
+        }
+
+        var geometries = buildGeometries(safePayload);
+        if (!geometries.length) {
+          hideLoading();
+          showError('当前没有可展示的配送坐标，地图暂时无法展示。');
+          return;
+        }
+
+        infoWindow.close();
+        if (typeof marker.setGeometries === 'function') {
+          marker.setGeometries(geometries);
+        } else {
+          var canvas = document.getElementById('map-canvas');
+          if (!canvas) {
+            showError('地图画布初始化失败');
+            return;
+          }
+          canvas.innerHTML = '';
+          map = new TMap.Map(canvas, {
+            zoom: 13,
+            pitch: 0,
+            rotation: 0,
+            mapStyleId: 'style1',
+            showControl: false
+          });
+          infoWindow = new TMap.InfoWindow({
+            map: map,
+            position: geometries[0].position,
+            offset: { x: 0, y: -32 }
+          });
+          infoWindow.close();
+          marker = createMarkerLayer(map, geometries);
+          bindMarkerClick(marker, infoWindow);
+          window.__overviewMap = map;
+          window.__overviewMarker = marker;
+          window.__overviewInfoWindow = infoWindow;
+        }
+        fitMapBounds(map, geometries);
+      }
+
+      function bindMarkerClick(marker, infoWindow) {
+        if (!marker || !infoWindow) {
+          return;
+        }
+        marker.on('click', function (evt) {
+          var title = safeText(evt && evt.geometry && evt.geometry.properties && evt.geometry.properties.title) || '点位';
+          var orderPayload = evt && evt.geometry && evt.geometry.properties && evt.geometry.properties.orderPayload;
+          infoWindow.setPosition(evt.geometry.position);
+          infoWindow.setContent('<div style="padding:8px 10px;font-size:13px;line-height:1.6;">' + escapeHtml(title) + '</div>');
+          infoWindow.open();
+          if (orderPayload && safeText(orderPayload.orderId)) {
+            window.__selectedOrderPayload = orderPayload;
+            renderSelectionPanel(orderPayload);
+            setDeliverySubmittingState(false, getSelectionLabel(orderPayload));
+            closeConfirmDialog();
+            postSelectedOrder(orderPayload);
+          }
+        });
+      }
+
+      function createMarkerLayer(map, geometries) {
+        return new TMap.MultiMarker({
+          id: 'delivery-overview-marker',
+          map: map,
+          styles: {
+            rider: new TMap.MarkerStyle({
+              width: 30,
+              height: 38,
+              anchor: { x: 15, y: 38 },
+              src: createMarkerSvg('#1677FF', '骑')
+            }),
+            primary: new TMap.MarkerStyle({
+              width: 34,
+              height: 44,
+              anchor: { x: 17, y: 44 },
+              src: createMarkerSvg('#E11D48', '送')
+            }),
+            selected: new TMap.MarkerStyle({
+              width: 38,
+              height: 48,
+              anchor: { x: 19, y: 48 },
+              src: createMarkerSvg('#E11D48', '选')
+            }),
+            secondary: new TMap.MarkerStyle({
+              width: 28,
+              height: 38,
+              anchor: { x: 14, y: 38 },
+              src: createMarkerSvg('#E11D48', '送')
+            })
+          },
+          geometries: geometries
+        });
+      }
+
+      async function bootMap() {
+        var key = safeText(getQueryValue('key'));
+        if (!key) {
+          showError('缺少 key(地图密钥)，当前没法加载腾讯 H5 地图。');
+          return;
+        }
+
+        var payload = parsePayload();
+        window.__overviewPayload = payload;
+        var geometries = buildGeometries(payload);
+        if (!geometries.length) {
+          showError('当前没有可展示的配送中订单坐标，地图没法定位。');
+          return;
+        }
+
+        var loadingEl = document.getElementById('loading');
+        if (loadingEl) {
+          loadingEl.innerText = '正在加载送货总览地图...';
+        }
+
+        var canvas = document.getElementById('map-canvas');
+        if (!canvas) {
+          showError('地图画布初始化失败');
+          return;
+        }
+        canvas.innerHTML = '';
+
+        var map = new TMap.Map(canvas, {
+          zoom: 13,
+          pitch: 0,
+          rotation: 0,
+          mapStyleId: 'style1',
+          showControl: false
+        });
+        hideLoading();
+
+        var infoWindow = new TMap.InfoWindow({
+          map: map,
+          position: geometries[0].position,
+          offset: { x: 0, y: -32 }
+        });
+        infoWindow.close();
+
+        var marker = createMarkerLayer(map, geometries);
+        window.__overviewMap = map;
+        window.__overviewMarker = marker;
+        window.__overviewInfoWindow = infoWindow;
+
+        window.__selectedOrderPayload = null;
+        var selectionButton = document.getElementById('selection-btn');
+        var confirmDeliveryButton = document.getElementById('confirm-delivery-btn');
+        var confirmCancelButton = document.getElementById('confirm-cancel-btn');
+        var selectionCloseButton = document.getElementById('selection-close-btn');
+        var confirmMaskEl = document.getElementById('confirm-mask');
+        if (selectionButton) {
+          // 这里单独把“开始导航”按钮挂在 H5 页里。
+          // 用户先点点位，再点按钮，最后由 uni 页面去调用原生腾讯导航，职责分得更清楚。
+          selectionButton.addEventListener('click', function () {
+            var currentOrderPayload = window.__selectedOrderPayload;
+            if (currentOrderPayload && safeText(currentOrderPayload.orderId)) {
+              postStartNavigation(currentOrderPayload);
+            }
+          });
+        }
+        if (confirmDeliveryButton) {
+          // “确认送达”也放在 H5 卡片里，原因和“开始导航”一样：
+          // 真机里真正能稳定点到的就是 web-view 里面这层按钮。
+          confirmDeliveryButton.addEventListener('click', function () {
+            var currentOrderPayload = window.__selectedOrderPayload;
+            if (currentOrderPayload && safeText(currentOrderPayload.orderId)) {
+              openConfirmDialog(currentOrderPayload);
+            }
+          });
+        }
+        if (confirmCancelButton) {
+          confirmCancelButton.addEventListener('click', function () {
+            closeConfirmDialog();
+          });
+        }
+        if (selectionCloseButton) {
+          // 点 X 只收起底部白卡片，不退出页面，也不重置当前地图状态。
+          selectionCloseButton.addEventListener('click', function () {
+            hideSelectionPanel();
+          });
+        }
+        if (confirmMaskEl) {
+          confirmMaskEl.addEventListener('click', function (event) {
+            if (event.target === confirmMaskEl) {
+              closeConfirmDialog();
+            }
+          });
+        }
+        bindMarkerClick(marker, infoWindow);
+
+        fitMapBounds(map, geometries);
+        window.setInterval(consumeHostPayloadStorage, 280);
+        consumeHostPayloadStorage();
+      }
+
+      var script = document.createElement('script');
+      script.src = 'https://map.qq.com/api/gljs?v=1.exp&key=' + encodeURIComponent(safeText(getQueryValue('key')));
+      script.onload = bootMap;
+      script.onerror = function () {
+        showError('腾讯地图 JS SDK 加载失败，请检查 key(地图密钥) 或当前网络。');
+      };
+      document.head.appendChild(script);
+    })();
+  </script>
+</body>
+</html>

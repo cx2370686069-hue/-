@@ -112,7 +112,7 @@ API 地址：http://localhost:3000/api
 
 详细的 API 接口文档请查看：[API_DOC.md](./API_DOC.md)
 
-### 快速测试
+### 接口自查
 
 #### 1. 健康检查
 ```bash

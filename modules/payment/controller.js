@@ -1,5 +1,4 @@
-const crypto = require('crypto');
-const { Order, CountyOrderGroup, PaymentTransaction } = require('../../models');
+const { Order } = require('../../models');
 const Merchant = require('../../models/Merchant');
 const socketService = require('../../services/socketService');
 const { successResponse, errorResponse } = require('../../utils/helpers');
@@ -9,21 +8,12 @@ const paymentService = require('./service');
 // 这个文件是“支付控制器”。
 // 它主要负责三类入口：
 // 1. 用户发起预支付
-// 2. 开发环境内部 mock 确认支付
-// 3. 微信 / 支付宝支付回调进来后的控制层处理
+// 2. 微信 / 支付宝支付回调进来后的控制层处理
 const getOrderIdFromBody = (body) => {
   return body?.order_id || body?.orderId || body?.orderID || body?.id;
 };
 
 const isProduction = () => process.env.NODE_ENV === 'production';
-
-// ==================== 开发环境安全开关区 ====================
-// 仅在非生产环境且 PAYMENT_ENABLE_INTERNAL_MOCK_CONFIRM=true 才启用。
-// 生产环境这里会被强制关掉，避免出现“没付款但订单被放行”的事故。
-const isInternalMockConfirmEnabled = () => {
-  if (isProduction()) return false;
-  return process.env.PAYMENT_ENABLE_INTERNAL_MOCK_CONFIRM === 'true';
-};
 
 // 支付成功后，这里顺手把新订单消息推给相关商家端。
 const notifyMerchantsForOrders = async (orders = []) => {
@@ -74,66 +64,6 @@ exports.prepay = async (req, res, next) => {
         '预下单成功'
       )
     );
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * 校验当前登录用户是否拥有该笔交易的对应订单/拼单组
- * 用于内部 mock 支付确认接口，避免 A 用户给 B 用户的订单"付款"
- */
-const assertTransactionOwnedByUser = async (tx, userId) => {
-  if (!tx) return false;
-  if (tx.biz_type === 'county_order_group' && tx.group_id) {
-    const group = await CountyOrderGroup.findByPk(tx.group_id);
-    return !!(group && Number(group.user_id) === Number(userId));
-  }
-  if (tx.order_id) {
-    const order = await Order.findByPk(tx.order_id);
-    return !!(order && Number(order.user_id) === Number(userId));
-  }
-  return false;
-};
-
-// ==================== 开发环境 mock 支付区 ====================
-// 这条接口只给开发 / 测试环境用，目的是在没接真支付时先把下单链路跑通。
-exports.mockConfirm = async (req, res, next) => {
-  try {
-    if (!isInternalMockConfirmEnabled()) {
-      return res.status(403).json(errorResponse('内部支付确认入口未启用'));
-    }
-    const user = req.user;
-    const outTradeNo = req.body?.out_trade_no || req.body?.outTradeNo;
-    if (!outTradeNo) {
-      return res.status(400).json(errorResponse('缺少 out_trade_no'));
-    }
-
-    // 校验交易归属，防止越权代付
-    const tx = await PaymentTransaction.findOne({ where: { out_trade_no: outTradeNo } });
-    if (!tx) {
-      return res.status(404).json(errorResponse('支付交易不存在'));
-    }
-    const owned = await assertTransactionOwnedByUser(tx, user.id);
-    if (!owned) {
-      return res.status(403).json(errorResponse('无权确认该笔交易'));
-    }
-
-    const tradeNo = `MOCK-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-    const notifyId = `MOCK-NOTIFY-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-
-    // mock 模式金额仍以服务端 tx.amount 为权威，不接受前端传入的 amount，避免前端篡改
-    const { tx: txAfter, order, countyOrderGroup, orders } = await paymentService.confirmSuccess({
-      outTradeNo,
-      tradeNo,
-      notifyId,
-      amount: undefined,
-      notifyPayload: { source: 'mockConfirm', user_id: user.id },
-      channel: 'mock'
-    });
-
-    await notifyMerchantsForOrders(orders);
-    res.json(successResponse({ transaction: txAfter, order, county_order_group: countyOrderGroup, orders }, '内部支付确认成功'));
   } catch (error) {
     next(error);
   }

@@ -62,6 +62,11 @@ const Merchant = sequelize.define('Merchant', {
     allowNull: true,
     comment: '商家业务线：county_food-县城外卖，town_food-乡镇外卖'
   },
+  dispatch_portal: {
+    type: DataTypes.ENUM('county', 'town', 'merchant'),
+    allowNull: true,
+    comment: '调度落户口：county-县城调度入口，town-乡镇入口，merchant-商家自配送入口'
+  },
   town_code: {
     type: DataTypes.STRING(32),
     comment: '所属乡镇编码'
@@ -168,6 +173,7 @@ const Merchant = sequelize.define('Merchant', {
     { fields: ['audit_status'] },
     { fields: ['channel_tags'] },
     { fields: ['business_scope'] },
+    { fields: ['dispatch_portal'] },
     { fields: ['town_code'] }
   ]
 });

@@ -8,13 +8,47 @@ const LOCATION_WRITE_MIN_INTERVAL_MS = 3000;
 const LOCATION_SAME_POINT_SKIP_WINDOW_MS = 10000;
 const MERCHANT_DELIVERY_ROLE = 'merchant_delivery';
 
+// 乡镇字段是骑手大厅最容易“听到提醒却看不到单”的老坑：
+// 历史数据里可能同时存在“郭陆滩”“郭陆滩镇”“固始县郭陆滩镇”三种写法。
+// 如果列表查询还只按原始字符串硬匹配，socket 提醒能到，SQL 却会把单漏掉。
+// 这里统一做一层归一化，并补一组常见候选值给查询条件复用。
+const normalizeTownName = (value) =>
+  String(value || '')
+    .replace(/\s+/g, '')
+    .replace(/固始县/g, '')
+    .replace(/乡$/, '')
+    .replace(/镇$/, '')
+    .trim();
+
+const buildTownNameCandidates = (value) => {
+  const raw = String(value || '').trim();
+  const normalized = normalizeTownName(raw);
+  const candidates = new Set();
+
+  if (raw) {
+    candidates.add(raw);
+  }
+  if (normalized) {
+    candidates.add(normalized);
+    candidates.add(`${normalized}镇`);
+    candidates.add(`${normalized}乡`);
+    candidates.add(`固始县${normalized}`);
+    candidates.add(`固始县${normalized}镇`);
+    candidates.add(`固始县${normalized}乡`);
+  }
+
+  return Array.from(candidates).filter(Boolean);
+};
+
 // ==================== 配送身份与可见范围工具区 ====================
 // 这一段负责判断骑手属于县城配送、乡镇配送还是商家自配送，并据此收口可见订单范围。
 const resolveRiderScope = (user) => {
+  const resolvedTownName = normalizeTownName(user.town_name || user.rider_town || null);
+
   if (user.delivery_scope === 'town_delivery') {
     return {
       delivery_scope: 'town_delivery',
-      town_name: user.town_name || user.rider_town || null
+      town_name: resolvedTownName || null
     };
   }
 
@@ -28,7 +62,7 @@ const resolveRiderScope = (user) => {
   if (user.rider_kind === 'stationmaster' || user.rider_town) {
     return {
       delivery_scope: 'town_delivery',
-      town_name: user.town_name || user.rider_town || null
+      town_name: resolvedTownName || null
     };
   }
 
@@ -75,11 +109,14 @@ const buildRiderOwnedOrderWhere = (user) => {
 
   const scope = resolveRiderScope(user);
   const where = { rider_id: user.id };
+  const townNameCandidates = buildTownNameCandidates(scope.town_name);
 
   if (scope.delivery_scope === 'town_delivery') {
     where.order_type = 'town';
-    if (scope.town_name) {
-      where.customer_town = scope.town_name;
+    if (townNameCandidates.length === 1) {
+      where.customer_town = townNameCandidates[0];
+    } else if (townNameCandidates.length > 1) {
+      where.customer_town = { [Op.in]: townNameCandidates };
     }
     return where;
   }
@@ -110,18 +147,27 @@ const buildRiderVisibleOrderWhere = (user) => {
     return ownedWhere;
   }
 
+  const townNameCandidates = buildTownNameCandidates(scope.town_name);
+  const townWhere =
+    townNameCandidates.length === 1
+      ? townNameCandidates[0]
+      : { [Op.in]: townNameCandidates };
+
   return {
     [Op.or]: [
       {
         order_type: 'town',
-        customer_town: scope.town_name,
+        customer_town: townWhere,
         rider_id: user.id
       },
       {
         order_type: 'town',
-        customer_town: scope.town_name,
+        customer_town: townWhere,
         rider_id: null,
-        status: { [Op.in]: [1, 2, 3, 4] }
+        // 乡镇骑手池只能从“商家已接单”后开始展示。
+        // status=1 还只是用户已支付、等待商家接单；如果这里放出去，
+        // 骑手端提醒中心轮询到新订单后就会提前语音播报，和商家接单流程冲突。
+        status: { [Op.in]: [2, 3, 4] }
       },
       {
         is_transfer_order: true,
@@ -517,6 +563,9 @@ exports.getMyAssignedOrders = async (req, res, next) => {
     }
 
     const { status } = req.query;
+    // 注意这里调用的是当前文件里的本地查询函数，不是策略文件原函数。
+    // 本地函数本来就吃裸 user，如果这里再包一层 `{ user }`，
+    // SQL 条件里的 rider_id 会被拼成 undefined，订单列表会直接报错。
     const where = buildRiderVisibleOrderWhere(user);
     if (status) where.status = status;
 

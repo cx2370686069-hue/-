@@ -5,10 +5,11 @@ const http = require('http');
 const { DataTypes, QueryTypes, Op } = require('sequelize');
 require('dotenv').config();
 
-const { sequelize, ServiceArea, Merchant } = require('../models');
+const { sequelize, ServiceArea, Merchant, Order, OrderLog } = require('../models');
 const routes = require('../routes');
 const errorHandler = require('../middleware/errorHandler');
 const socketService = require('../services/socketService');
+const paymentService = require('../services/paymentService');
 const SERVICE_AREAS = require('../config/serviceAreas');
 const { parseStoredImageList } = require('../utils/imageAssets');
 const { ensureVariantsForLocalUploadUrl } = require('../utils/imageProcessor');
@@ -23,11 +24,164 @@ const { generateUniqueMerchantBindingCode } = require('../utils/merchantBinding'
 const app = express();
 // 支持从环境变量读取 PORT，为生产环境预留灵活性
 const PORT = process.env.PORT || 3000;
+// 这里显式指定走 IPv4 的 0.0.0.0，目的是避免某些服务器环境只表现为监听 tcp6 :::3000，
+// 结果让前端或网关按 IPv4 访问时进不来。以后如果你发现“服务明明启动了，但小程序一直 timeout”，
+// 先优先检查这里有没有被改回省略 host 的写法。
+const LISTEN_HOST = '0.0.0.0';
 const UPLOAD_IMAGE_CACHE_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 const HASHED_UPLOAD_FILE_RE = /^\d{10,}-\d+\.[A-Za-z0-9]+$/;
 const TRUST_PROXY = String(process.env.TRUST_PROXY || '').trim();
+const AUTO_CANCEL_UNACCEPTED_INTERVAL_MS = Math.max(parseInt(process.env.AUTO_CANCEL_UNACCEPTED_INTERVAL_MS, 10) || 60000, 30000);
+const AUTO_CANCEL_UNACCEPTED_TIMEOUT_MINUTES = Math.max(parseInt(process.env.AUTO_CANCEL_UNACCEPTED_TIMEOUT_MINUTES, 10) || 5, 1);
+// #region debug-point C:socket-upgrade-report
+const DEBUG_SOCKET_REPORT_URL = 'http://192.168.1.9:7778/event';
+const DEBUG_SOCKET_SESSION_ID = 'socket-timeout';
+const DEBUG_SOCKET_RUN_ID = 'pre-fix';
+function reportSocketDebug(hypothesisId, msg, data = {}) {
+  try {
+    const payload = JSON.stringify({
+      sessionId: DEBUG_SOCKET_SESSION_ID,
+      runId: DEBUG_SOCKET_RUN_ID,
+      hypothesisId,
+      traceId: data.traceId || '',
+      location: 'src/index.js',
+      msg,
+      data,
+      ts: Date.now()
+    });
+    const target = new URL(DEBUG_SOCKET_REPORT_URL);
+    const httpClient = target.protocol === 'https:' ? require('https') : require('http');
+    const req = httpClient.request({
+      hostname: target.hostname,
+      port: target.port,
+      path: target.pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload)
+      }
+    });
+    req.on('error', () => {});
+    req.write(payload);
+    req.end();
+  } catch (error) {}
+}
+// #endregion
 
 const server = http.createServer(app);
+
+// 已支付但商家长时间不接单时，这里由服务端定时兜底自动取消。
+// 这样不依赖任何前端在线，也不会因为用户没打开页面就漏执行。
+const runAutoCancelUnacceptedOrders = async () => {
+  const cutoff = new Date(Date.now() - AUTO_CANCEL_UNACCEPTED_TIMEOUT_MINUTES * 60 * 1000);
+  const candidates = await Order.findAll({
+    where: {
+      status: 1,
+      type: { [Op.ne]: 'errand' },
+      paid_at: { [Op.lte]: cutoff }
+    },
+    attributes: ['id'],
+    limit: 50,
+    order: [['paid_at', 'ASC']]
+  });
+
+  if (!candidates.length) {
+    return;
+  }
+
+  let changedCount = 0;
+  for (const candidate of candidates) {
+    let notifyUserId = null;
+    let notifyMerchantUserId = null;
+    let notifyOrder = null;
+
+    await sequelize.transaction(async (t) => {
+      const order = await Order.findByPk(candidate.id, {
+        transaction: t,
+        lock: t.LOCK.UPDATE
+      });
+      if (!order || Number(order.status) !== 1 || !order.paid_at || new Date(order.paid_at).getTime() > cutoff.getTime()) {
+        return;
+      }
+
+      await order.update({
+        status: 7,
+        cancel_reason: '商家超时未接单，系统自动取消'
+      }, { transaction: t });
+
+      await paymentService.processRefund({
+        order,
+        reason_type: '商家超时未接单',
+        description: `支付后超过 ${AUTO_CANCEL_UNACCEPTED_TIMEOUT_MINUTES} 分钟未接单，系统自动取消并全额退款`,
+        transaction: t,
+        apply_source: 'cancel',
+        responsibility_type: 'merchant',
+        cancel_fee_amount: 0,
+        is_full_refund: true
+      });
+
+      await OrderLog.create({
+        order_id: order.id,
+        operator_type: 'system',
+        action: '超时自动取消',
+        from_status: 1,
+        to_status: 7,
+        remark: `支付后超过 ${AUTO_CANCEL_UNACCEPTED_TIMEOUT_MINUTES} 分钟未接单，系统自动取消并退款`
+      }, { transaction: t });
+
+      notifyUserId = order.user_id || null;
+      notifyOrder = {
+        id: order.id,
+        order_no: order.order_no
+      };
+      if (order.merchant_id) {
+        const merchant = await Merchant.findByPk(order.merchant_id, {
+          attributes: ['user_id'],
+          transaction: t
+        });
+        notifyMerchantUserId = merchant?.user_id || null;
+      }
+      changedCount += 1;
+    });
+
+    if (notifyUserId && notifyOrder) {
+      socketService.notifyUserOrderUpdate(
+        notifyUserId,
+        notifyOrder,
+        `商家超时未接单，订单已自动取消并退款`
+      );
+    }
+    if (notifyMerchantUserId && notifyOrder) {
+      socketService.notifyMerchantReminder(notifyMerchantUserId, notifyOrder, {
+        eventType: 'merchant_order_auto_cancelled',
+        title: '订单已自动取消',
+        message: `订单 ${notifyOrder.order_no} 因超时未接单已自动取消`,
+        speechText: '有订单因超时未接单被系统自动取消',
+        soundType: 'merchant_order_cancelled',
+        priority: 'medium',
+        jumpPath: '/pages/order/list',
+        dedupeKey: `merchant_order_auto_cancelled:${notifyOrder.id}`
+      });
+    }
+  }
+
+  if (changedCount > 0) {
+    await socketService.broadcastDispatcherOrdersUpdate();
+    console.log(`✅ 自动任务：已处理 ${changedCount} 笔超时未接单自动取消订单`);
+  }
+};
+
+const startAutoCancelUnacceptedOrders = () => {
+  setInterval(() => {
+    runAutoCancelUnacceptedOrders().catch((error) => {
+      console.log('⚠️ 自动任务提示：超时未接单自动取消执行失败 ->', error.message);
+    });
+  }, AUTO_CANCEL_UNACCEPTED_INTERVAL_MS);
+
+  runAutoCancelUnacceptedOrders().catch((error) => {
+    console.log('⚠️ 自动任务提示：首次执行超时未接单自动取消失败 ->', error.message);
+  });
+};
 
 if (TRUST_PROXY) {
   app.set('trust proxy', TRUST_PROXY === 'true' ? true : TRUST_PROXY);
@@ -56,6 +210,17 @@ server.on('upgrade', (req) => {
   if (!req?.url || !req.url.startsWith('/socket.io')) {
     return;
   }
+  // #region debug-point C:upgrade-received
+  reportSocketDebug('C', '[DEBUG] backend socket upgrade received', {
+    traceId: new URL(req.url, `http://${req.headers?.host || 'localhost'}`).searchParams.get('debugTraceId') || '',
+    url: req.url,
+    host: req.headers?.host || '',
+    origin: req.headers?.origin || '',
+    forwardedProto: req.headers?.['x-forwarded-proto'] || '',
+    forwardedFor: req.headers?.['x-forwarded-for'] || '',
+    userAgent: req.headers?.['user-agent'] || ''
+  });
+  // #endregion
   console.log('[socket:upgrade:request]', {
     url: req.url,
     host: req.headers?.host || '',
@@ -97,6 +262,13 @@ app.use(
 app.use(
   '/merchant-map-picker',
   express.static(path.join(__dirname, '../static/merchant-map-picker'))
+);
+
+// 骑手配送总览地图必须走 http 页面。
+// 腾讯 JS 地图不支持 file:// 本地静态页，所以这里单独给骑手端挂一个静态入口。
+app.use(
+  '/rider-map-overview',
+  express.static(path.join(__dirname, '../static/rider-map-overview'))
 );
 
 // ==================== 统一响应包装区 ====================
@@ -217,6 +389,30 @@ const dropLegacyUniquePhoneIndexes = async () => {
   for (const index of uniquePhoneIndexes) {
     await qi.removeIndex('users', index.name);
     console.log(`✅ 自动迁移：已移除 users.${index.name} 唯一手机号索引`);
+  }
+};
+
+// 旧版 merchant_push_devices(商家推送设备表) 只对 client_id 做唯一约束。
+// 这会让不同应用端的历史设备绑定互相覆盖，最终把商家推送串到错误设备。
+// 这里启动时主动把“只有 client_id 的旧唯一索引”拆掉，后面改成 client_id + app_id 一起隔离。
+const dropLegacyMerchantPushClientOnlyIndexes = async () => {
+  const qi = sequelize.getQueryInterface();
+  const existingIndexes = await qi.showIndex('merchant_push_devices');
+  const legacyIndexes = (existingIndexes || []).filter((index) => {
+    if (!index?.name || !index?.unique || index.primary) {
+      return false;
+    }
+    const fields = Array.isArray(index.fields) ? index.fields : [];
+    if (fields.length !== 1) {
+      return false;
+    }
+    const fieldName = String(fields[0]?.attribute || fields[0]?.name || '').trim();
+    return fieldName === 'client_id';
+  });
+
+  for (const index of legacyIndexes) {
+    await qi.removeIndex('merchant_push_devices', index.name);
+    console.log(`✅ 自动迁移：已移除旧索引 merchant_push_devices.${index.name}`);
   }
 };
 
@@ -854,6 +1050,25 @@ const startServer = async () => {
     await ensureSystemNotificationReadsTable();
     await ensureUserFeedbacksTable();
     await ensureMerchantPushDevicesTable();
+    await ensureColumns('merchant_push_devices', [
+      {
+        name: 'binding_version',
+        definition: {
+          type: DataTypes.INTEGER,
+          allowNull: false,
+          defaultValue: 1,
+          comment: '推送绑定版本：1-历史旧版，2-新版商家端专用绑定'
+        }
+      }
+    ]);
+    await dropLegacyMerchantPushClientOnlyIndexes();
+    await ensureIndexes('merchant_push_devices', [
+      {
+        name: 'uk_merchant_push_devices_client_app',
+        fields: ['client_id', 'app_id'],
+        unique: true
+      }
+    ]);
     await ensureProductDigitalProfilesTable();
 
     // 自动数据库迁移：为 merchants 表添加 category 字段（如果不存在）
@@ -989,6 +1204,14 @@ const startServer = async () => {
             type: DataTypes.ENUM('county_food', 'town_food'),
             allowNull: true,
             comment: '商家业务线'
+          }
+        },
+        {
+          name: 'dispatch_portal',
+          definition: {
+            type: DataTypes.ENUM('county', 'town', 'merchant'),
+            allowNull: true,
+            comment: '调度落户口：county-县城入口，town-乡镇入口，merchant-商家自配送入口'
           }
         },
         {
@@ -1266,6 +1489,14 @@ const startServer = async () => {
           }
         },
         {
+          name: 'dispatch_portal_snapshot',
+          definition: {
+            type: DataTypes.ENUM('county', 'town', 'merchant'),
+            allowNull: true,
+            comment: '下单时固化的调度落户快照'
+          }
+        },
+        {
           name: 'items_json',
           definition: {
             type: DataTypes.TEXT('long'),
@@ -1487,6 +1718,77 @@ const startServer = async () => {
             allowNull: true,
             comment: '更新时间'
           }
+        },
+        {
+          name: 'special_cancel_locked',
+          definition: {
+            type: DataTypes.BOOLEAN,
+            allowNull: false,
+            defaultValue: false,
+            comment: '是否为定制/不可取消商品订单'
+          }
+        }
+      ]);
+
+      await ensureColumns('refunds', [
+        {
+          name: 'apply_source',
+          definition: {
+            type: DataTypes.STRING(30),
+            allowNull: false,
+            defaultValue: 'after_sale',
+            comment: '申请来源：after_sale-售后退款，cancel-取消订单'
+          }
+        },
+        {
+          name: 'responsibility_type',
+          definition: {
+            type: DataTypes.STRING(30),
+            allowNull: true,
+            comment: '责任归属：user-用户，merchant-商家，platform-平台'
+          }
+        },
+        {
+          name: 'cancel_fee_amount',
+          definition: {
+            type: DataTypes.DECIMAL(10, 2),
+            allowNull: false,
+            defaultValue: 0,
+            comment: '取消扣费金额'
+          }
+        },
+        {
+          name: 'is_full_refund',
+          definition: {
+            type: DataTypes.BOOLEAN,
+            allowNull: false,
+            defaultValue: false,
+            comment: '是否全额退款'
+          }
+        },
+        {
+          name: 'audit_role',
+          definition: {
+            type: DataTypes.STRING(30),
+            allowNull: true,
+            comment: '审核角色：admin-后台，merchant-商家'
+          }
+        },
+        {
+          name: 'audit_user_id',
+          definition: {
+            type: DataTypes.INTEGER,
+            allowNull: true,
+            comment: '审核人ID'
+          }
+        },
+        {
+          name: 'audit_note',
+          definition: {
+            type: DataTypes.STRING(255),
+            allowNull: true,
+            comment: '审核备注'
+          }
         }
       ]);
 
@@ -1521,14 +1823,16 @@ const startServer = async () => {
     }
 
     socketService.init(server);
+    startAutoCancelUnacceptedOrders();
 
-    server.listen(PORT, () => {
+    server.listen(PORT, LISTEN_HOST, () => {
       console.log(`
 ╔═══════════════════════════════════════════════╗
 ║                                               ║
 ║   🚀 跑腿后端服务已启动                        ║
 ║                                               ║
-║   访问地址：http://localhost:${PORT}            ║
+║   监听地址：http://${LISTEN_HOST}:${PORT}         ║
+║   本机访问：http://localhost:${PORT}            ║
 ║   API 地址：http://localhost:${PORT}/api         ║
 ║   WebSocket：ws://localhost:${PORT}             ║
 ║                                               ║

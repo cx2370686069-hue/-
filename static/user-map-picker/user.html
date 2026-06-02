@@ -258,11 +258,15 @@
       ;(function () {
         var DEFAULT_CENTER = { lat: 32.1313, lng: 115.654 }
         var map = null
-        var bridgeReady = false
         var isDragging = false
         var lastSearchToken = 0
+        var lastCenterRefreshToken = ''
         var searchTimer = null
         var selectedLocation = null
+        var theme = getQuery('theme') === 'town' ? 'town' : 'county'
+        // 这里和前端 APP 地图页共用同一个桥接 key。
+        // 如果 web-view 的 postMessage 因平台兼容问题没回到宿主，就退回到 plus.storage 兜底。
+        var APP_MAP_PICKER_BRIDGE_STORAGE_KEY = '__user_map_picker_bridge__'
         var loadingMaskEl = document.getElementById('loadingMask')
         var confirmBtnEl = document.getElementById('confirmBtn')
         var searchInputEl = document.getElementById('searchInput')
@@ -270,10 +274,6 @@
         var suggestPanelEl = document.getElementById('suggestPanel')
         var suggestStateEl = document.getElementById('suggestState')
         var suggestListEl = document.getElementById('suggestList')
-
-        document.addEventListener('UniAppJSBridgeReady', function () {
-          bridgeReady = true
-        })
 
         function getQuery(name) {
           var pairs = window.location.search.slice(1).split('&')
@@ -379,11 +379,18 @@
           suggestListEl.innerHTML = ''
         }
 
+        function wait(ms) {
+          return new Promise(function (resolve) {
+            setTimeout(resolve, ms)
+          })
+        }
+
         function buildSelectedDisplayItem() {
           if (!selectedLocation) return null
           return {
             title: String(selectedLocation.title || selectedLocation.name || selectedLocation.address || '已选位置').trim(),
             address: String(selectedLocation.address || selectedLocation.title || selectedLocation.name || '').trim(),
+            town: String(selectedLocation.town || '').trim(),
             longitude: selectedLocation.longitude,
             latitude: selectedLocation.latitude,
             gcj_longitude: selectedLocation.gcj_longitude,
@@ -415,17 +422,38 @@
           var result = []
           var seen = {}
 
+          // 候选地点列表这里要把乡镇名提前展示出来。
+          // 不然用户拖点时看到的只是“青松 / 赵西家”这类局部地名，无法确认是不是郭陆滩镇范围内。
+          function buildDisplayAddress(item) {
+            var baseAddress = String(item && (item.address || item.title || item.name) || '').trim()
+            if (theme !== 'town') {
+              return baseAddress
+            }
+            var townText = String(item && item.town || '').trim() || extractTown(baseAddress)
+            if (!townText) {
+              return baseAddress
+            }
+            if (!baseAddress) {
+              return townText
+            }
+            if (baseAddress.indexOf(townText) !== -1) {
+              return baseAddress
+            }
+            return townText + ' · ' + baseAddress
+          }
+
           function pushItem(item, forceSelected) {
             if (!item) return
             var normalized = Object.assign({}, item)
             if (forceSelected) {
               normalized._selected = true
             }
+            normalized.display_address = buildDisplayAddress(normalized)
             var lng = toFiniteNumber(normalized.gcj_longitude != null ? normalized.gcj_longitude : normalized.longitude)
             var lat = toFiniteNumber(normalized.gcj_latitude != null ? normalized.gcj_latitude : normalized.latitude)
             var key = [
               String(normalized.title || normalized.name || normalized.address || '').trim(),
-              String(normalized.address || '').trim(),
+              String(normalized.display_address || normalized.address || '').trim(),
               lng != null ? lng.toFixed(5) : '',
               lat != null ? lat.toFixed(5) : ''
             ].join('|')
@@ -513,6 +541,39 @@
           if (!value) return ''
           var match = value.match(/([^省市区县]{1,20}(?:镇|乡|街道))/)
           return match ? String(match[1] || '').trim() : ''
+        }
+
+        // 腾讯逆地理在乡镇道路、空地附近经常只能回“固始县”这一层。
+        // 这里补一条“按坐标反查平台服务区域”的链路，保证地图页能稳定拿到乡镇名和乡镇编码。
+        function normalizeResolvedTownArea(payload) {
+          var area = payload && typeof payload === 'object' ? payload : {}
+          var townName = String(area.town_name || area.area_name || area.town || '').trim()
+          var townCode = String(area.town_code || area.area_code || '').trim()
+          if (!townName && !townCode) {
+            return null
+          }
+          return {
+            town_name: townName,
+            town_code: townCode
+          }
+        }
+
+        function requestTownAreaByWgs(wgsPoint) {
+          if (theme !== 'town') {
+            return Promise.resolve(null)
+          }
+          if (!wgsPoint || wgsPoint.lng == null || wgsPoint.lat == null) {
+            return Promise.resolve(null)
+          }
+          return apiGet('/api/common/service-areas/resolve-by-location', {
+            lng: wgsPoint.lng,
+            lat: wgsPoint.lat,
+            area_type: 'town'
+          }).then(function (payload) {
+            return normalizeResolvedTownArea(payload)
+          }).catch(function () {
+            return null
+          })
         }
 
         function buildReversePoiItem(raw, reverseInfo, fallbackGcjLat, fallbackGcjLng) {
@@ -614,7 +675,69 @@
           return mapped
         }
 
-        function buildSelectionFromItem(item, reverseData) {
+        function hasUsefulNearbyItems(items) {
+          var list = Array.isArray(items) ? items : []
+          if (list.length >= 3) return true
+          return list.some(function (item) {
+            var source = String(item && item.source || '').trim()
+            return source && source !== 'reverse_geocode' && source !== 'reverse_fallback'
+          })
+        }
+
+        function mergeSuggestionItems() {
+          var merged = []
+          var seen = {}
+
+          function pushItem(item) {
+            if (!item) return
+            var lng = toFiniteNumber(item.gcj_longitude != null ? item.gcj_longitude : item.longitude)
+            var lat = toFiniteNumber(item.gcj_latitude != null ? item.gcj_latitude : item.latitude)
+            var key = [
+              String(item.title || item.name || item.address || '').trim(),
+              String(item.address || '').trim(),
+              lng != null ? lng.toFixed(6) : '',
+              lat != null ? lat.toFixed(6) : ''
+            ].join('|')
+            if (seen[key]) return
+            seen[key] = true
+            merged.push(item)
+          }
+
+          Array.prototype.slice.call(arguments).forEach(function (items) {
+            ;(Array.isArray(items) ? items : []).forEach(pushItem)
+          })
+
+          return merged
+        }
+
+        function requestNearbyItemsByWgs(wgsPoint) {
+          if (!wgsPoint || wgsPoint.lng == null || wgsPoint.lat == null) {
+            return Promise.resolve([])
+          }
+          return apiGet('/api/map/nearby', {
+            lng: wgsPoint.lng,
+            lat: wgsPoint.lat,
+            limit: 10,
+            radius: 1500
+          }).then(function (items) {
+            return Array.isArray(items) ? items : []
+          }).catch(function () {
+            return []
+          })
+        }
+
+        function resolveNearbyItems(gcjLat, gcjLng, reverseInfo, reverseItems, wgsPoint) {
+          // 正常情况下逆地理接口会直接带回附近 POI。
+          // 如果只拿到“已选位置”这种兜底项，就再按当前坐标查一次附近搜索，避免页面空着等用户手动挪动。
+          if (hasUsefulNearbyItems(reverseItems)) {
+            return Promise.resolve(reverseItems)
+          }
+          return requestNearbyItemsByWgs(wgsPoint).then(function (nearbyItems) {
+            return mergeSuggestionItems(reverseItems, nearbyItems)
+          })
+        }
+
+        function buildSelectionFromItem(item, reverseData, resolvedTownArea) {
           var gcjLng = toFiniteNumber(item && item.gcj_longitude)
           var gcjLat = toFiniteNumber(item && item.gcj_latitude)
           var wgsLng = toFiniteNumber(item && item.longitude)
@@ -639,9 +762,68 @@
             province: String(reverseInfo.province || item && item.province || '').trim(),
             city: String(reverseInfo.city || item && item.city || '').trim(),
             district: String(reverseInfo.district || item && item.district || '').trim(),
-            town: String(reverseInfo.town || item && item.town || '').trim(),
+            town: String(
+              resolvedTownArea && resolvedTownArea.town_name ||
+              reverseInfo.town ||
+              item && item.town ||
+              ''
+            ).trim(),
+            town_code: String(
+              resolvedTownArea && resolvedTownArea.town_code ||
+              item && (item.town_code || item.area_code) ||
+              ''
+            ).trim(),
+            area_code: String(
+              resolvedTownArea && resolvedTownArea.town_code ||
+              item && (item.area_code || item.town_code) ||
+              ''
+            ).trim(),
             street: String(reverseInfo.street || '').trim(),
             source: String(item && item.source || 'user_remote_map_picker').trim()
+          }
+        }
+
+        function buildSelectionFromCenter(gcjLat, gcjLng, reverseData, fallbackItem, resolvedTownArea) {
+          var reverseInfo = reverseData || {}
+          var wgsPoint = gcj02ToWgs84(gcjLng, gcjLat)
+          var fallbackTitle = String(
+            fallbackItem && (fallbackItem.title || fallbackItem.name || fallbackItem.address) || ''
+          ).trim()
+          var fallbackAddress = String(
+            fallbackItem && (fallbackItem.address || fallbackItem.title || fallbackItem.name) || ''
+          ).trim()
+          var finalAddress = String(reverseInfo.address || fallbackAddress || fallbackTitle || '已选位置').trim()
+          var finalTitle = String(fallbackTitle || reverseInfo.address || fallbackAddress || '已选位置').trim()
+          return {
+            title: finalTitle || finalAddress || '已选位置',
+            address: finalAddress || finalTitle || '已选位置',
+            name: finalTitle || finalAddress || '已选位置',
+            longitude: wgsPoint.lng,
+            latitude: wgsPoint.lat,
+            gcj_longitude: gcjLng,
+            gcj_latitude: gcjLat,
+            coord_type: 'wgs84',
+            province: String(reverseInfo.province || fallbackItem && fallbackItem.province || '').trim(),
+            city: String(reverseInfo.city || fallbackItem && fallbackItem.city || '').trim(),
+            district: String(reverseInfo.district || fallbackItem && fallbackItem.district || '').trim(),
+            town: String(
+              resolvedTownArea && resolvedTownArea.town_name ||
+              reverseInfo.town ||
+              fallbackItem && fallbackItem.town ||
+              ''
+            ).trim(),
+            town_code: String(
+              resolvedTownArea && resolvedTownArea.town_code ||
+              fallbackItem && (fallbackItem.town_code || fallbackItem.area_code) ||
+              ''
+            ).trim(),
+            area_code: String(
+              resolvedTownArea && resolvedTownArea.town_code ||
+              fallbackItem && (fallbackItem.area_code || fallbackItem.town_code) ||
+              ''
+            ).trim(),
+            street: String(reverseInfo.street || fallbackItem && fallbackItem.street || '').trim(),
+            source: 'user_remote_map_picker_center'
           }
         }
 
@@ -670,6 +852,45 @@
           return {
             lat: center.getLat(),
             lng: center.getLng()
+          }
+        }
+
+        function getMapOffsetFromPin() {
+          var pinEl = document.querySelector('.center-pin')
+          var mapEl = document.getElementById('mapContainer')
+          if (!pinEl || !mapEl) {
+            return { x: 0, y: 0 }
+          }
+          var pinRect = pinEl.getBoundingClientRect()
+          var mapRect = mapEl.getBoundingClientRect()
+          var anchorX = pinRect.left + pinRect.width / 2 - mapRect.left
+          var anchorY = pinRect.top + pinRect.height - mapRect.top
+          return {
+            x: anchorX - mapRect.width / 2,
+            y: anchorY - mapRect.height / 2
+          }
+        }
+
+        function syncMapOffsetWithPin() {
+          if (!map || typeof map.setOffset !== 'function') return
+          var offset = getMapOffsetFromPin()
+          map.setOffset(offset)
+        }
+
+        function bindWindowEvents() {
+          window.addEventListener('resize', function () {
+            syncMapOffsetWithPin()
+          })
+          window.addEventListener('orientationchange', function () {
+            syncMapOffsetWithPin()
+          })
+        }
+
+        function getInitialMapOffset() {
+          try {
+            return getMapOffsetFromPin()
+          } catch (err) {
+            return { x: 0, y: 0 }
           }
         }
 
@@ -738,7 +959,7 @@
                 (active ? '<div class="suggest-check">✓</div>' : '') +
                 '</div>' +
                 '<div class="suggest-address">' +
-                escapeHtml(item.address || '暂无详细地址') +
+                escapeHtml(item.display_address || item.address || '暂无详细地址') +
                 '</div>' +
                 '</div>' +
                 '</div>'
@@ -791,7 +1012,12 @@
           return bestItem
         }
 
-        function fetchReverseByGcj(gcjLat, gcjLng, sourceText) {
+        function isStaleCenterRefresh(refreshToken) {
+          return refreshToken && refreshToken !== lastCenterRefreshToken
+        }
+
+        function fetchReverseByGcj(gcjLat, gcjLng, sourceText, options) {
+          options = options || {}
           var wgsPoint = gcj02ToWgs84(gcjLng, gcjLat)
           if (wgsPoint.lng == null || wgsPoint.lat == null) {
             return Promise.resolve(null)
@@ -802,45 +1028,87 @@
             lat: wgsPoint.lat
           })
             .then(function (payload) {
+              if (isStaleCenterRefresh(options.refreshToken)) {
+                return null
+              }
               var reverseInfo = extractReverseAddress(payload || {})
               var nearbyItems = extractReversePoiItems(payload || {}, reverseInfo, gcjLat, gcjLng)
-              suggestListEl._rawItems = nearbyItems
-              updateSelection(
-                buildSelectionFromItem(
-                  nearbyItems[0] || {
-                    title: reverseInfo.address,
-                    address: reverseInfo.address,
-                    longitude: wgsPoint.lng,
-                    latitude: wgsPoint.lat,
-                    gcj_longitude: gcjLng,
-                    gcj_latitude: gcjLat,
-                    source: 'reverse_geocode'
-                  },
-                  reverseInfo
-                ),
-                sourceText || '当前位置已更新'
-              )
-              return reverseInfo
+              return Promise.all([
+                resolveNearbyItems(gcjLat, gcjLng, reverseInfo, nearbyItems, wgsPoint),
+                requestTownAreaByWgs(wgsPoint)
+              ]).then(function (results) {
+                var finalNearbyItems = Array.isArray(results[0]) ? results[0] : []
+                var resolvedTownArea = results[1]
+                  if (isStaleCenterRefresh(options.refreshToken)) {
+                    return null
+                  }
+                  suggestListEl._rawItems = finalNearbyItems
+                  // 这里不能再把最近 POI 的坐标当成最终提交坐标。
+                  // 用户拖红色指针选的是“地图中心点”，不是“最近地标”。
+                  // 所以这一步只借 finalNearbyItems[0] 补文案，真正保存的经纬度必须继续跟着中心点走。
+                  updateSelection(
+                    buildSelectionFromCenter(gcjLat, gcjLng, reverseInfo, finalNearbyItems[0] || null, resolvedTownArea),
+                    sourceText || '当前位置已更新'
+                  )
+                  return {
+                    reverseInfo: reverseInfo,
+                    resolvedTownArea: resolvedTownArea
+                  }
+                })
             })
             .catch(function () {
-              suggestListEl._rawItems = []
-              updateSelection(
-                buildSelectionFromItem(
-                  {
-                    title: '已选位置',
-                    address: '已选位置',
-                    longitude: wgsPoint.lng,
-                    latitude: wgsPoint.lat,
-                    gcj_longitude: gcjLng,
-                    gcj_latitude: gcjLat,
-                    source: 'reverse_fallback'
-                  },
-                  {}
-                ),
-                '地址识别失败，请确认后手动补充门牌号'
-              )
-              return null
+              if (isStaleCenterRefresh(options.refreshToken)) {
+                return null
+              }
+              if (options.retryCount !== 1) {
+                return wait(350).then(function () {
+                  return fetchReverseByGcj(gcjLat, gcjLng, sourceText, Object.assign({}, options, { retryCount: 1 }))
+                })
+              }
+              return requestNearbyItemsByWgs(wgsPoint).then(function (nearbyItems) {
+                if (isStaleCenterRefresh(options.refreshToken)) {
+                  return null
+                }
+                return requestTownAreaByWgs(wgsPoint).then(function (resolvedTownArea) {
+                  if (isStaleCenterRefresh(options.refreshToken)) {
+                    return null
+                  }
+                  suggestListEl._rawItems = nearbyItems
+                  updateSelection(
+                    buildSelectionFromItem(
+                      {
+                        title: nearbyItems[0] && nearbyItems[0].title || '已选位置',
+                        address: nearbyItems[0] && nearbyItems[0].address || '已选位置',
+                        longitude: wgsPoint.lng,
+                        latitude: wgsPoint.lat,
+                        gcj_longitude: gcjLng,
+                        gcj_latitude: gcjLat,
+                        source: 'reverse_fallback'
+                      },
+                      nearbyItems[0] || {},
+                      resolvedTownArea
+                    ),
+                    nearbyItems.length ? '已加载附近位置' : '地址识别失败，请确认后手动补充门牌号'
+                  )
+                  return {
+                    reverseInfo: nearbyItems[0] || {},
+                    resolvedTownArea: resolvedTownArea
+                  }
+                })
+              })
             })
+        }
+
+        function refreshCenterByGcj(gcjLat, gcjLng, sourceText) {
+          var refreshToken = String(Date.now()) + '-' + Math.random().toString(16).slice(2)
+          lastCenterRefreshToken = refreshToken
+          setSuggestState('正在加载附近位置...')
+          clearSuggestList()
+          showSuggestPanel(true)
+          return fetchReverseByGcj(gcjLat, gcjLng, sourceText, {
+            refreshToken: refreshToken,
+            retryCount: 0
+          })
         }
 
         function requestSuggestions(keyword, mode) {
@@ -942,8 +1210,15 @@
           showSuggestPanel(false)
           moveMapTo(item)
           return fetchReverseByGcj(item.gcj_latitude, item.gcj_longitude, sourceText || '已定位到搜索结果')
-            .then(function (reverseInfo) {
-              updateSelection(buildSelectionFromItem(item, reverseInfo || {}), sourceText || '已定位到搜索结果')
+            .then(function (result) {
+              updateSelection(
+                buildSelectionFromItem(
+                  item,
+                  result && result.reverseInfo || {},
+                  result && result.resolvedTownArea || null
+                ),
+                sourceText || '已定位到搜索结果'
+              )
               return true
             })
         }
@@ -957,7 +1232,6 @@
 
         function postSelectedLocation(location) {
           if (window.uni && typeof window.uni.postMessage === 'function') {
-            bridgeReady = true
             window.uni.postMessage({
               data: {
                 action: 'locationPicked',
@@ -966,7 +1240,26 @@
             })
             return true
           }
-          return bridgeReady
+          return postSelectedLocationByStorage(location)
+        }
+
+        function postSelectedLocationByStorage(location) {
+          if (!location || !window.plus || !window.plus.storage) {
+            return false
+          }
+          try {
+            window.plus.storage.setItem(
+              APP_MAP_PICKER_BRIDGE_STORAGE_KEY,
+              JSON.stringify({
+                action: 'locationPicked',
+                payload: location,
+                token: String(Date.now()) + '-' + Math.random().toString(16).slice(2)
+              })
+            )
+            return true
+          } catch (error) {
+            return false
+          }
         }
 
         function bindSearchEvents() {
@@ -1009,30 +1302,55 @@
         }
 
         function bindMapEvents() {
+          function refreshFromCurrentCenter(statusText) {
+            var center = getMapCenterGcj()
+            if (!center) return Promise.resolve(null)
+            return refreshCenterByGcj(center.lat, center.lng, statusText || '当前位置已更新')
+          }
+
           map.on('dragstart', function () {
             isDragging = true
             setStatus('地图拖动中...')
           })
           map.on('dragend', function () {
             isDragging = false
-            var center = getMapCenterGcj()
-            if (!center) return
-            renderSuggestions([], '输入地址后会显示联想位置')
-            fetchReverseByGcj(center.lat, center.lng, '当前位置已更新')
+            refreshFromCurrentCenter('当前位置已更新')
+          })
+          map.on('zoomend', function () {
+            // 之前这里只监听拖动结束，点 + / - 缩放后中心点不会重新识别，
+            // 用户看到的红点和实际提交的 selectedLocation 就会脱节。
+            refreshFromCurrentCenter('缩放后位置已更新')
           })
         }
 
         function handleConfirm() {
-          if (!selectedLocation) return
           setStatus('正在确认位置...')
-          if (postSelectedLocation(selectedLocation)) {
+          var center = getMapCenterGcj()
+          if (!center) {
+            setStatus('当前位置读取失败，请稍后重试')
             return
           }
-          setStatus('页面通信未就绪，请稍后再试')
+          // 确认前再强制按地图当前中心点刷新一次，
+          // 避免缩放事件刚结束时 selectedLocation 还停留在上一帧中心。
+          refreshCenterByGcj(center.lat, center.lng, '正在确认当前位置...')
+            .then(function () {
+              if (!selectedLocation) {
+                setStatus('当前位置识别失败，请稍后重试')
+                return
+              }
+              if (postSelectedLocation(selectedLocation)) {
+                return
+              }
+              setStatus('页面通信未就绪，请稍后再试')
+            })
+            .catch(function () {
+              setStatus('当前位置识别失败，请稍后重试')
+            })
         }
 
         function initMap() {
           var center = getInitialCenter()
+          var mapOffset = getInitialMapOffset()
           var initialAddress = String(getQuery('address') || '').trim()
           if (initialAddress) {
             searchInputEl.value = initialAddress
@@ -1041,14 +1359,18 @@
             center: new window.TMap.LatLng(center.lat, center.lng),
             zoom: 17,
             pitch: 0,
-            rotation: 0
+            rotation: 0,
+            // 页面上的选点针是放在上半屏的，不在几何中心。
+            // 这里直接把地图显示中心偏移到针尖下方，这样 getCenter()、确认位置、重新打开地图三者就保持同一个点。
+            offset: mapOffset
           })
 
           bindSearchEvents()
           bindMapEvents()
+          bindWindowEvents()
           confirmBtnEl.addEventListener('click', handleConfirm)
           setLoading(false)
-          fetchReverseByGcj(center.lat, center.lng, '已定位到当前位置')
+          refreshCenterByGcj(center.lat, center.lng, '已定位到当前位置')
         }
 
         loadMapScript()

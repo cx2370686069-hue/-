@@ -3,43 +3,7 @@
 const express = require('express');
 const router = express.Router();
 const orderController = require('../controllers/orderController');
-const { Order } = require('../models');
 const { authMiddleware, roleMiddleware } = require('../middleware/auth');
-const { successResponse, generateOrderNo } = require('../utils/helpers');
-
-// 开发环境测试接口：只在非生产环境开放，方便本地或联调快速造测试订单。
-if (process.env.NODE_ENV !== 'production' && process.env.ENABLE_DEV_SANDBOX !== 'false') {
-  router.post('/test-create', async (req, res, next) => {
-    try {
-      const order_no = generateOrderNo();
-      const items_json = JSON.stringify([]);
-      const order = await Order.create({
-        order_no,
-        order_id: order_no,
-        user_id: 3,
-        merchant_id: 1,
-        type: 'takeout',
-        order_type: 'county',
-        status: 4,
-        products_info: items_json,
-        items_json,
-        total_amount: 1.0,
-        pay_amount: 1.0,
-        total_price: 1.0,
-        address: '固始县测试地址',
-        contact_phone: '13700137000',
-        merchant_lng: 115.68233,
-        merchant_lat: 32.18021,
-        customer_lng: 115.65,
-        customer_lat: 32.15
-      });
-
-      res.status(201).json(successResponse(order, '测试订单创建成功'));
-    } catch (error) {
-      next(error);
-    }
-  });
-}
 
 // 用户端订单主链路：下单、支付、取消、评价、我的订单、订单详情。
 // 这组都要求先登录，但不强制限定角色为 merchant / rider。
@@ -53,6 +17,8 @@ router.post('/cancel', authMiddleware, orderController.cancelOrder);
 router.post('/user/hide-batch', authMiddleware, orderController.hideUserOrdersBatch);
 router.post('/review', authMiddleware, orderController.submitReview);
 router.get('/my', authMiddleware, orderController.getUserOrders);
+// 用户端“查看订单位置”高频刷新时，只取轻量骑手位置数据，避免每 15 秒反复拉整包详情。
+router.get('/live-location/:id', authMiddleware, orderController.getOrderLiveLocation);
 router.get('/detail/:id', authMiddleware, orderController.getOrderDetail);
 router.get('/county-group/detail/:id', authMiddleware, orderController.getCountyGroupOrderDetail);
 

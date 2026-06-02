@@ -1,8 +1,18 @@
 // 这个文件是“后台订单管理控制器”。
 // 后台订单列表、订单详情、异常单统计、超时未接单统计，主要都从这里查。
 const { Op } = require('sequelize');
-const { Order, Merchant, User, Refund, OrderLog } = require('../models');
+const { Order, Merchant, User, Refund, OrderLog, sequelize } = require('../models');
 const { successResponse, errorResponse } = require('../utils/helpers');
+const socketService = require('../services/socketService');
+
+const CANCEL_REFUND_APPLY_SOURCE = 'cancel';
+const REFUND_STATUS_LABEL_MAP = {
+  0: '待后台审核',
+  1: '审核通过，退款处理中',
+  2: '退款成功',
+  3: '后台已驳回',
+  4: '用户已撤销申请'
+};
 
 // 这里统一维护订单状态文案，避免后台列表和详情各自写一套。
 const STATUS_LABEL_MAP = {
@@ -254,6 +264,9 @@ const formatMoney = (value) => {
 // 根据订单状态，给后台列表补“异常标签”。
 const buildExceptionTags = (order, timeoutMinutes) => {
   const tags = [];
+  const latestCancelRefund = Array.isArray(order?.refunds)
+    ? order.refunds.find((item) => item?.apply_source === CANCEL_REFUND_APPLY_SOURCE) || null
+    : order?.latest_cancel_refund || null;
   if (isTimeoutUnacceptedOrder(order, timeoutMinutes)) {
     tags.push({
       code: 'timeout_unaccepted',
@@ -272,6 +285,16 @@ const buildExceptionTags = (order, timeoutMinutes) => {
       label: '已取消'
     });
   }
+  if (
+    latestCancelRefund &&
+    latestCancelRefund.apply_source === CANCEL_REFUND_APPLY_SOURCE &&
+    Number(latestCancelRefund.status) === 0
+  ) {
+    tags.unshift({
+      code: 'cancel_audit_pending',
+      label: '待审核取消'
+    });
+  }
   return tags;
 };
 
@@ -281,6 +304,9 @@ const formatOrderSummary = (order, timeoutMinutes = 1) => {
   const meta = buildBusinessMeta(order);
   const waitMinutes = getWaitMinutes(order);
   const exceptionTags = buildExceptionTags(order, timeoutMinutes);
+  const latestCancelRefund = Array.isArray(order?.refunds)
+    ? order.refunds.find((item) => item?.apply_source === CANCEL_REFUND_APPLY_SOURCE) || null
+    : order?.latest_cancel_refund || null;
 
   return {
     id: order.id,
@@ -333,6 +359,22 @@ const formatOrderSummary = (order, timeoutMinutes = 1) => {
     settled_at: order.settled_at,
     wait_minutes: waitMinutes,
     timeout_minutes: isTimeoutUnacceptedOrder(order, timeoutMinutes) ? waitMinutes : null,
+    latest_cancel_refund: latestCancelRefund
+      ? {
+          id: latestCancelRefund.id,
+          refund_no: latestCancelRefund.refund_no,
+          status: Number(latestCancelRefund.status),
+          status_label: REFUND_STATUS_LABEL_MAP[Number(latestCancelRefund.status)] || '未知状态',
+          amount: formatMoney(latestCancelRefund.amount),
+          reason_type: latestCancelRefund.reason_type || '',
+          description: latestCancelRefund.description || '',
+          reject_reason: latestCancelRefund.reject_reason || '',
+          apply_source: latestCancelRefund.apply_source || '',
+          audit_note: latestCancelRefund.audit_note || '',
+          cancel_fee_amount: formatMoney(latestCancelRefund.cancel_fee_amount),
+          is_full_refund: Boolean(latestCancelRefund.is_full_refund)
+        }
+      : null,
     exception_tags: exceptionTags,
     primary_exception_code: exceptionTags[0]?.code || '',
     primary_exception_label: exceptionTags[0]?.label || ''
@@ -366,9 +408,17 @@ const formatOrderDetail = (order, timeoutMinutes = 1) => {
           refund_no: refund.refund_no,
           amount: formatMoney(refund.amount),
           status: refund.status,
+          status_label: REFUND_STATUS_LABEL_MAP[Number(refund.status)] || '未知状态',
           reason_type: refund.reason_type,
           description: refund.description,
+          apply_source: refund.apply_source || '',
+          responsibility_type: refund.responsibility_type || '',
+          cancel_fee_amount: formatMoney(refund.cancel_fee_amount),
+          is_full_refund: Boolean(refund.is_full_refund),
           reject_reason: refund.reject_reason,
+          audit_note: refund.audit_note || '',
+          audit_role: refund.audit_role || '',
+          audit_user_id: refund.audit_user_id || null,
           merchant_audit_at: refund.merchant_audit_at,
           success_at: refund.success_at
         }))
@@ -416,8 +466,29 @@ const getOrderList = async (req, res, next) => {
       distinct: true
     });
 
+    const orderIds = result.rows.map((order) => Number(order.id)).filter((id) => Number.isInteger(id) && id > 0);
+    const latestCancelRefundMap = new Map();
+    if (orderIds.length) {
+      const refunds = await Refund.findAll({
+        where: {
+          order_id: { [Op.in]: orderIds },
+          apply_source: CANCEL_REFUND_APPLY_SOURCE
+        },
+        order: [['id', 'DESC']]
+      });
+      for (const refund of refunds) {
+        const orderId = Number(refund.order_id);
+        if (!latestCancelRefundMap.has(orderId)) {
+          latestCancelRefundMap.set(orderId, refund.get({ plain: true }));
+        }
+      }
+    }
+
     res.json(successResponse({
-      list: result.rows.map((order) => formatOrderSummary(order, timeoutMinutes)),
+      list: result.rows.map((order) => {
+        order.latest_cancel_refund = latestCancelRefundMap.get(Number(order.id)) || null;
+        return formatOrderSummary(order, timeoutMinutes);
+      }),
       filters: {
         business_type: businessType,
         status: req.query.status ?? 'all',
@@ -458,7 +529,14 @@ const getOrderDetail = async (req, res, next) => {
             'status',
             'reason_type',
             'description',
+            'apply_source',
+            'responsibility_type',
+            'cancel_fee_amount',
+            'is_full_refund',
             'reject_reason',
+            'audit_note',
+            'audit_role',
+            'audit_user_id',
             'merchant_audit_at',
             'success_at'
           ],
@@ -495,9 +573,175 @@ const getOrderDetail = async (req, res, next) => {
   }
 };
 
+/**
+ * 后台审核取消申请
+ * 第一期开启“后台人工审核”，不再让前端各端自己猜该退多少、该不该放行。
+ */
+const auditCancelOrder = async (req, res, next) => {
+  try {
+    const orderId = Number(req.params.id);
+    const action = String(req.body?.action || '').trim();
+    const auditNote = String(req.body?.audit_note || req.body?.auditNote || '').trim();
+    const rejectReason = String(req.body?.reject_reason || req.body?.rejectReason || '').trim();
+    const responsibilityType = String(req.body?.responsibility_type || req.body?.responsibilityType || '').trim() || 'platform';
+    const requestedAmount = req.body?.refund_amount ?? req.body?.refundAmount;
+
+    if (!Number.isInteger(orderId) || orderId <= 0) {
+      return res.status(400).json(errorResponse('缺少有效的订单ID'));
+    }
+    if (!['approve', 'reject'].includes(action)) {
+      return res.status(400).json(errorResponse('审核动作只能是 approve 或 reject'));
+    }
+    if (action === 'reject' && !rejectReason) {
+      return res.status(400).json(errorResponse('驳回时必须填写驳回原因'));
+    }
+
+    let payload = null;
+    let notifyUserId = null;
+    let notifyMerchantId = null;
+    let notifyOrder = null;
+    await sequelize.transaction(async (t) => {
+      const order = await Order.findByPk(orderId, {
+        transaction: t,
+        lock: t.LOCK.UPDATE
+      });
+      if (!order) {
+        const err = new Error('订单不存在'); err.statusCode = 404; throw err;
+      }
+
+      const refund = await Refund.findOne({
+        where: {
+          order_id: orderId,
+          status: 0,
+          apply_source: CANCEL_REFUND_APPLY_SOURCE
+        },
+        order: [['id', 'DESC']],
+        transaction: t,
+        lock: t.LOCK.UPDATE
+      });
+      if (!refund) {
+        const err = new Error('当前订单没有待审核的取消申请'); err.statusCode = 400; throw err;
+      }
+
+      notifyUserId = order.user_id || null;
+      notifyOrder = {
+        id: order.id,
+        order_no: order.order_no
+      };
+      if (order.merchant_id) {
+        const merchant = await Merchant.findByPk(order.merchant_id, {
+          attributes: ['user_id'],
+          transaction: t
+        });
+        notifyMerchantId = merchant?.user_id || null;
+      }
+
+      const payAmount = Number(order.pay_amount || 0);
+      const finalRefundAmount = action === 'approve'
+        ? Math.min(Math.max(Number(requestedAmount ?? payAmount), 0), payAmount)
+        : Number(refund.amount || 0);
+      const cancelFeeAmount = Math.max(payAmount - finalRefundAmount, 0);
+
+      if (action === 'approve') {
+        await refund.update({
+          amount: finalRefundAmount,
+          status: 2,
+          responsibility_type: responsibilityType,
+          cancel_fee_amount: cancelFeeAmount,
+          is_full_refund: cancelFeeAmount === 0,
+          reject_reason: '',
+          audit_note: auditNote || '',
+          audit_role: 'admin',
+          audit_user_id: req.user?.id || null,
+          merchant_audit_at: new Date(),
+          success_at: new Date()
+        }, { transaction: t });
+
+        await order.update({
+          status: 7,
+          cancel_reason: refund.description || order.cancel_reason || '后台审核通过取消申请'
+        }, { transaction: t });
+
+        await OrderLog.create({
+          order_id: order.id,
+          operator_id: req.user?.id || null,
+          operator_type: 'system',
+          action: '后台通过取消申请',
+          from_status: order.status,
+          to_status: 7,
+          remark: auditNote || `后台已通过取消申请，退款 ${finalRefundAmount.toFixed(2)} 元`
+        }, { transaction: t });
+
+        payload = {
+          action: 'approve',
+          refund_id: refund.id,
+          refund_amount: formatMoney(finalRefundAmount),
+          cancel_fee_amount: formatMoney(cancelFeeAmount)
+        };
+      } else {
+        await refund.update({
+          status: 3,
+          reject_reason: rejectReason,
+          audit_note: auditNote || '',
+          audit_role: 'admin',
+          audit_user_id: req.user?.id || null,
+          merchant_audit_at: new Date()
+        }, { transaction: t });
+
+        await OrderLog.create({
+          order_id: order.id,
+          operator_id: req.user?.id || null,
+          operator_type: 'system',
+          action: '后台驳回取消申请',
+          from_status: order.status,
+          to_status: order.status,
+          remark: rejectReason
+        }, { transaction: t });
+
+        payload = {
+          action: 'reject',
+          refund_id: refund.id,
+          reject_reason: rejectReason
+        };
+      }
+    });
+
+    if (notifyUserId && notifyOrder) {
+      socketService.notifyUserOrderUpdate(
+        notifyUserId,
+        notifyOrder,
+        action === 'approve' ? '后台已通过取消申请，订单已取消' : '后台已驳回取消申请'
+      );
+    }
+    if (notifyMerchantId && notifyOrder) {
+      socketService.notifyMerchantReminder(notifyMerchantId, notifyOrder, {
+        eventType: action === 'approve' ? 'merchant_order_cancelled' : 'merchant_order_cancel_rejected',
+        title: action === 'approve' ? '取消申请已通过' : '取消申请已驳回',
+        message: action === 'approve'
+          ? `订单 ${notifyOrder.order_no} 的取消申请已由后台通过`
+          : `订单 ${notifyOrder.order_no} 的取消申请已由后台驳回`,
+        speechText: action === 'approve' ? '有订单取消申请已通过' : '有订单取消申请已驳回',
+        soundType: action === 'approve' ? 'merchant_order_cancelled' : 'merchant_order_new',
+        priority: 'medium',
+        jumpPath: '/pages/order/list',
+        dedupeKey: `${action === 'approve' ? 'merchant_order_cancelled' : 'merchant_order_cancel_rejected'}:${notifyOrder.id}`
+      });
+    }
+    await socketService.broadcastDispatcherOrdersUpdate();
+
+    res.json(successResponse(payload, action === 'approve' ? '已通过取消申请' : '已驳回取消申请'));
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json(errorResponse(error.message, error.statusCode));
+    }
+    next(error);
+  }
+};
+
 module.exports = {
   getOrderList,
   getOrderDetail,
   countTimeoutUnacceptedOrders,
-  buildTimeoutUnacceptedWhere
+  buildTimeoutUnacceptedWhere,
+  auditCancelOrder
 };

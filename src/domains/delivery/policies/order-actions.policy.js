@@ -32,6 +32,17 @@ const hasValidCoordinate = (lat, lng) =>
   Math.abs(Number(lat)) > 0 &&
   Math.abs(Number(lng)) > 0;
 
+// 县城转乡镇这类跨域交接单，在第一阶段先视为独立履约域。
+// 这里不去改原始 order_type，只在展示和动作策略层把它从普通平台单里拆出来。
+const isCountyToTownTransferOrder = (order = {}) => {
+  const responsibleRole = String(order.current_responsible_role || '').trim();
+  const transferStatus = String(order.transfer_status || '').trim();
+  return Boolean(order.is_transfer_order) &&
+    String(order.order_type || '').trim() === 'county' &&
+    ['town_stationmaster', 'town_rider'].includes(responsibleRole) &&
+    transferStatus !== 'revoked';
+};
+
 // 订单自己也要先分域，不然后面同一套状态数字会被不同业务线误读。
 const resolveOrderDeliveryDomain = (order = {}) => {
   const mode = normalizeSupermarketDeliveryMode(order.supermarket_delivery_mode);
@@ -42,6 +53,18 @@ const resolveOrderDeliveryDomain = (order = {}) => {
     (!mode && permission === SUPERMARKET_DELIVERY_PERMISSIONS.SELF_ONLY)
   ) {
     return DELIVERY_DOMAINS.SELF_DELIVERY;
+  }
+
+  if (isCountyToTownTransferOrder(order)) {
+    return DELIVERY_DOMAINS.COUNTY_TO_TOWN_TRANSFER;
+  }
+
+  if (String(order.order_type || '').trim() === 'town') {
+    return DELIVERY_DOMAINS.TOWN_NATIVE_DELIVERY;
+  }
+
+  if (String(order.order_type || '').trim() === 'county') {
+    return DELIVERY_DOMAINS.COUNTY_DISPATCH;
   }
 
   return DELIVERY_DOMAINS.PLATFORM_DELIVERY;

@@ -33,7 +33,8 @@ exports.getDashboard = async (req, res, next) => {
     const today = moment().startOf('day');
     const tomorrow = moment().add(1, 'days').startOf('day');
 
-    // 统计今天新创建的订单数。
+    // 这里保留“今天创建的订单数”，给工作台或后续统计扩展用。
+    // 但它不等于“商家当前能处理的新订单”，因为里面会混入待支付、已取消等状态。
     const todayOrders = await Order.count({
       where: {
         merchant_id: merchant.id,
@@ -41,6 +42,16 @@ exports.getDashboard = async (req, res, next) => {
           [Op.gte]: today.toDate(),
           [Op.lt]: tomorrow.toDate()
         }
+      }
+    });
+
+    // 首页右上角“新订单”必须和订单页的“新订单”口径一致。
+    // 订单页现在只把 status=1 当成待接单新订单，所以这里也只统计 status=1，
+    // 避免出现“首页数字一直涨，但订单页没有单”的误导。
+    const todayNewOrders = await Order.count({
+      where: {
+        merchant_id: merchant.id,
+        status: 1
       }
     });
 
@@ -80,6 +91,7 @@ exports.getDashboard = async (req, res, next) => {
     res.json(successResponse({
       shopName: merchant.name,
       todayOrders,
+      todayNewOrders,
       todayRevenue: parseFloat(todayRevenue).toFixed(2),
       pendingOrders,
       monthOrders,

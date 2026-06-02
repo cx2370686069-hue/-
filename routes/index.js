@@ -22,15 +22,6 @@ const notificationRouter = require('./notification');
 const townErrandRouter = require('./town-errand');
 const townStationRouter = require('./town-station');
 
-// 测试 / 沙箱路由只允许在非生产环境启用，避免线上暴露免登录或伪造身份的后门。
-const isProductionEnv = process.env.NODE_ENV === 'production';
-const allowDevSandbox = !isProductionEnv && process.env.ENABLE_DEV_SANDBOX !== 'false';
-
-// 开发联调专用入口
-if (allowDevSandbox) {
-  router.use('/', require('./sandbox')); // 仅开发联调使用，禁止挂到生产
-}
-
 // 常规业务路由挂载区
 router.use('/upload', uploadRouter);
 router.use('/auth', authRouter);
@@ -53,11 +44,6 @@ router.use('/notifications', notificationRouter);
 router.use('/town-errand', townErrandRouter);
 router.use('/town-station', townStationRouter);
 router.use('/admin', adminRouter);
-
-// 测试工具路由也只在开发环境开放。
-if (allowDevSandbox) {
-  router.use('/test', require('./test'));
-}
 
 // 兼容前端请求
 router.use('/product', merchantRouter);

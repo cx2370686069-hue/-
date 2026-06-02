@@ -13,6 +13,9 @@ const {
   normalizeSupermarketDeliveryPermission
 } = require('../config/supermarketDelivery');
 const {
+  resolveMerchantDispatchPortal
+} = require('../config/dispatchPortal');
+const {
   normalizeMerchantBindingCode,
   isValidMerchantBindingCode,
   generateUniqueMerchantBindingCode
@@ -460,6 +463,13 @@ exports.registerMerchant = async (req, res, next) => {
       return res.status(400).json(errorResponse(supermarketDeliveryPermissionCheck.error));
     }
 
+    // 这里把“调度端落户口”在注册时一次性算出来。
+    // 后面订单创建、调度地图分口都直接继承这个字段，避免前后端各自再猜一遍。
+    const dispatchPortal = resolveMerchantDispatchPortal({
+      businessScope,
+      supermarketDeliveryPermission: supermarketDeliveryPermissionCheck.value
+    });
+
     if (!['county_food', 'town_food'].includes(businessScope)) {
       await transaction.rollback();
       return res.status(400).json(errorResponse('商家业务线参数不正确'));
@@ -518,6 +528,7 @@ exports.registerMerchant = async (req, res, next) => {
       logo: normalizeText(req.body.logo) || null,
       cover: normalizeText(req.body.cover) || null,
       business_scope: businessScope,
+      dispatch_portal: dispatchPortal,
       town_code: townArea ? townArea.area_code : null,
       town_name: townArea ? townArea.area_name : null,
       supermarket_delivery_permission: supermarketDeliveryPermissionCheck.value,
@@ -533,6 +544,7 @@ exports.registerMerchant = async (req, res, next) => {
         merchant_binding_code: merchant.binding_code,
         audit_status: merchant.audit_status,
         business_scope: merchant.business_scope,
+        dispatch_portal: merchant.dispatch_portal,
         town_code: merchant.town_code,
         town_name: merchant.town_name,
         supermarket_delivery_permission: merchant.supermarket_delivery_permission
@@ -542,6 +554,7 @@ exports.registerMerchant = async (req, res, next) => {
         binding_code: merchant.binding_code,
         name: merchant.name,
         business_scope: merchant.business_scope,
+        dispatch_portal: merchant.dispatch_portal,
         town_code: merchant.town_code,
         town_name: merchant.town_name,
         audit_status: merchant.audit_status,

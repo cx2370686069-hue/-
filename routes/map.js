@@ -8,5 +8,10 @@ const mapController = require('../controllers/mapController');
 router.get('/reverse-geocode', mapController.reverseGeocode);
 router.get('/suggest', mapController.suggest);
 router.get('/search', mapController.search);
+router.get('/nearby', mapController.nearby);
+
+// 骑手送货总览专用接口
+// 这里返回的是“按最近距离串联后的真实骑行折线”，给 H5 总览页直接画蓝线。
+router.post('/rider-delivery-route', mapController.riderDeliveryRoute);
 
 module.exports = router;

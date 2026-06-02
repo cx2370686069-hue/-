@@ -1,6 +1,5 @@
 // 这个文件是“订单总控制器”。
 // 用户下单、估算配送费、支付、查单、评价、取消订单、商家接单出餐、骑手接单配送、转派、跑腿单，整条链路基本都在这里。
-const crypto = require('crypto');
 const { Order, OrderLog, Merchant, Product, ProductSpec, User, CountyOrderGroup, CartItem, Review, Refund, OrderTransfer, sequelize } = require('../models');
 const { generateOrderNo, successResponse, errorResponse, calculateDistance } = require('../utils/helpers');
 const { round2, normalizePayChannel, computeDeliveryFee, computeTakeoutSettlement } = require('../utils/payment');
@@ -20,6 +19,10 @@ const {
   normalizeSupermarketDeliveryMode,
   resolveInitialSupermarketDeliveryMode
 } = require('../config/supermarketDelivery');
+const {
+  normalizeDispatchPortal,
+  resolveMerchantDispatchPortal
+} = require('../config/dispatchPortal');
 const {
   DELIVERY_RESPONSIBLE_ROLES
 } = require('../src/domains/delivery/shared/constants');
@@ -53,150 +56,163 @@ const DELIVERY_TIME_TYPES = {
 };
 const SCHEDULED_DELIVERY_MIN_MINUTES = 40;
 const SCHEDULED_DELIVERY_MAX_DAYS = 7;
+// 县城转给乡镇站长后，第一阶段先给一个明确的接力窗口。
+// 这里不用额外上定时任务，后面通过热点读接口做“懒触发自动回退”。
+const COUNTY_TO_TOWN_TRANSFER_TIMEOUT_MINUTES = Math.min(
+  Math.max(parseInt(process.env.COUNTY_TO_TOWN_TRANSFER_TIMEOUT_MINUTES, 10) || 10, 1),
+  180
+);
 
-// ==================== 支付模式与自动确认辅助区 ====================
-// 这一段主要处理 mock 支付、自动确认支付、支付后通知商家。
-const isMockAutoConfirmEnabled = (mode) => {
-  if (mode !== 'mock') {
-    return false;
-  }
-  return process.env.PAYMENT_AUTO_CONFIRM_ON_ORDER_PAY === 'true';
-};
+// 这一组判断专门给当前测试阶段兜底。
+// 你现在的目标不是接真支付，而是先把“用户下单 -> 商家接单 -> 后续配送”整条链路跑通，
+// 所以这里先统一改成“提交订单就直接补成已支付待接单”，不再继续依赖环境变量。
+function isMockPaymentMode() {
+  return String(process.env.PAYMENT_MODE || 'mock').trim().toLowerCase() === 'mock';
+}
 
-const isMockAutoConfirmOnCreateEnabled = (mode) => {
-  if (mode !== 'mock') {
-    return false;
-  }
-  return process.env.PAYMENT_AUTO_CONFIRM_ON_ORDER_CREATE === 'true';
-};
+function shouldAutoConfirmOrderOnCreate() {
+  // 你现在明确要求“测试阶段提交订单就直接当支付成功”。
+  // 所以这里不再继续依赖 PAYMENT_MODE，直接强制放行，
+  // 避免云端环境变量和本地不一致时，看起来像“代码没生效”。
+  return true;
+}
 
-const buildMockConfirmMeta = () => {
-  const suffix = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-  return {
-    tradeNo: `AUTO-MOCK-${suffix}`,
-    notifyId: `AUTO-MOCK-NOTIFY-${suffix}`
-  };
-};
+function shouldAutoConfirmOrderOnPayRequest() {
+  // 同理，测试阶段如果还点到了支付入口，也继续直接补成支付成功。
+  // 这样单店、多店、旧订单入口都不会再受环境变量影响。
+  return true;
+}
 
-const notifyMerchantForPaidOrder = async (order) => {
-  if (!order?.merchant_id) {
+// 支付成功后，只有真正进入“待接单”的订单才应该推给商家。
+// 这里单独抽成公共方法，避免单店创建、多店创建、补点支付这几条测试链路各写一份通知逻辑，后面越改越乱。
+async function notifyMerchantForPaidOrder(order) {
+  if (!order?.merchant_id || Number(order?.status) !== 1) {
     return;
   }
+
   const merchant = await Merchant.findByPk(order.merchant_id);
   if (merchant?.user_id) {
     socketService.notifyMerchantNewOrder(merchant.user_id, order);
   }
-};
+}
 
-const notifyMerchantsForPaidOrders = async (orders = []) => {
+// 拼单会一次性生成多笔子订单，这里统一补发商家新单通知。
+// 用 order.id 去重，避免同一笔订单被重复提醒。
+async function notifyMerchantsForPaidOrders(orders = []) {
+  const uniqueOrders = [];
+  const seenOrderIds = new Set();
+
   for (const order of orders) {
+    const orderId = Number(order?.id || 0);
+    if (!orderId || seenOrderIds.has(orderId)) {
+      continue;
+    }
+    seenOrderIds.add(orderId);
+    uniqueOrders.push(order);
+  }
+
+  for (const order of uniqueOrders) {
     await notifyMerchantForPaidOrder(order);
   }
-};
+}
 
-const autoConfirmSingleOrderIfNeeded = async ({ order, userId, source }) => {
-  const mode = process.env.PAYMENT_MODE || 'mock';
-  if (!isMockAutoConfirmOnCreateEnabled(mode) || !order) {
-    return { enabled: false, order };
-  }
-  const now = new Date();
-  if (Number(order.status) !== 0) {
-    return { enabled: true, order };
+// 测试阶段你现在要验证的是“提交订单后商家能不能立刻收到单”，
+// 不是验证真实支付网关本身。
+// 所以这里补一个后端兜底：创建成功后直接把订单推进到待接单，
+// 彻底绕开 paymentService(支付服务) 的预支付/回调链路，避免订单继续卡在待付款。
+async function promoteCreatedOrderToMerchantPending(order, options = {}) {
+  if (!order) {
+    return null;
   }
 
+  const transaction = options.transaction;
+  if (Number(order.status || 0) !== 0) {
+    return order;
+  }
+
+  const patch = {
+    status: 1,
+    paid_at: new Date(),
+    payment_channel: 'mock'
+  };
+
+  // 外卖单后面的结算金额、平台抽成、商家应收都依赖这组快照字段。
+  // 如果这里只改状态，不补金额快照，后面商家端和订单详情容易出现状态对了、金额却不对的脏数据。
   if (order.type === 'takeout') {
-    await order.update({
-      status: 1,
-      paid_at: now,
-      payment_channel: 'mock',
-      ...buildTakeoutSettlementPatch(order)
-    });
+    Object.assign(
+      patch,
+      buildTakeoutSettlementPatch(
+        typeof order.get === 'function' ? order.get({ plain: true }) : order
+      )
+    );
   } else {
-    await order.update({
-      status: 1,
-      paid_at: now,
-      payment_channel: 'mock',
+    Object.assign(patch, {
       commission_amount: 0,
       rider_incentive_amount: 0,
       platform_income_amount: 0,
       merchant_income_amount: 0
     });
   }
-  await order.reload();
 
-  await OrderLog.create({
-    order_id: order.id,
-    operator_type: 'system',
-    action: '创建订单后模拟自动支付',
-    from_status: 0,
-    to_status: 1,
-    remark: `${source} 已直推为待接单`
-  });
-  console.log(`[order.create.auto_paid] order_id=${order.id} status=${order.status} payment_channel=${order.payment_channel}`);
+  await order.update(patch, transaction ? { transaction } : undefined);
 
-  return {
-    enabled: true,
-    order
-  };
-};
-
-const autoConfirmCountyGroupIfNeeded = async ({ countyOrderGroup, userId, source }) => {
-  const mode = process.env.PAYMENT_MODE || 'mock';
-  if (!isMockAutoConfirmOnCreateEnabled(mode) || !countyOrderGroup) {
-    return { enabled: false, countyOrderGroup, orders: [] };
-  }
-  const now = new Date();
-  if (Number(countyOrderGroup.status) === 0) {
-    await countyOrderGroup.update({
-      status: 1,
-      paid_at: now,
-      payment_channel: 'mock'
-    });
-  }
-  await countyOrderGroup.reload();
-
-  const orders = await Order.findAll({
-    where: { merge_group_id: countyOrderGroup.id }
-  });
-  for (const order of orders) {
-    if (Number(order.status) !== 0) {
-      continue;
-    }
-    if (order.type === 'takeout') {
-      await order.update({
-        status: 1,
-        paid_at: now,
-        payment_channel: 'mock',
-        ...buildTakeoutSettlementPatch(order)
-      });
-    } else {
-      await order.update({
-        status: 1,
-        paid_at: now,
-        payment_channel: 'mock',
-        commission_amount: 0,
-        rider_incentive_amount: 0,
-        platform_income_amount: 0,
-        merchant_income_amount: 0
-      });
-    }
-    await OrderLog.create({
+  await OrderLog.create(
+    {
       order_id: order.id,
       operator_type: 'system',
-      action: '拼单创建后模拟自动支付',
+      action: '测试下单直通',
       from_status: 0,
       to_status: 1,
-      remark: `${source} 已直推为待接单`
-    });
+      remark: '测试阶段提交订单后直接推进到待接单，跳过真实支付确认'
+    },
+    transaction ? { transaction } : undefined
+  );
+
+  if (typeof order.reload === 'function') {
+    await order.reload(transaction ? { transaction } : undefined);
   }
-  console.log(`[county.group.create.auto_paid] group_id=${countyOrderGroup.id} status=${countyOrderGroup.status} orders=${orders.length}`);
+
+  return order;
+}
+
+// 拼单不是一笔订单，而是一组子订单。
+// 所以测试直通时必须把拼单组和子订单一起推进到待接单，
+// 不然主单状态和子单状态不一致，前端、商家端、调度端看起来都会乱。
+async function promoteCreatedCountyGroupToMerchantPending(countyOrderGroup, orders = [], options = {}) {
+  if (!countyOrderGroup) {
+    return { countyOrderGroup, orders };
+  }
+
+  const transaction = options.transaction;
+  if (Number(countyOrderGroup.status || 0) === 0) {
+    await countyOrderGroup.update(
+      {
+        status: 1,
+        paid_at: new Date(),
+        payment_channel: 'mock'
+      },
+      transaction ? { transaction } : undefined
+    );
+  }
+
+  const promotedOrders = [];
+  for (const item of orders) {
+    const promoted = await promoteCreatedOrderToMerchantPending(item, { transaction });
+    promotedOrders.push(promoted || item);
+  }
+
+  if (typeof countyOrderGroup.reload === 'function') {
+    await countyOrderGroup.reload(transaction ? { transaction } : undefined);
+  }
 
   return {
-    enabled: true,
     countyOrderGroup,
-    orders
+    orders: promotedOrders
   };
-};
+}
+
+
+
 
 const toFiniteNumber = (value) => {
   if (value === null || value === undefined || value === '') {
@@ -303,11 +319,16 @@ const getMerchantOrderOwnershipError = (merchant, order) => {
     return '乡镇商家不能操作县城订单';
   }
 
+  // 这里和商家订单列表保持同一套乡镇比较口径。
+  // 老订单里常见“郭陆滩 / 郭陆滩镇 / 固始县郭陆滩镇”几种写法，如果这里直接做原始字符串相等，
+  // 就会出现“列表能看到自己的订单，但点接单时被误判成跨乡镇”的问题。
+  const merchantTownName = normalizeTownName(merchant.town_name);
+  const customerTownName = normalizeTownName(order.customer_town);
   if (
     merchant.business_scope === 'town_food' &&
-    merchant.town_name &&
-    order.customer_town &&
-    merchant.town_name !== order.customer_town
+    merchantTownName &&
+    customerTownName &&
+    merchantTownName !== customerTownName
   ) {
     return '乡镇商家不能操作非本乡镇订单';
   }
@@ -477,7 +498,24 @@ const resolveCustomerCoordinates = (payload = {}) => {
   return { lng, lat, addressPayload };
 };
 
-const normalizeTownName = (value) => String(value || '').trim();
+// 统一乡镇名称的比较口径。
+// 用户端、地址库、地图逆解析、商家资料里，同一个乡镇可能会出现：
+// “郭陆滩”“郭陆滩镇”“固始县郭陆滩镇”这几种写法。
+// 这里专门用于“是否同乡镇”的判断，只去掉行政区前缀和末尾通用后缀，不改变业务里的原始展示名称。
+const normalizeTownName = (value) => String(value || '')
+  .trim()
+  .replace(/\s+/g, '')
+  .replace(/^河南省/, '')
+  .replace(/^信阳市/, '')
+  .replace(/^固始县/, '')
+  .replace(/(街道办事处|办事处|街道|镇|乡)$/u, '')
+  .trim();
+
+const addressTextContainsTown = (text, townName) => {
+  const normalizedText = normalizeTownName(text);
+  const normalizedTown = normalizeTownName(townName);
+  return Boolean(normalizedText && normalizedTown && normalizedText.includes(normalizedTown));
+};
 
 const buildTransferUserSummary = (user) => {
   if (!user) {
@@ -645,7 +683,15 @@ const canTownDispatcherTransferToRider = (user, order) => {
     return false;
   }
 
-  if (order?.type !== 'takeout' || order?.order_type !== 'town') {
+  const isTownNativeOrder = order?.type === 'takeout' && order?.order_type === 'town';
+  const isCountyTransferOrder =
+    order?.type === 'takeout' &&
+    Boolean(order?.is_transfer_order) &&
+    order?.order_type === 'county' &&
+    ['town_stationmaster', 'town_rider'].includes(String(order?.current_responsible_role || '').trim()) &&
+    String(order?.transfer_status || '').trim() !== 'revoked';
+
+  if (!isTownNativeOrder && !isCountyTransferOrder) {
     return false;
   }
 
@@ -653,8 +699,13 @@ const canTownDispatcherTransferToRider = (user, order) => {
     return false;
   }
 
+  // 这里要把“骑手所属乡镇”和“订单所属乡镇”统一做一次归一化。
+  // 老数据里经常一边存“郭陆滩”，另一边存“郭陆滩镇”，
+  // 如果直接拿原始字符串硬比，前端就会误以为这单不是本乡镇单，
+  // 最终把“转给骑手”按钮直接藏掉，看起来像功能被删了。
+  const scopeTownName = normalizeTownName(scope.town_name);
   const orderTownName = normalizeTownName(order?.customer_town || order?.transfer_to_town_name);
-  if (scope.town_name && orderTownName && scope.town_name !== orderTownName) {
+  if (scopeTownName && orderTownName && scopeTownName !== orderTownName) {
     return false;
   }
 
@@ -698,6 +749,40 @@ const canTownDispatcherRevokeTransferToRider = (user, order, latestTransfer) => 
   return ['town_stationmaster', 'town_rider'].includes(latestTransfer?.from_role) && latestTransfer?.to_role === 'town_rider';
 };
 
+// 乡镇站长这里不是“撤回自己发起的转派”，而是“拒接县城转入单并退回县城”。
+// 这两个动作都走同一个接口，前端只管调撤回，后端按当前责任人身份做分流。
+const canTownStationmasterRejectCountyTransfer = (user, order, latestTransfer) => {
+  if (user?.role !== 'rider' || !latestTransfer) {
+    return false;
+  }
+
+  if (!isTownStationmaster(user)) {
+    return false;
+  }
+
+  if (Boolean(latestTransfer.is_revoked)) {
+    return false;
+  }
+
+  if (!isCountyToTownTransferRecord(latestTransfer)) {
+    return false;
+  }
+
+  if (![3, 4, 5].includes(Number(order?.status))) {
+    return false;
+  }
+
+  if (Number(latestTransfer.to_user_id || 0) !== Number(user.id || 0)) {
+    return false;
+  }
+
+  if (Number(order?.current_responsible_user_id || 0) !== Number(user.id || 0)) {
+    return false;
+  }
+
+  return String(order?.current_responsible_role || '').trim() === 'town_stationmaster';
+};
+
 const resolveTransferTag = (latestTransfer, order) => {
   if (!order?.is_transfer_order) {
     return '';
@@ -718,9 +803,275 @@ const resolveTransferTag = (latestTransfer, order) => {
   return '转派单';
 };
 
+// 这里专门识别“县城骑手 -> 乡镇站长”的跨域交接。
+// 只要这条链存在且还没撤回，就把它当成独立转入池看，不再混回乡镇原生池。
+const isCountyToTownTransferRecord = (transfer = {}) =>
+  !Boolean(transfer?.is_revoked) &&
+  transfer?.from_role === 'county_rider' &&
+  transfer?.to_role === 'town_stationmaster';
+
+const hasCountyToTownTransfer = (transferChain = []) =>
+  Array.isArray(transferChain) && transferChain.some(isCountyToTownTransferRecord);
+
+const isActiveCountyToTownTransferOrder = (order = {}, transferChain = []) => {
+  if (!Boolean(order?.is_transfer_order)) {
+    return false;
+  }
+  if (String(order?.transfer_status || '').trim() === 'revoked') {
+    return false;
+  }
+  if (String(order?.transfer_last_action_type || '').trim() === 'revoke') {
+    return false;
+  }
+
+  const currentRole = String(order?.current_responsible_role || '').trim();
+  if (!['town_stationmaster', 'town_rider'].includes(currentRole)) {
+    return false;
+  }
+
+  return hasCountyToTownTransfer(transferChain);
+};
+
+const resolveTransferDomainMeta = ({ order = {}, transferChain = [] }) => {
+  const baseMeta = {
+    origin_delivery_domain: String(order?.order_type || '').trim() === 'town' ? 'town_native_delivery' : 'county_dispatch',
+    current_delivery_domain: String(order?.order_type || '').trim() === 'town' ? 'town_native_delivery' : 'county_dispatch',
+    transfer_pool_key: '',
+    transfer_stage_code: '',
+    transfer_stage_text: ''
+  };
+
+  if (!Boolean(order?.is_transfer_order)) {
+    return baseMeta;
+  }
+
+  if (!hasCountyToTownTransfer(transferChain)) {
+    return {
+      ...baseMeta,
+      transfer_pool_key: 'generic_transfer',
+      transfer_stage_code: String(order?.transfer_status || '').trim(),
+      transfer_stage_text: '转派处理中'
+    };
+  }
+
+  if (['revoked', 'rejected_by_stationmaster', 'timeout_returned'].includes(String(order?.transfer_status || '').trim())) {
+    const returnedLabelMap = {
+      revoked: '已退回县城',
+      rejected_by_stationmaster: '乡镇拒接，已退回县城',
+      timeout_returned: '乡镇超时未接力，已退回县城'
+    };
+    return {
+      ...baseMeta,
+      transfer_pool_key: 'county_returned_pool',
+      transfer_stage_code: String(order?.transfer_status || '').trim() || 'county_returned',
+      transfer_stage_text: returnedLabelMap[String(order?.transfer_status || '').trim()] || '已退回县城'
+    };
+  }
+
+  const currentRole = String(order?.current_responsible_role || '').trim();
+  if (currentRole === 'town_stationmaster') {
+    return {
+      ...baseMeta,
+      current_delivery_domain: 'county_to_town_transfer',
+      transfer_pool_key: 'county_to_town_stationmaster_pool',
+      transfer_stage_code: 'pending_town_stationmaster',
+      transfer_stage_text: '待乡镇站长接力'
+    };
+  }
+
+  if (currentRole === 'town_rider') {
+    return {
+      ...baseMeta,
+      current_delivery_domain: 'county_to_town_transfer',
+      transfer_pool_key: 'county_to_town_rider_pool',
+      transfer_stage_code: 'assigned_to_town_rider',
+      transfer_stage_text: Number(order?.status) === 5 ? '乡镇骑手配送中' : '已转给乡镇骑手'
+    };
+  }
+
+  return {
+    ...baseMeta,
+    current_delivery_domain: 'county_to_town_transfer',
+    transfer_pool_key: 'county_to_town_transfer',
+    transfer_stage_code: 'county_to_town_transfer',
+    transfer_stage_text: '县城转乡镇处理中'
+  };
+};
+
+const isPendingTownStationmasterTransferOrder = (order = {}) => {
+  if (!Boolean(order?.is_transfer_order)) {
+    return false;
+  }
+  if (String(order?.order_type || '').trim() !== 'county') {
+    return false;
+  }
+  if (String(order?.current_responsible_role || '').trim() !== 'town_stationmaster') {
+    return false;
+  }
+  if (String(order?.transfer_status || '').trim() !== 'pending_town_stationmaster') {
+    return false;
+  }
+  return [3, 4, 5].includes(Number(order?.status));
+};
+
+const hasCountyToTownTransferTimedOut = (order = {}, nowMs = Date.now()) => {
+  if (!isPendingTownStationmasterTransferOrder(order)) {
+    return false;
+  }
+  const anchor = order?.transfer_last_action_at || order?.updated_at || order?.created_at;
+  const anchorMs = anchor ? new Date(anchor).getTime() : 0;
+  if (!anchorMs) {
+    return false;
+  }
+  return nowMs - anchorMs >= COUNTY_TO_TOWN_TRANSFER_TIMEOUT_MINUTES * 60 * 1000;
+};
+
+const autoReturnCountyTransferOrder = async (orderId) => {
+  if (!Number.isInteger(Number(orderId)) || Number(orderId) <= 0) {
+    return { changed: false };
+  }
+
+  const now = new Date();
+  let changed = false;
+  let refreshed = null;
+  let fromUserId = null;
+  let toUserId = null;
+
+  await sequelize.transaction(async (t) => {
+    const lockedOrder = await Order.findByPk(orderId, { transaction: t, lock: t.LOCK.UPDATE });
+    if (!lockedOrder || !hasCountyToTownTransferTimedOut(lockedOrder, now.getTime())) {
+      return;
+    }
+
+    const latestTransfer = await getLatestOrderTransfer(orderId, { transaction: t });
+    if (!latestTransfer || Boolean(latestTransfer.is_revoked) || !isCountyToTownTransferRecord(latestTransfer)) {
+      return;
+    }
+
+    if (Number(latestTransfer.to_user_id || 0) !== Number(lockedOrder.current_responsible_user_id || 0)) {
+      return;
+    }
+
+    fromUserId = Number(latestTransfer.from_user_id || 0) || null;
+    toUserId = Number(latestTransfer.to_user_id || 0) || null;
+
+    await latestTransfer.update({
+      is_revoked: true,
+      revoked_at: now,
+      revoked_by_user_id: null,
+      revoke_remark: `乡镇站长超时未接力，系统已在${COUNTY_TO_TOWN_TRANSFER_TIMEOUT_MINUTES}分钟后自动退回县城`
+    }, { transaction: t });
+
+    await lockedOrder.update({
+      rider_id: latestTransfer.from_user_id,
+      transfer_status: 'timeout_returned',
+      current_responsible_user_id: latestTransfer.from_user_id,
+      current_responsible_role: latestTransfer.from_role,
+      transfer_last_action_at: now,
+      transfer_last_action_type: 'timeout_return',
+      transfer_revoke_used: true
+    }, { transaction: t });
+
+    await OrderLog.create({
+      order_id: lockedOrder.id,
+      operator_id: null,
+      operator_type: 'system',
+      action: '乡镇超时自动退回县城',
+      from_status: Number(lockedOrder.status),
+      to_status: Number(lockedOrder.status),
+      remark: `乡镇站长超时未接力，系统已在${COUNTY_TO_TOWN_TRANSFER_TIMEOUT_MINUTES}分钟后自动退回县城`
+    }, { transaction: t });
+
+    changed = true;
+  });
+
+  if (!changed) {
+    return { changed: false };
+  }
+
+  refreshed = await Order.findByPk(orderId, {
+    include: [
+      { model: Merchant, as: 'merchant', attributes: ['name', 'address', 'phone'] },
+      { model: User, as: 'user', attributes: ['nickname', 'phone'] },
+      { model: User, as: 'rider', attributes: ['nickname', 'phone', 'avatar', 'rider_longitude', 'rider_latitude', 'rider_location_updated_at'] }
+    ]
+  });
+
+  if (refreshed) {
+    if (toUserId) {
+      socketService.notifyRiderReminder(toUserId, refreshed, {
+        eventType: 'rider_transfer_timeout_returned',
+        title: '转入单已超时回退',
+        message: '您未在规定时间内接力，订单已自动退回县城',
+        speechText: '有县城转入订单已自动退回县城',
+        soundType: 'rider_transfer_revoked',
+        priority: 'medium',
+        jumpPath: '/pages/orders/index',
+        dedupeKey: `rider_transfer_timeout_returned:${orderId}:${toUserId}`
+      });
+    }
+    if (fromUserId) {
+      socketService.notifyRiderReminder(fromUserId, refreshed, {
+        eventType: 'rider_transfer_timeout_returned_county',
+        title: '乡镇超时退回',
+        message: '乡镇站长未及时接力，订单已自动退回县城继续处理',
+        speechText: '有县城转乡镇订单已自动退回，请及时处理',
+        soundType: 'rider_transfer_revoked',
+        priority: 'high',
+        jumpPath: '/pages/orders/index',
+        dedupeKey: `rider_transfer_timeout_returned_county:${orderId}:${fromUserId}`
+      });
+    }
+    socketService.notifyUserOrderUpdate(refreshed.user_id, refreshed, '乡镇暂未及时接力，订单已退回县城继续配送');
+  }
+
+  return { changed: true, order: refreshed };
+};
+
+const flushExpiredCountyTransferOrders = async (orderIds = []) => {
+  const normalizedIds = Array.isArray(orderIds)
+    ? Array.from(new Set(orderIds.map((item) => Number(item)).filter((item) => Number.isInteger(item) && item > 0)))
+    : [];
+  const where = {
+    is_transfer_order: true,
+    order_type: 'county',
+    transfer_status: 'pending_town_stationmaster',
+    current_responsible_role: 'town_stationmaster'
+  };
+  if (normalizedIds.length) {
+    where.id = { [Op.in]: normalizedIds };
+  }
+
+  const candidates = await Order.findAll({
+    where,
+    attributes: ['id', 'status', 'created_at', 'updated_at', 'transfer_last_action_at', 'current_responsible_role', 'is_transfer_order', 'order_type', 'transfer_status'],
+    order: [['id', 'DESC']]
+  });
+
+  const expired = candidates.filter((item) => hasCountyToTownTransferTimedOut(item)).map((item) => item.id);
+  if (!expired.length) {
+    return 0;
+  }
+
+  let changedCount = 0;
+  for (const orderId of expired) {
+    const result = await autoReturnCountyTransferOrder(orderId);
+    if (result.changed) {
+      changedCount += 1;
+    }
+  }
+
+  if (changedCount > 0) {
+    await socketService.broadcastDispatcherOrdersUpdate();
+  }
+
+  return changedCount;
+};
+
 const buildOrderTransferMeta = ({ order, currentUser, transferChain = [] }) => {
   const latestTransfer = transferChain[0] || null;
   const resolvedTransferTown = order.transfer_to_town_name || order.customer_town || '';
+  const transferDomainMeta = resolveTransferDomainMeta({ order, transferChain });
   return {
     is_transfer_order: Boolean(order.is_transfer_order),
     transfer_tag: resolveTransferTag(latestTransfer, order),
@@ -737,6 +1088,8 @@ const buildOrderTransferMeta = ({ order, currentUser, transferChain = [] }) => {
     transfer_last_action_at: order.transfer_last_action_at || null,
     transfer_last_action_type: order.transfer_last_action_type || '',
     transfer_revoke_used: Boolean(order.transfer_revoke_used),
+    transfer_is_county_to_town: isActiveCountyToTownTransferOrder(order, transferChain),
+    ...transferDomainMeta,
     transfer_chain_summary: latestTransfer ? {
       latest_round: latestTransfer.transfer_round,
       latest_status: latestTransfer.is_revoked ? 'revoked' : 'transferred',
@@ -748,7 +1101,12 @@ const buildOrderTransferMeta = ({ order, currentUser, transferChain = [] }) => {
     } : null,
     transfer_chain: transferChain,
     can_transfer: currentUser ? canRiderTransferOrder(currentUser, order) : false,
-    can_transfer_revoke: currentUser ? canRiderRevokeTransfer(currentUser, order, latestTransfer) : false,
+    can_transfer_revoke: currentUser
+      ? (
+          canRiderRevokeTransfer(currentUser, order, latestTransfer) ||
+          canTownStationmasterRejectCountyTransfer(currentUser, order, latestTransfer)
+        )
+      : false,
     can_transfer_to_town_rider: currentUser ? canTownDispatcherTransferToRider(currentUser, order) : false,
     can_transfer_to_town_rider_revoke: currentUser ? canTownDispatcherRevokeTransferToRider(currentUser, order, latestTransfer) : false
   };
@@ -762,6 +1120,20 @@ const appendTransferMetaToOrder = ({ plain, currentUser, transferChain = [] }) =
 };
 
 const resolveCustomerTownName = ({ customerTown, addressPayload, merchant }) => {
+  const addressText = [
+    addressPayload?.detail,
+    addressPayload?.address,
+    addressPayload?.formatted_address,
+    addressPayload?.location_summary,
+    addressPayload?.original_address
+  ].map((item) => String(item || '').trim()).filter(Boolean).join('');
+
+  // 老地址可能没有 town_code，甚至 street/town 还是旧值，但详细地址里已经带“郭陆滩镇”。
+  // 如果详细地址明确包含当前商家的乡镇，就优先按这个结果走，保证旧地址也能沿用同乡镇规则。
+  if (merchant?.business_scope === 'town_food' && addressTextContainsTown(addressText, merchant.town_name)) {
+    return normalizeTownName(merchant.town_name);
+  }
+
   const townName =
     normalizeTownName(customerTown) ||
     normalizeTownName(addressPayload?.town) ||
@@ -779,23 +1151,16 @@ const resolveCustomerTownName = ({ customerTown, addressPayload, merchant }) => 
   return '';
 };
 
-const resolveCustomerTownCode = ({ customerTownCode, addressPayload, merchant }) => {
+const resolveCustomerTownCode = ({ customerTownCode, addressPayload }) => {
   const townCode = String(
     customerTownCode ??
     addressPayload?.town_code ??
     addressPayload?.townCode ??
+    addressPayload?.area_code ??
     ''
   ).trim();
 
-  if (townCode) {
-    return townCode;
-  }
-
-  if (merchant?.business_scope === 'town_food') {
-    return String(merchant.town_code || '').trim();
-  }
-
-  return '';
+  return townCode;
 };
 
 const resolveTownAreaByCoordinates = async ({ customerLng, customerLat }) => {
@@ -826,6 +1191,17 @@ const ensureTownScopeConsistency = ({
   const customerTownName = normalizeTownName(resolvedCustomerTown);
   const areaTownCode = String(resolvedArea?.area_code || '').trim();
   const areaTownName = normalizeTownName(resolvedArea?.area_name);
+  const townMismatchMessage = '收货地址和乡镇不一致';
+  const hasCustomerTownCode = Boolean(String(resolvedCustomerTownCode || '').trim());
+  const hasCustomerTownName = Boolean(customerTownName);
+  const codeMatched = hasCustomerTownCode && merchantTownCode === String(resolvedCustomerTownCode || '').trim();
+  const nameMatched = hasCustomerTownName && merchantTownName === customerTownName;
+  const coordinateMatched =
+    Boolean(resolvedArea) &&
+    (
+      (merchantTownCode && areaTownCode && merchantTownCode === areaTownCode) ||
+      (merchantTownName && areaTownName && merchantTownName === areaTownName)
+    );
 
   if (!merchantTownCode || !merchantTownName) {
     const error = new Error('当前镇上商家未绑定所属乡镇，请联系平台处理');
@@ -833,32 +1209,19 @@ const ensureTownScopeConsistency = ({
     throw error;
   }
 
-  if (!resolvedCustomerTownCode) {
+  if (!hasCustomerTownCode && !hasCustomerTownName) {
     const error = new Error('未识别到当前所属乡镇，请开启定位或手动选择乡镇');
     error.statusCode = 400;
     throw error;
   }
 
-  if (merchantTownCode !== resolvedCustomerTownCode) {
-    const error = new Error('当前仅支持浏览和下单所属乡镇的商家');
-    error.statusCode = 400;
-    throw error;
-  }
-
-  if (resolvedArea && areaTownCode && merchantTownCode !== areaTownCode) {
-    const error = new Error('定位识别的乡镇与店铺乡镇不一致，禁止跨乡镇下单');
-    error.statusCode = 400;
-    throw error;
-  }
-
-  if (customerTownName && merchantTownName !== customerTownName) {
-    const error = new Error('当前仅支持本乡镇下单，请切换到所属乡镇后再试');
-    error.statusCode = 400;
-    throw error;
-  }
-
-  if (resolvedArea && areaTownName && customerTownName && areaTownName !== customerTownName) {
-    const error = new Error('定位乡镇与所选乡镇不一致，请确认后重试');
+  // 这里允许三种证据任意一种成立：
+  // 1. 前端传来的乡镇编码一致；
+  // 2. 前端传来的乡镇名称标准化后一致；
+  // 3. 收货坐标反查到的服务区域和商家乡镇一致。
+  // 这样既不会放开跨乡镇，也能避免“郭陆滩/郭陆滩镇/固始县郭陆滩镇”写法不同导致误杀。
+  if (!codeMatched && !nameMatched && !coordinateMatched) {
+    const error = new Error(townMismatchMessage);
     error.statusCode = 400;
     throw error;
   }
@@ -1087,12 +1450,6 @@ const estimateDeliveryFeeWithFallback = async ({
       throw error;
     }
 
-    console.warn('[DeliveryFeeFallback] tencent route timeout, fallback to line distance', {
-      merchant_id: merchant?.id || null,
-      merchant_name: merchant?.name || null,
-      order_type: resolvedOrderType,
-      customer_town: resolvedCustomerTown || null
-    });
 
     return estimateDeliveryFeeByLineDistance({
       merchant,
@@ -1309,6 +1666,207 @@ const attachOrderReviewMeta = (order) => {
 const USER_HIDE_ALLOWED_ORDER_STATUSES = new Set([6, 7]);
 const ACTIVE_REFUND_STATUSES = new Set([0, 1]);
 const USER_HIDE_BATCH_LIMIT = 50;
+const USER_CANCEL_DIRECT_ACCEPT_WINDOW_MS = 60 * 1000;
+const CANCEL_REFUND_APPLY_SOURCE = 'cancel';
+const REFUND_STATUS_LABEL_MAP = {
+  0: '待后台审核',
+  1: '审核通过，退款处理中',
+  2: '退款成功',
+  3: '后台已驳回',
+  4: '用户已撤销申请'
+};
+
+// 这里专门把退款/取消申请整理成前端能直接展示的一小段结构。
+// 这样用户端、后台端拿到的是同一套状态口径，不会一端叫“审核中”，另一端叫“处理中”。
+const serializeRefundSummary = (refund) => {
+  if (!refund) {
+    return null;
+  }
+  const plain = typeof refund.get === 'function' ? refund.get({ plain: true }) : refund;
+  return {
+    id: plain.id,
+    refund_no: plain.refund_no,
+    amount: Number(plain.amount || 0).toFixed(2),
+    status: Number(plain.status),
+    status_label: REFUND_STATUS_LABEL_MAP[Number(plain.status)] || '未知状态',
+    reason_type: plain.reason_type || '',
+    description: plain.description || '',
+    reject_reason: plain.reject_reason || '',
+    apply_source: plain.apply_source || '',
+    responsibility_type: plain.responsibility_type || '',
+    cancel_fee_amount: Number(plain.cancel_fee_amount || 0).toFixed(2),
+    is_full_refund: Boolean(plain.is_full_refund),
+    audit_note: plain.audit_note || '',
+    audit_role: plain.audit_role || '',
+    audit_user_id: plain.audit_user_id || null,
+    merchant_audit_at: plain.merchant_audit_at || null,
+    success_at: plain.success_at || null
+  };
+};
+
+// 当前第一期“特殊商品不可取消”还没有完整商品配置后台，
+// 所以这里先把订单快照和商品明细里的常见标记都兜住。
+// 后面只要下单时把标记带进订单，就不用再重写取消逻辑。
+const isOrderSpecialCancelLocked = (order) => {
+  if (!order) {
+    return false;
+  }
+  if (Boolean(order.special_cancel_locked)) {
+    return true;
+  }
+  const items = parseOrderItems(order.items_json || order.products_info || []);
+  if (!Array.isArray(items) || items.length === 0) {
+    return false;
+  }
+  return items.some((item) => Boolean(
+    item?.special_cancel_locked ||
+    item?.cannot_cancel ||
+    item?.cancel_disabled ||
+    item?.is_custom_product ||
+    item?.is_customized
+  ));
+};
+
+const getOrderAcceptedElapsedMs = (order, now = new Date()) => {
+  const acceptedAt = order?.accepted_at ? new Date(order.accepted_at) : null;
+  if (!acceptedAt || Number.isNaN(acceptedAt.getTime())) {
+    return null;
+  }
+  return Math.max(now.getTime() - acceptedAt.getTime(), 0);
+};
+
+const findLatestCancelRefund = async (orderId, options = {}) => Refund.findOne({
+  where: {
+    order_id: orderId,
+    apply_source: CANCEL_REFUND_APPLY_SOURCE
+  },
+  order: [['id', 'DESC']],
+  transaction: options.transaction
+});
+
+// 这里统一判断“当前订单能不能取消、是直接取消还是提交后台审核”。
+// 以后改规则优先改这里，别把判断散落到用户端、后台端、商家端各自去猜。
+const resolveUserCancelMeta = ({ order, latestCancelRefund, now = new Date() }) => {
+  const status = Number(order?.status);
+  const latestRefundStatus = Number(latestCancelRefund?.status);
+  if (latestCancelRefund && [0, 1].includes(latestRefundStatus)) {
+    return {
+      can_submit: false,
+      action_type: 'locked',
+      action_text: '取消申请处理中',
+      should_refund: false,
+      reason_required: false,
+      message: latestRefundStatus === 0 ? '取消申请正在等待后台审核' : '取消申请已通过，正在处理退款',
+      latest_cancel_refund: serializeRefundSummary(latestCancelRefund)
+    };
+  }
+
+  if (isOrderSpecialCancelLocked(order)) {
+    return {
+      can_submit: false,
+      action_type: 'disabled',
+      action_text: '不可取消',
+      should_refund: false,
+      reason_required: false,
+      message: '该订单包含定制商品或不可取消商品，请联系平台协商售后',
+      latest_cancel_refund: serializeRefundSummary(latestCancelRefund)
+    };
+  }
+
+  if (status === 0) {
+    return {
+      can_submit: true,
+      action_type: 'direct_cancel',
+      action_text: '取消订单',
+      should_refund: false,
+      reason_required: false,
+      message: '待支付订单可直接取消，不收取任何费用',
+      latest_cancel_refund: serializeRefundSummary(latestCancelRefund)
+    };
+  }
+
+  if (status === 1) {
+    return {
+      can_submit: true,
+      action_type: 'direct_refund',
+      action_text: '取消订单',
+      should_refund: true,
+      reason_required: false,
+      message: '商家还未接单，当前可直接取消并全额退款',
+      latest_cancel_refund: serializeRefundSummary(latestCancelRefund)
+    };
+  }
+
+  if (status === 2) {
+    const acceptedElapsedMs = getOrderAcceptedElapsedMs(order, now);
+    if (acceptedElapsedMs !== null && acceptedElapsedMs <= USER_CANCEL_DIRECT_ACCEPT_WINDOW_MS) {
+      return {
+        can_submit: true,
+        action_type: 'direct_refund',
+        action_text: '取消订单',
+        should_refund: true,
+        reason_required: false,
+        message: '商家接单 1 分钟内，当前支持直接取消并全额退款',
+        latest_cancel_refund: serializeRefundSummary(latestCancelRefund)
+      };
+    }
+    return {
+      can_submit: true,
+      action_type: 'apply_cancel_audit',
+      action_text: '申请取消',
+      should_refund: true,
+      reason_required: true,
+      message: '商家接单已超过 1 分钟，当前会先提交后台人工审核',
+      latest_cancel_refund: serializeRefundSummary(latestCancelRefund)
+    };
+  }
+
+  if ([3, 4, 5].includes(status)) {
+    return {
+      can_submit: false,
+      action_type: 'disabled',
+      action_text: '不可取消',
+      should_refund: false,
+      reason_required: false,
+      message: '订单已出餐或已进入配送阶段，当前不支持用户主动取消',
+      latest_cancel_refund: serializeRefundSummary(latestCancelRefund)
+    };
+  }
+
+  if (status === 6) {
+    return {
+      can_submit: false,
+      action_type: 'after_sale_only',
+      action_text: '申请售后',
+      should_refund: false,
+      reason_required: false,
+      message: '订单已送达，如有错漏餐或质量问题请走售后流程',
+      latest_cancel_refund: serializeRefundSummary(latestCancelRefund)
+    };
+  }
+
+  if (status === 7) {
+    return {
+      can_submit: false,
+      action_type: 'already_cancelled',
+      action_text: '订单已取消',
+      should_refund: false,
+      reason_required: false,
+      message: '订单已经取消，无需重复提交',
+      latest_cancel_refund: serializeRefundSummary(latestCancelRefund)
+    };
+  }
+
+  return {
+    can_submit: false,
+    action_type: 'disabled',
+    action_text: '当前不可取消',
+    should_refund: false,
+    reason_required: false,
+    message: '当前订单状态暂不支持取消，请联系平台处理',
+    latest_cancel_refund: serializeRefundSummary(latestCancelRefund)
+  };
+};
 
 const normalizeOrderIdList = (rawValue) => {
   if (!Array.isArray(rawValue)) {
@@ -1761,10 +2319,6 @@ const estimateCountyGroupOrderSummary = async ({
       if (!isRouteTimeoutError(error)) {
         throw error;
       }
-      console.warn('[CountyGroupDeliveryFeeFallback] tencent route timeout, fallback to line distance', {
-        merchant_id: merchant?.id || null,
-        merchant_name: merchant?.name || null
-      });
       routeResult = estimateDeliveryFeeByLineDistance({
         merchant,
         resolvedOrderType: 'county',
@@ -2134,6 +2688,12 @@ exports.createOrder = async (req, res, next) => {
 
     const { lng: finalCustomerLng, lat: finalCustomerLat, addressPayload } = resolveCustomerCoordinates(req.body);
     const resolvedOrderType = resolveOrderTypeByMerchant(merchant, order_type);
+    const resolvedDispatchPortal =
+      normalizeDispatchPortal(merchant.dispatch_portal) ||
+      resolveMerchantDispatchPortal({
+        businessScope: merchant.business_scope,
+        supermarketDeliveryPermission
+      });
     const resolvedCustomerTown = resolveCustomerTownName({
       customerTown: customer_town,
       addressPayload,
@@ -2155,9 +2715,6 @@ exports.createOrder = async (req, res, next) => {
         customerLng: finalCustomerLng,
         customerLat: finalCustomerLat
       });
-      if (resolvedArea) {
-        resolvedCustomerTownCode = resolvedCustomerTownCode || resolvedArea.area_code;
-      }
       ensureTownScopeConsistency({
         merchant,
         resolvedOrderType,
@@ -2165,6 +2722,7 @@ exports.createOrder = async (req, res, next) => {
         resolvedCustomerTownCode,
         resolvedArea
       });
+      resolvedCustomerTownCode = String(merchant.town_code || resolvedCustomerTownCode || '').trim();
     }
 
     const deliverySchedule = resolveDeliverySchedule({
@@ -2212,6 +2770,7 @@ exports.createOrder = async (req, res, next) => {
       merchant_id,
       type,
       order_type: resolvedOrderType,
+      dispatch_portal_snapshot: resolvedDispatchPortal,
       customer_town: resolvedCustomerTown,
       customer_town_code: resolvedCustomerTownCode || null,
       products_info: items_json,
@@ -2244,26 +2803,30 @@ exports.createOrder = async (req, res, next) => {
       dispatch_center_status: resolvedOrderType === 'town' ? 'station_pending' : null,
       status: 0
     });
-    const autoConfirmResult = await autoConfirmSingleOrderIfNeeded({
-      order,
-      userId: user.id,
-      source: 'order.create'
-    });
-    const finalOrder = autoConfirmResult.order || order;
-    console.log(`[order.create] user_id=${user.id} order_id=${finalOrder.id} merchant_id=${finalOrder.merchant_id} status=${finalOrder.status}`);
+    // #endregion
 
-    if (merchant && merchant.user_id) {
-      socketService.notifyMerchantNewOrder(merchant.user_id, finalOrder);
+    let responseOrder = order;
+
+    // 测试阶段这里直接走“下单即待接单”。
+    // 这样用户端点完提交订单，商家端马上就能收到单，不再受支付确认链路影响。
+    if (shouldAutoConfirmOrderOnCreate()) {
+      responseOrder = (await promoteCreatedOrderToMerchantPending(order)) || responseOrder;
+    }
+
+    // 商家只该看到“已支付待接单”的订单。
+    // 所以这里不再把未支付 status=0 的订单提前推给商家，避免商家收到提醒却在列表里看不到。
+    if (merchant && merchant.user_id && Number(responseOrder?.status) === 1) {
+      socketService.notifyMerchantNewOrder(merchant.user_id, responseOrder);
     }
     await socketService.broadcastDispatcherOrdersUpdate();
 
-    res.status(201).json(successResponse(finalOrder, autoConfirmResult.enabled ? '订单创建成功（创建即已支付）' : '订单创建成功'));
+    res.status(201).json(successResponse(responseOrder, '订单创建成功'));
   } catch (error) {
     next(error);
   }
 };
 
-exports.estimateDeliveryFee = async (req, res, next) => {
+/**
  * 估算配送费
  * 用户在下单前想知道配送费、配送距离、所属业务线时，通常会先走这里。
  */
@@ -2314,9 +2877,6 @@ exports.estimateDeliveryFee = async (req, res, next) => {
         customerLng: finalCustomerLng,
         customerLat: finalCustomerLat
       });
-      if (resolvedArea) {
-        resolvedCustomerTownCode = resolvedCustomerTownCode || resolvedArea.area_code;
-      }
       ensureTownScopeConsistency({
         merchant,
         resolvedOrderType,
@@ -2324,6 +2884,7 @@ exports.estimateDeliveryFee = async (req, res, next) => {
         resolvedCustomerTownCode,
         resolvedArea
       });
+      resolvedCustomerTownCode = String(merchant.town_code || resolvedCustomerTownCode || '').trim();
     }
 
     const deliveryEstimate = await estimateDeliveryFeeWithFallback({
@@ -2480,6 +3041,12 @@ exports.createCountyGroupOrder = async (req, res, next) => {
           round2(shop.packageFee) -
           round2(shop.discountAmount);
         const itemsJson = JSON.stringify(shop.productsInfo);
+        const dispatchPortal =
+          normalizeDispatchPortal(shop.merchant?.dispatch_portal) ||
+          resolveMerchantDispatchPortal({
+            businessScope: shop.merchant?.business_scope,
+            supermarketDeliveryPermission: shop.merchant?.supermarket_delivery_permission
+          });
 
         const order = await Order.create({
           order_no: orderNo,
@@ -2488,6 +3055,7 @@ exports.createCountyGroupOrder = async (req, res, next) => {
           merchant_id: shop.merchantId,
           type: 'takeout',
           order_type: 'county',
+          dispatch_portal_snapshot: dispatchPortal,
           customer_town: customerTown,
           merge_group_id: countyOrderGroup.id,
           is_group_main: shop.isMainStore,
@@ -2532,31 +3100,38 @@ exports.createCountyGroupOrder = async (req, res, next) => {
       return { countyOrderGroup, orders };
     });
 
-    const autoConfirmGroupResult = await autoConfirmCountyGroupIfNeeded({
-      countyOrderGroup: created.countyOrderGroup,
-      userId: user.id,
-      source: 'county.group.create'
-    });
-    const finalCountyOrderGroup = autoConfirmGroupResult.countyOrderGroup || created.countyOrderGroup;
-    const finalOrders = autoConfirmGroupResult.enabled ? autoConfirmGroupResult.orders : created.orders;
-    if (autoConfirmGroupResult.enabled) {
-      await notifyMerchantsForPaidOrders(finalOrders);
+    let responseCountyOrderGroup = created.countyOrderGroup;
+    let responseOrders = created.orders;
+
+    // 拼单测试阶段也直接走“下单即待接单”，
+    // 避免单店修好了、拼单还继续卡在待付款。
+    if (shouldAutoConfirmOrderOnCreate()) {
+      const promotedResult = await promoteCreatedCountyGroupToMerchantPending(
+        created.countyOrderGroup,
+        created.orders
+      );
+      responseCountyOrderGroup = promotedResult?.countyOrderGroup || responseCountyOrderGroup;
+      responseOrders = Array.isArray(promotedResult?.orders) && promotedResult.orders.length
+        ? promotedResult.orders
+        : responseOrders;
     }
+
+    await notifyMerchantsForPaidOrders(responseOrders);
     await socketService.broadcastDispatcherOrdersUpdate();
 
     res.status(201).json(successResponse({
-      group_id: finalCountyOrderGroup.id,
-      group_no: finalCountyOrderGroup.group_no,
-      main_merchant_id: finalCountyOrderGroup.main_merchant_id,
-      store_count: finalCountyOrderGroup.store_count,
-      total_amount: finalCountyOrderGroup.goods_amount,
-      package_fee: finalCountyOrderGroup.package_fee,
-      discount_amount: finalCountyOrderGroup.discount_amount,
-      delivery_fee: finalCountyOrderGroup.delivery_fee,
-      pay_amount: finalCountyOrderGroup.pay_amount,
-      status: finalCountyOrderGroup.status,
-      orders: finalOrders
-    }, autoConfirmGroupResult.enabled ? '县城美食多店订单创建成功（创建即已支付）' : '县城美食多店订单创建成功'));
+      group_id: responseCountyOrderGroup.id,
+      group_no: responseCountyOrderGroup.group_no,
+      main_merchant_id: responseCountyOrderGroup.main_merchant_id,
+      store_count: responseCountyOrderGroup.store_count,
+      total_amount: responseCountyOrderGroup.goods_amount,
+      package_fee: responseCountyOrderGroup.package_fee,
+      discount_amount: responseCountyOrderGroup.discount_amount,
+      delivery_fee: responseCountyOrderGroup.delivery_fee,
+      pay_amount: responseCountyOrderGroup.pay_amount,
+      status: responseCountyOrderGroup.status,
+      orders: responseOrders
+    }, '县城美食多店订单创建成功'));
   } catch (error) {
     next(error);
   }
@@ -2593,33 +3168,43 @@ exports.payOrder = async (req, res, next) => {
       requestPayload: { source: 'order.pay', user_id: user.id, channel }
     });
 
-    const mode = process.env.PAYMENT_MODE || 'mock';
-    if (isMockAutoConfirmEnabled(mode)) {
-      const meta = buildMockConfirmMeta();
-      const confirmed = await paymentService.confirmSuccess({
+    // 这里记下“支付入口只创建了预支付流水”的现场。
+    // 如果复现时只看到这条日志，却一直看不到 confirmSuccess(支付成功确认) 那边的日志，
+    // 就能坐实问题卡在“支付确认没有发生”，订单自然也不会推进到商家待接单。
+
+    // 测试阶段直接在这里把 mock 支付确认掉。
+    // 这样用户端点一次“确认支付”就能把订单推进到待接单，商家端也能立刻看到。
+    if (shouldAutoConfirmOrderOnPayRequest()) {
+      const confirmResult = await paymentService.confirmSuccess({
         outTradeNo: tx.out_trade_no,
-        tradeNo: meta.tradeNo,
-        notifyId: meta.notifyId,
+        tradeNo: `mock-pay-${order.id}-${Date.now()}`,
+        notifyId: `mock-pay-${order.id}`,
         amount: tx.amount,
         notifyPayload: {
-          source: 'order.pay.auto_confirm',
-          user_id: user.id,
+          source: 'order.pay.mock_auto_confirm',
           order_id: order.id
         },
-        channel: tx.channel
+        channel
       });
-      await notifyMerchantForPaidOrder(confirmed.order || order);
-      return res.json(successResponse({
-        order_id: order.id,
-        out_trade_no: tx.out_trade_no,
-        amount: round2(tx.amount),
-        channel: tx.channel,
-        mode,
-        payment_status: 'success',
-        awaiting_confirmation: false,
-        auto_confirmed: true,
-        order: confirmed.order || order
-      }, '模拟支付已自动确认'));
+
+      await notifyMerchantForPaidOrder(confirmResult?.order || order);
+
+      return res.json(
+        successResponse(
+          {
+            order_id: order.id,
+            out_trade_no: tx.out_trade_no,
+            amount: round2(tx.amount),
+            channel: tx.channel,
+            mode: 'mock',
+            payment_status: 'success',
+            awaiting_confirmation: false,
+            order: confirmResult?.order || null,
+            transaction: confirmResult?.tx || null
+          },
+          '支付成功'
+        )
+      );
     }
 
     res.json(
@@ -2629,7 +3214,7 @@ exports.payOrder = async (req, res, next) => {
           out_trade_no: tx.out_trade_no,
           amount: round2(tx.amount),
           channel: tx.channel,
-          mode,
+          mode: process.env.PAYMENT_MODE || 'mock',
           payment_status: 'pending',
           awaiting_confirmation: true
         },
@@ -2667,35 +3252,35 @@ exports.payCountyGroupOrder = async (req, res, next) => {
       requestPayload: { source: 'county.group.pay', user_id: user.id, group_id: countyOrderGroup.id, channel }
     });
 
-    const mode = process.env.PAYMENT_MODE || 'mock';
-    if (isMockAutoConfirmEnabled(mode)) {
-      const meta = buildMockConfirmMeta();
-      const confirmed = await paymentService.confirmSuccess({
+    // 拼单在测试阶段也走同样的“点支付即成功”闭环，避免单店能测、多店还卡住。
+    if (shouldAutoConfirmOrderOnPayRequest()) {
+      const confirmResult = await paymentService.confirmSuccess({
         outTradeNo: tx.out_trade_no,
-        tradeNo: meta.tradeNo,
-        notifyId: meta.notifyId,
+        tradeNo: `mock-county-group-pay-${countyOrderGroup.id}-${Date.now()}`,
+        notifyId: `mock-county-group-pay-${countyOrderGroup.id}`,
         amount: tx.amount,
         notifyPayload: {
-          source: 'county.group.pay.auto_confirm',
-          user_id: user.id,
+          source: 'county.group.pay.mock_auto_confirm',
           group_id: countyOrderGroup.id
         },
-        channel: tx.channel
+        channel
       });
-      await notifyMerchantsForPaidOrders(confirmed.orders);
+
+      await notifyMerchantsForPaidOrders(confirmResult?.orders || []);
+
       return res.json(successResponse({
         group_id: countyOrderGroup.id,
         group_no: countyOrderGroup.group_no,
         out_trade_no: tx.out_trade_no,
         amount: round2(tx.amount),
         channel: tx.channel,
-        mode,
+        mode: 'mock',
         payment_status: 'success',
         awaiting_confirmation: false,
-        auto_confirmed: true,
-        county_order_group: confirmed.countyOrderGroup || countyOrderGroup,
-        orders: confirmed.orders
-      }, '拼单模拟支付已自动确认'));
+        group: confirmResult?.countyOrderGroup || null,
+        orders: confirmResult?.orders || [],
+        transaction: confirmResult?.tx || null
+      }, '拼单支付成功'));
     }
 
     res.json(successResponse({
@@ -2704,7 +3289,7 @@ exports.payCountyGroupOrder = async (req, res, next) => {
       out_trade_no: tx.out_trade_no,
       amount: round2(tx.amount),
       channel: tx.channel,
-      mode,
+      mode: process.env.PAYMENT_MODE || 'mock',
       payment_status: 'pending',
       awaiting_confirmation: true
     }, '拼单支付请求已创建，等待支付确认'));
@@ -2779,27 +3364,27 @@ exports.getUserOrders = async (req, res, next) => {
     const { status, type } = req.query;
     const isMerchantRole = user.role === 'merchant' || user.role === 'shop';
     let where;
+
     if (isMerchantRole) {
       const bindMerchant = await Merchant.findOne({ where: { user_id: user.id } });
       if (!bindMerchant) {
-        console.log(`[order.my] merchant_user_id=${user.id} role=${user.role} merchant_not_found`);
-        return res.status(404).json(errorResponse('您还没有店铺'));
+        return res.status(404).json(errorResponse('当前账号还没有绑定商家'));
       }
+
       where = { merchant_id: bindMerchant.id };
-      if (status) where.status = status;
-      if (type) where.type = type;
-      console.log(`[order.my] merchant_user_id=${user.id} merchant_id=${bindMerchant.id} where=${JSON.stringify(where)}`);
     } else {
+      // 用户自己的“我的订单”列表默认只看没被手动移出的订单。
+      // 这里不去动终态数据本身，只是把 buyer_deleted_at 已标记的记录从默认列表里过滤掉。
       where = {
         user_id: user.id,
         buyer_deleted_at: null
       };
-      if (status) where.status = status;
-      if (type) where.type = type;
-      console.log(`[order.my] buyer_user_id=${user.id} where=${JSON.stringify(where)}`);
     }
 
-    const orders = await Order.findAll({
+    if (status) where.status = status;
+    if (type) where.type = type;
+
+    let orders = await Order.findAll({
       where,
       include: [{
         model: Merchant,
@@ -2817,7 +3402,88 @@ exports.getUserOrders = async (req, res, next) => {
       order: [['id', 'DESC']]
     });
 
-    const normalizedOrders = orders.map((order) => attachOrderReviewMeta(order));
+    if (await flushExpiredCountyTransferOrders(orders.map((item) => Number(item.id)))) {
+      orders = await Order.findAll({
+        where,
+        include: [{
+          model: Merchant,
+          as: 'merchant',
+          attributes: ['name', 'logo', 'phone', 'address', 'longitude', 'latitude']
+        }, {
+          model: User,
+          as: 'rider',
+          attributes: ['nickname', 'phone', 'avatar', 'rider_longitude', 'rider_latitude', 'rider_location_updated_at']
+        }, {
+          model: Review,
+          as: 'review',
+          attributes: ['id', 'merchant_score', 'rider_score']
+        }],
+        order: [['id', 'DESC']]
+      });
+    }
+
+    const transferOrderIds = orders
+      .filter((item) => Boolean(item?.is_transfer_order || item?.transfer_round || item?.transfer_from_user_id || item?.transfer_to_user_id))
+      .map((item) => item.id);
+    const transfers = transferOrderIds.length
+      ? await OrderTransfer.findAll({
+          where: { order_id: { [Op.in]: transferOrderIds } },
+          include: [
+            { model: User, as: 'fromUser', attributes: ['id', 'nickname', 'phone', 'rider_kind', 'rider_level', 'delivery_scope', 'town_name', 'rider_town'] },
+            { model: User, as: 'toUser', attributes: ['id', 'nickname', 'phone', 'rider_kind', 'rider_level', 'delivery_scope', 'town_name', 'rider_town'] },
+            { model: User, as: 'revokedByUser', attributes: ['id', 'nickname', 'phone', 'rider_kind', 'rider_level', 'delivery_scope', 'town_name', 'rider_town'] }
+          ],
+          order: [['id', 'DESC']]
+        })
+      : [];
+    const transferMap = new Map();
+    const orderIds = orders.map((item) => Number(item.id)).filter((id) => Number.isInteger(id) && id > 0);
+    const latestCancelRefundMap = new Map();
+
+    if (orderIds.length) {
+      const cancelRefunds = await Refund.findAll({
+        where: {
+          order_id: { [Op.in]: orderIds },
+          apply_source: CANCEL_REFUND_APPLY_SOURCE
+        },
+        order: [['id', 'DESC']]
+      });
+      for (const refund of cancelRefunds) {
+        const orderId = Number(refund.order_id);
+        if (!latestCancelRefundMap.has(orderId)) {
+          latestCancelRefundMap.set(orderId, refund);
+        }
+      }
+    }
+
+    transfers.forEach((item) => {
+      const serialized = serializeTransferRecord(item);
+      const existing = transferMap.get(item.order_id) || [];
+      existing.push(serialized);
+      transferMap.set(item.order_id, existing);
+    });
+
+    const normalizedOrders = orders.map((order) => {
+      const reviewed = attachOrderReviewMeta(order);
+      const enriched = appendTransferMetaToOrder({
+        plain: reviewed,
+        currentUser: user,
+        transferChain: transferMap.get(reviewed.id) || []
+      });
+      const latestCancelRefund = latestCancelRefundMap.get(Number(reviewed.id)) || null;
+      return {
+        ...enriched,
+        latest_cancel_refund: serializeRefundSummary(latestCancelRefund),
+        cancel_meta: resolveUserCancelMeta({
+          order: enriched,
+          latestCancelRefund
+        }),
+        ...buildDeliveryOrderPresentation({
+          user,
+          order: enriched
+        })
+      };
+    });
     res.json(successResponse({ 订单列表: normalizedOrders, data: normalizedOrders }));
   } catch (error) {
     next(error);
@@ -2946,9 +3612,6 @@ exports.hideUserOrdersBatch = async (req, res, next) => {
           : `已移出${totalSuccess}条订单`
         : '没有可移出的订单';
 
-    console.log(
-      `[order.hide-batch] user_id=${user.id} request_count=${orderIds.length} hidden_count=${hiddenCount} success_count=${totalSuccess} failed_count=${totalFailed}`
-    );
 
     res.json(successResponse({
       success_ids: successIds,
@@ -2964,8 +3627,103 @@ exports.hideUserOrdersBatch = async (req, res, next) => {
 };
 
 /**
- * 获取订单详情
+ * 获取订单实时位置（轻量接口）
+ * 这个接口专门给“查看订单位置”页 15 秒轮询用，只返回骑手实时位置和必要状态字段，避免高并发下反复拉整包详情。
  */
+exports.getOrderLiveLocation = async (req, res, next) => {
+  try {
+    const user = req.user;
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json(errorResponse('缺少有效的订单ID'));
+    }
+
+    let order = await Order.findByPk(id, {
+      attributes: [
+        'id',
+        'order_no',
+        'status',
+        'order_type',
+        'customer_town',
+        'user_id',
+        'merchant_id',
+        'rider_id',
+        'current_responsible_role'
+      ],
+      include: [{
+        model: User,
+        as: 'rider',
+        attributes: ['id', 'rider_longitude', 'rider_latitude', 'rider_location_updated_at']
+      }]
+    });
+
+    if (!order) {
+      return res.status(404).json(errorResponse('订单不存在'));
+    }
+
+    const isMerchantRole = user.role === 'merchant' || user.role === 'shop';
+    let mappedMerchantId = null;
+    if (isMerchantRole) {
+      const merchant = await Merchant.findOne({ where: { user_id: user.id } });
+      mappedMerchantId = merchant?.id || null;
+      if (!mappedMerchantId || order.merchant_id !== mappedMerchantId) {
+        return res.status(403).json(errorResponse('没有权限查看'));
+      }
+    } else if (user.role === 'rider') {
+      if (!canRiderViewOrderDetail(user, order)) {
+        return res.status(403).json(errorResponse('没有权限查看'));
+      }
+    } else if (isMerchantDeliveryUser(user)) {
+      if (!canMerchantDeliveryViewOrderDetail(user, order)) {
+        return res.status(403).json(errorResponse('没有权限查看'));
+      }
+    } else if (order.user_id !== user.id) {
+      return res.status(403).json(errorResponse('没有权限查看'));
+    }
+
+    if (await flushExpiredCountyTransferOrders([order.id])) {
+      order = await Order.findByPk(id, {
+        attributes: [
+          'id',
+          'order_no',
+          'status',
+          'order_type',
+          'customer_town',
+          'user_id',
+          'merchant_id',
+          'rider_id',
+          'current_responsible_role',
+          'transfer_status',
+          'transfer_last_action_at',
+          'is_transfer_order'
+        ],
+        include: [{
+          model: User,
+          as: 'rider',
+          attributes: ['id', 'rider_longitude', 'rider_latitude', 'rider_location_updated_at']
+        }]
+      });
+    }
+
+    res.json(successResponse({
+      id: order.id,
+      order_id: order.id,
+      order_no: order.order_no,
+      status: Number(order.status),
+      order_type: order.order_type || '',
+      customer_town: order.customer_town || '',
+      rider_id: order.rider_id || null,
+      current_responsible_role: order.current_responsible_role || '',
+      transfer_status: order.transfer_status || '',
+      rider_longitude: Number(order.rider?.rider_longitude || 0) || null,
+      rider_latitude: Number(order.rider?.rider_latitude || 0) || null,
+      rider_location_updated_at: order.rider?.rider_location_updated_at || null
+    }));
+  } catch (error) {
+    next(error);
+  }
+};
+
 /**
  * 获取订单详情
  * 这个接口会按当前登录角色自动收口可见范围，避免越权查看别人订单。
@@ -2975,7 +3733,7 @@ exports.getOrderDetail = async (req, res, next) => {
     const user = req.user;
     const { id } = req.params;
 
-    const order = await Order.findOne({
+    let order = await Order.findOne({
       where: { id },
       include: [{
         model: Merchant,
@@ -3004,6 +3762,12 @@ exports.getOrderDetail = async (req, res, next) => {
           'is_anonymous',
           'created_at'
         ]
+      }, {
+        model: Refund,
+        as: 'refunds',
+        separate: true,
+        order: [['id', 'DESC']],
+        limit: 10
       }]
     });
 
@@ -3016,34 +3780,56 @@ exports.getOrderDetail = async (req, res, next) => {
       const merchant = await Merchant.findOne({ where: { user_id: user.id } });
       mappedMerchantId = merchant?.id || null;
       if (!mappedMerchantId || order.merchant_id !== mappedMerchantId) {
-        console.error(
-          `[order.detail.403] token_user_id=${user.id} mapped_merchant_id=${mappedMerchantId} request_order_id=${id} order_merchant_id=${order.merchant_id}`
-        );
         return res.status(403).json(errorResponse('没有权限查看'));
       }
     } else if (user.role === 'rider') {
       if (!canRiderViewOrderDetail(user, order)) {
-        console.error(
-          `[order.detail.403] token_user_id=${user.id} mapped_merchant_id=${mappedMerchantId} request_order_id=${id} order_merchant_id=${order.merchant_id}`
-        );
         return res.status(403).json(errorResponse('没有权限查看'));
       }
     } else if (isMerchantDeliveryUser(user)) {
       if (!canMerchantDeliveryViewOrderDetail(user, order)) {
-        console.error(
-          `[order.detail.403] token_user_id=${user.id} bound_merchant_id=${user.bound_merchant_id || ''} request_order_id=${id} order_merchant_id=${order.merchant_id}`
-        );
         return res.status(403).json(errorResponse('没有权限查看'));
       }
     } else if (order.user_id !== user.id) {
-      console.error(
-        `[order.detail.403] token_user_id=${user.id} mapped_merchant_id=${mappedMerchantId} request_order_id=${id} order_merchant_id=${order.merchant_id}`
-      );
       return res.status(403).json(errorResponse('没有权限查看'));
+    }
+
+    if (await flushExpiredCountyTransferOrders([order.id])) {
+      order = await Order.findOne({
+        where: { id },
+        include: [{
+          model: Merchant,
+          as: 'merchant',
+          attributes: ['name', 'logo', 'phone', 'address', 'longitude', 'latitude']
+        }, {
+          model: User,
+          as: 'rider',
+          attributes: ['nickname', 'phone', 'avatar', 'rider_longitude', 'rider_latitude', 'rider_location_updated_at']
+        }, {
+          model: OrderLog,
+          as: 'logs',
+          separate: true,
+          order: [['id', 'DESC']],
+          limit: 20
+        }, {
+          model: Review,
+          as: 'review',
+          attributes: ['id', 'merchant_score', 'merchant_content', 'merchant_images', 'merchant_reply', 'merchant_replied_at', 'rider_score', 'rider_content', 'is_anonymous', 'created_at']
+        }, {
+          model: Refund,
+          as: 'refunds',
+          separate: true,
+          order: [['id', 'DESC']],
+          limit: 10
+        }]
+      });
     }
 
     const gaodeSearchAssist = await buildGaodeSearchAssist(order);
     const transferChain = await getOrderTransferChain(order.id, 10);
+    const latestCancelRefund = Array.isArray(order.refunds)
+      ? order.refunds.find((item) => item?.apply_source === CANCEL_REFUND_APPLY_SOURCE) || null
+      : null;
 
     const detail = appendTransferMetaToOrder({
       currentUser: user,
@@ -3080,6 +3866,22 @@ exports.getOrderDetail = async (req, res, next) => {
         longitude: Number(order.merchant.longitude || 0) || null,
         latitude: Number(order.merchant.latitude || 0) || null
       } : null,
+      // 这里把转派链路要用的关键字段一并透给详情页。
+      // 原来详情页虽然会走 appendTransferMetaToOrder(补转派元数据)，
+      // 但传进去的 plain(详情对象) 少了 is_transfer_order / current_responsible_role
+      // 这些判断字段，导致“转给骑手”这种条件按钮在详情页里经常被误判成 false。
+      // 尤其是县城转乡镇后的订单，列表里已经是转派单了，详情页却因为缺字段看不出来。
+      is_transfer_order: Boolean(order.is_transfer_order),
+      transfer_status: order.transfer_status || '',
+      transfer_round: Number(order.transfer_round || 0),
+      current_responsible_user_id: order.current_responsible_user_id || order.rider_id || null,
+      current_responsible_role: order.current_responsible_role || '',
+      transfer_from_user_id: order.transfer_from_user_id || null,
+      transfer_to_user_id: order.transfer_to_user_id || null,
+      transfer_to_town_name: order.transfer_to_town_name || '',
+      transfer_last_action_at: order.transfer_last_action_at || null,
+      transfer_last_action_type: order.transfer_last_action_type || '',
+      transfer_revoke_used: Boolean(order.transfer_revoke_used),
       rider_id: order.rider_id || null,
       riderId: order.rider_id || null,
       rider_longitude: Number(order.rider?.rider_longitude || 0) || null,
@@ -3118,9 +3920,18 @@ exports.getOrderDetail = async (req, res, next) => {
         rider_content: order.review.rider_content || '',
         is_anonymous: Boolean(order.review.is_anonymous),
         created_at: order.review.created_at || null
-      } : null
+      } : null,
+      refunds: Array.isArray(order.refunds)
+        ? order.refunds.map((item) => serializeRefundSummary(item))
+        : [],
+      latest_cancel_refund: serializeRefundSummary(latestCancelRefund),
+      cancel_meta: resolveUserCancelMeta({
+        order,
+        latestCancelRefund
+      })
       }
     });
+
     res.json(successResponse({
       ...detail,
       ...buildDeliveryOrderPresentation({
@@ -3217,13 +4028,17 @@ exports.submitReview = async (req, res, next) => {
  */
 /**
  * 取消订单
- * 用户取消订单时，会根据当前状态决定能否取消，并在需要时触发退款链路。
+ * 这里统一处理“直接取消”和“提交后台审核”两种情况。
+ * 这样用户端只调一个入口，具体是立即关闭还是进入审核，由后端按状态机决定。
  */
 exports.cancelOrder = async (req, res, next) => {
   try {
     const user = req.user;
     const { order_id, reason } = req.body;
-    let cancelledOrder = null;
+    const cancelReason = String(reason || '').trim();
+    let responseMessage = '订单已取消';
+    let responseData = null;
+    let affectedOrder = null;
     let merchantUserId = null;
 
     await sequelize.transaction(async (t) => {
@@ -3237,36 +4052,17 @@ exports.cancelOrder = async (req, res, next) => {
         const err = new Error('订单不存在'); err.statusCode = 404; throw err;
       }
 
-      if (![0, 1].includes(order.status)) {
-        const err = new Error('当前状态不能取消'); err.statusCode = 400; throw err;
+      const latestCancelRefund = await findLatestCancelRefund(order.id, { transaction: t });
+      const cancelMeta = resolveUserCancelMeta({
+        order,
+        latestCancelRefund
+      });
+
+      if (!cancelMeta.can_submit) {
+        const err = new Error(cancelMeta.message || '当前状态不能取消'); err.statusCode = 400; throw err;
       }
 
       const fromStatus = order.status;
-      await order.update({
-        status: 7,
-        cancel_reason: reason
-      }, { transaction: t });
-
-      if (fromStatus === 1) {
-        await paymentService.processRefund({
-          order,
-          reason_type: '用户取消',
-          description: reason,
-          transaction: t
-        });
-      }
-
-      await OrderLog.create({
-        order_id: order.id,
-        operator_id: user.id,
-        operator_type: 'user',
-        action: '取消订单',
-        from_status: fromStatus,
-        to_status: 7,
-        remark: reason
-      }, { transaction: t });
-
-      cancelledOrder = order.get({ plain: true });
       const merchant = order.merchant_id
         ? await Merchant.findByPk(order.merchant_id, {
             attributes: ['user_id'],
@@ -3274,22 +4070,93 @@ exports.cancelOrder = async (req, res, next) => {
           })
         : null;
       merchantUserId = merchant?.user_id || null;
+
+      // 待付款 / 待接单 / 接单 1 分钟内，统一按“直接取消”处理。
+      // 这几种情况平台规则是明确的，不需要再让用户进人工审核。
+      if (['direct_cancel', 'direct_refund'].includes(cancelMeta.action_type)) {
+        await order.update({
+          status: 7,
+          cancel_reason: cancelReason || order.cancel_reason || ''
+        }, { transaction: t });
+
+        if (cancelMeta.should_refund) {
+          responseMessage = '订单已取消，退款已按原路退回';
+          responseData = await paymentService.processRefund({
+            order,
+            reason_type: '用户取消',
+            description: cancelReason || cancelMeta.message,
+            transaction: t,
+            apply_source: CANCEL_REFUND_APPLY_SOURCE,
+            responsibility_type: 'user',
+            cancel_fee_amount: 0,
+            is_full_refund: true
+          });
+        } else {
+          responseMessage = '订单已取消';
+        }
+
+        await OrderLog.create({
+          order_id: order.id,
+          operator_id: user.id,
+          operator_type: 'user',
+          action: '取消订单',
+          from_status: fromStatus,
+          to_status: 7,
+          remark: cancelReason || cancelMeta.message
+        }, { transaction: t });
+      } else if (cancelMeta.action_type === 'apply_cancel_audit') {
+        // 商家接单超过 1 分钟后，不再允许用户直接把单关掉。
+        // 这里改成写一张“待后台审核”的取消申请，后面由总后台人工决定退多少、是否驳回。
+        const refund = await Refund.create({
+          refund_no: generateOrderNo(),
+          order_id: order.id,
+          order_no: order.order_no,
+          user_id: order.user_id,
+          merchant_id: order.merchant_id,
+          amount: order.pay_amount,
+          reason_type: '用户申请取消',
+          description: cancelReason || '用户发起取消申请，等待后台审核',
+          status: 0,
+          apply_source: CANCEL_REFUND_APPLY_SOURCE,
+          responsibility_type: 'user',
+          cancel_fee_amount: 0,
+          is_full_refund: false
+        }, { transaction: t });
+
+        await OrderLog.create({
+          order_id: order.id,
+          operator_id: user.id,
+          operator_type: 'user',
+          action: '申请取消订单',
+          from_status: fromStatus,
+          to_status: fromStatus,
+          remark: cancelReason || '用户发起取消申请，等待后台审核'
+        }, { transaction: t });
+
+        responseMessage = '取消申请已提交，等待后台人工审核';
+        responseData = serializeRefundSummary(refund);
+      }
+
+      affectedOrder = order.get({ plain: true });
     });
 
-    if (merchantUserId && cancelledOrder?.id) {
-      socketService.notifyMerchantReminder(merchantUserId, cancelledOrder, {
-        eventType: 'merchant_order_cancelled',
-        title: '订单已取消',
-        message: `订单 ${cancelledOrder.order_no} 已被用户取消`,
-        speechText: '有订单已被用户取消，请及时查看',
-        soundType: 'merchant_order_cancelled',
+    if (merchantUserId && affectedOrder?.id) {
+      const isAuditRequest = responseMessage.includes('等待后台人工审核');
+      socketService.notifyMerchantReminder(merchantUserId, affectedOrder, {
+        eventType: isAuditRequest ? 'merchant_order_cancel_audit_pending' : 'merchant_order_cancelled',
+        title: isAuditRequest ? '收到取消申请' : '订单已取消',
+        message: isAuditRequest
+          ? `订单 ${affectedOrder.order_no} 收到用户取消申请，请留意后台处理`
+          : `订单 ${affectedOrder.order_no} 已被用户取消`,
+        speechText: isAuditRequest ? '有用户提交了取消申请，请及时查看' : '有订单已被用户取消，请及时查看',
+        soundType: isAuditRequest ? 'merchant_order_new' : 'merchant_order_cancelled',
         priority: 'medium',
         jumpPath: '/pages/order/list',
-        dedupeKey: `merchant_order_cancelled:${cancelledOrder.id}`
+        dedupeKey: `${isAuditRequest ? 'merchant_order_cancel_audit_pending' : 'merchant_order_cancelled'}:${affectedOrder.id}`
       });
     }
     await socketService.broadcastDispatcherOrdersUpdate();
-    res.json(successResponse(null, '订单已取消'));
+    res.json(successResponse(responseData, responseMessage));
   } catch (error) {
     if (error.statusCode) {
       return res.status(error.statusCode).json(errorResponse(error.message));
@@ -3309,22 +4176,19 @@ exports.acceptOrder = async (req, res, next) => {
     const { merchant_lng, merchant_lat } = req.body;
     // 兼容驼峰和蛇形命名，避免前端参数风格不一致时打挂接口。
     const order_id = req.body.order_id || req.body.orderId;
-    console.log('[acceptOrder] 请求体:', JSON.stringify(req.body));
-    console.log('[acceptOrder] order_id:', order_id, '类型:', typeof order_id);
 
     const merchant = await findOwnedMerchantByUserId(user.id);
     if (!merchant) {
-      console.log('[acceptOrder] 商家不存在, user.id:', user.id);
       return res.status(404).json(errorResponse('您还没有店铺'));
     }
-    console.log('[acceptOrder] 商家ID:', merchant.id);
 
+    // 先把当前商家自己的订单查出来。
+    // 这里必须先查再往下走，不然后面的 ownership(归属校验)、状态推进、日志记录都会直接报变量未定义。
     const order = await Order.findOne({
       where: { id: order_id, merchant_id: merchant.id }
     });
 
     if (!order) {
-      console.log('[acceptOrder] 订单不存在, order_id:', order_id, 'merchant_id:', merchant.id);
       return res.status(404).json(errorResponse('订单不存在'));
     }
 
@@ -3333,11 +4197,10 @@ exports.acceptOrder = async (req, res, next) => {
       return res.status(403).json(errorResponse(ownershipError));
     }
 
-    console.log('[acceptOrder] 订单状态:', order.status, '类型:', typeof order.status);
-
+    // 正常链路里，商家接单应该接的是 status=1(待接单)。
+    // 这里保留 status=0 兼容旧测试数据，避免历史脏单因为状态口径差 1 步而完全无法处理。
     const statusNum = Number(order.status);
     if (![0, 1].includes(statusNum)) {
-      console.log('[acceptOrder] 状态校验失败, statusNum:', statusNum);
       return res.status(400).json(errorResponse('订单状态不正确'));
     }
 
@@ -3374,6 +4237,21 @@ exports.acceptOrder = async (req, res, next) => {
     });
 
     socketService.notifyUserOrderUpdate(order.user_id, order, '商家已接单，正在备餐中');
+
+    // 乡镇单从“商家已接单”这一刻开始，就已经进入同乡镇骑手可见的待接单池。
+    // 以前这里没主动推骑手，只能等前端轮询撞上，结果就会出现
+    // “商家已经点了接单，但骑手端这次没马上响”的老问题。
+    // 这里直接按乡镇范围推实时事件，把“接单即提醒”钉死。
+    if (order.order_type === 'town') {
+      socketService.notifyTownRiderPoolNewOrder(order, {
+        title: '商家已接单',
+        message: `${merchant.name || '商家'}已接单，订单已进入待接单池`,
+        speechText: `${merchant.name || '商家'}已接单，请及时查看并接单`,
+        townName: order.customer_town || merchant.town_name || '',
+        merchantName: merchant.name || '商家',
+        dedupeKey: `town_pool_accept:${order.id}`
+      });
+    }
 
     await socketService.broadcastDispatcherOrdersUpdate();
 
@@ -3512,20 +4390,6 @@ exports.prepareOrder = async (req, res, next) => {
 
     await order.reload();
 
-    // region debug-point merchant-delivery-miss-prepare
-    try {
-      console.log('[merchant-delivery-debug][prepareOrder]', JSON.stringify({
-        order_id: order.id,
-        merchant_id: order.merchant_id,
-        status: Number(order.status),
-        supermarket_delivery_permission_snapshot: order.supermarket_delivery_permission_snapshot || null,
-        supermarket_delivery_mode: order.supermarket_delivery_mode || null,
-        rider_id: order.rider_id || null,
-        current_responsible_user_id: order.current_responsible_user_id || null,
-        current_responsible_role: order.current_responsible_role || null
-      }));
-    } catch (e) {}
-    // endregion debug-point merchant-delivery-miss-prepare
 
     // 订单状态推进后，统一记订单日志并通知用户、调度端。
     await OrderLog.create({
@@ -3565,6 +4429,22 @@ exports.prepareOrder = async (req, res, next) => {
           current_responsible_role: null
         });
         await order.reload();
+
+        // 真实运营里，“商家接单”只是告诉骑手这单开始做了，
+        // 真正最该抢响应的是“商家已出餐”这一刻。
+        // 所以这里再补一次乡镇骑手池通知：
+        // 1. 商家接单时能先看到有单；
+        // 2. 商家出餐时再响一次，提醒骑手现在可以优先去接。
+        socketService.notifyTownRiderPoolNewOrder(order, {
+          eventType: 'town_order_prepared',
+          title: '商家已出餐',
+          message: `${merchant?.name || '商家'}已出餐，请尽快接单配送`,
+          speechText: `${merchant?.name || '商家'}已出餐，请尽快接单配送`,
+          soundType: 'rider_new_delivery',
+          townName: order.customer_town || merchant.town_name || '',
+          merchantName: merchant?.name || '商家',
+          dedupeKey: `town_pool_prepared:${order.id}`
+        });
       } else {
         const dispatchResult = await dispatchCenterService.pushOrderToDispatchCenter({ order, merchant });
         const dispatchOrderId =
@@ -3597,10 +4477,6 @@ exports.prepareOrder = async (req, res, next) => {
         });
       }
     } catch (e) {
-      console.error('推单或分配站长失败:', e);
-      await order.update({
-        dispatch_center_status: order.order_type === 'town' ? 'station_failed' : 'failed'
-      });
       await OrderLog.create({
         order_id: order.id,
         operator_type: 'system',
@@ -3747,6 +4623,10 @@ exports.acceptTakeoutOrder = async (req, res, next) => {
 
       const fromStatus = Number(order.status);
       await order.update({
+        // 这里按现在新的业务规则改：
+        // 乡镇骑手一旦点“接单”，就不再停在“已接单待取餐”的中间态，
+        // 而是直接进入配送中(status=5)，这样骑手端总览图会立刻把用户坐标带出来。
+        status: 5,
         rider_id: user.id,
         current_responsible_user_id: user.id,
         current_responsible_role: isTownStationmaster(user) ? 'town_stationmaster' : 'town_rider',
@@ -3759,8 +4639,8 @@ exports.acceptTakeoutOrder = async (req, res, next) => {
         operator_type: 'rider',
         action: '乡镇骑手接单',
         from_status: fromStatus,
-        to_status: fromStatus,
-        remark: `${user.nickname || user.phone || user.id} 已接单`
+        to_status: 5,
+        remark: `${user.nickname || user.phone || user.id} 已接单并进入配送中`
       }, { transaction: t });
 
       return order;
@@ -3773,10 +4653,10 @@ exports.acceptTakeoutOrder = async (req, res, next) => {
       ]
     });
 
-    socketService.notifyUserOrderUpdate(refreshed.user_id, refreshed, '骑手已接单，正在赶往商家');
+    socketService.notifyUserOrderUpdate(refreshed.user_id, refreshed, '骑手已接单，正在配送中');
     await socketService.broadcastDispatcherOrdersUpdate();
 
-    res.json(successResponse(refreshed, '接单成功'));
+    res.json(successResponse(refreshed, '接单成功，已进入配送中'));
   } catch (error) {
     next(error);
   }
@@ -4105,6 +4985,7 @@ exports.confirmDelivery = async (req, res, next) => {
     const user = req.user;
     const { order_id } = req.body;
 
+
     if (user.role !== 'rider') {
       return res.status(403).json(errorResponse('只有骑手可以确认送达'));
     }
@@ -4120,6 +5001,8 @@ exports.confirmDelivery = async (req, res, next) => {
     const latestRider = await User.findByPk(user.id, {
       attributes: ['id', 'rider_longitude', 'rider_latitude', 'rider_location_updated_at']
     });
+
+
     const completionMeta = prepareRiderDeliveryCompletion({
       order,
       user,
@@ -4134,6 +5017,7 @@ exports.confirmDelivery = async (req, res, next) => {
       notifyMessage: completionMeta.notifyMessage,
       successMessage: completionMeta.successMessage
     });
+
 
     res.json(response);
   } catch (error) {
@@ -4184,7 +5068,7 @@ exports.confirmDeliverySpecial = async (req, res, next) => {
 
 // ==================== 转派链路区 ====================
 // 县城骑手可以把订单转给乡镇站长，乡镇站长再转给乡镇骑手，这一整套都收在这里。
-exports.getTransferStationmasters = async (req, res, next) => {
+/**
  * 获取可转派的乡镇站长列表
  * 县城骑手发起转派前，会先查目标乡镇有哪些站长可接。
  */
@@ -4398,7 +5282,9 @@ exports.transferOrderToStationmaster = async (req, res, next) => {
       await lockedOrder.update({
         rider_id: targetStationmaster.id,
         is_transfer_order: true,
-        transfer_status: 'transferred',
+        // 这里先明确标成“待乡镇站长接力”，
+        // 后面前端才能把它放进独立转入池，而不是继续按普通乡镇单或普通转派单显示。
+        transfer_status: 'pending_town_stationmaster',
         transfer_round: nextRound,
         current_responsible_user_id: targetStationmaster.id,
         current_responsible_role: resolveTransferActorRole(targetStationmaster),
@@ -4416,7 +5302,9 @@ exports.transferOrderToStationmaster = async (req, res, next) => {
         action: '县城司机转派乡镇站长',
         from_status: Number(lockedOrder.status),
         to_status: Number(lockedOrder.status),
-        remark: `已转派给【${resolvedTargetTownName}】站长：${targetStationmaster.nickname || targetStationmaster.phone || targetStationmaster.id}`
+        // 这里特意把“县城转乡镇履约”写清楚，
+        // 后面查日志时才能和乡镇原生订单分开，不会误以为只是普通站长接单。
+        remark: `县城订单已转入【${resolvedTargetTownName}】乡镇履约池，当前站长：${targetStationmaster.nickname || targetStationmaster.phone || targetStationmaster.id}`
       }, { transaction: t });
     });
 
@@ -4436,15 +5324,15 @@ exports.transferOrderToStationmaster = async (req, res, next) => {
 
     socketService.notifyRiderNewOrder(targetStationmaster.id, payload, {
       eventType: 'rider_transfer_assigned',
-      title: '转派订单',
-      message: '您收到一笔转派配送订单',
-      speechText: '您有新的转派订单，请及时查看',
+      title: '县城转入订单',
+      message: '您收到一笔县城转入的乡镇配送订单',
+      speechText: '您有新的县城转入订单，请及时查看',
       soundType: 'rider_transfer_assigned',
       priority: 'high',
       jumpPath: '/pages/orders/index',
       dedupeKey: `rider_transfer_assigned:${order.id}:${targetStationmaster.id}`
     });
-    socketService.notifyUserOrderUpdate(order.user_id, refreshed, '订单已转派至乡镇站长继续配送');
+    socketService.notifyUserOrderUpdate(order.user_id, refreshed, '订单已转入乡镇继续配送');
     await socketService.broadcastDispatcherOrdersUpdate();
     res.json(successResponse(payload, '转派成功'));
   } catch (error) {
@@ -4609,26 +5497,29 @@ exports.revokeTransferredOrder = async (req, res, next) => {
     }
 
     const latestTransfer = await getLatestOrderTransfer(order.id);
-    if (!canRiderRevokeTransfer(user, order, latestTransfer)) {
-      return res.status(403).json(errorResponse('当前转派记录不允许撤回'));
+    const canInitiatorRevoke = canRiderRevokeTransfer(user, order, latestTransfer);
+    const canStationmasterReject = canTownStationmasterRejectCountyTransfer(user, order, latestTransfer);
+    if (!canInitiatorRevoke && !canStationmasterReject) {
+      return res.status(403).json(errorResponse('当前转派记录不允许撤回或退回'));
     }
 
     const now = new Date();
+    const isStationmasterReject = canStationmasterReject && !canInitiatorRevoke;
     await sequelize.transaction(async (t) => {
       await latestTransfer.update({
         is_revoked: true,
         revoked_at: now,
         revoked_by_user_id: user.id,
-        revoke_remark: revokeRemark || '县城司机撤回转派'
+        revoke_remark: revokeRemark || (isStationmasterReject ? '乡镇站长拒接并退回县城' : '县城司机撤回转派')
       }, { transaction: t });
 
       await order.update({
         rider_id: latestTransfer.from_user_id,
-        transfer_status: 'revoked',
+        transfer_status: isStationmasterReject ? 'rejected_by_stationmaster' : 'revoked',
         current_responsible_user_id: latestTransfer.from_user_id,
         current_responsible_role: latestTransfer.from_role,
         transfer_last_action_at: now,
-        transfer_last_action_type: 'revoke',
+        transfer_last_action_type: isStationmasterReject ? 'reject_return' : 'revoke',
         transfer_revoke_used: true
       }, { transaction: t });
 
@@ -4636,10 +5527,10 @@ exports.revokeTransferredOrder = async (req, res, next) => {
         order_id: order.id,
         operator_id: user.id,
         operator_type: 'rider',
-        action: '撤回转派',
+        action: isStationmasterReject ? '乡镇站长拒接退回县城' : '撤回转派',
         from_status: Number(order.status),
         to_status: Number(order.status),
-        remark: revokeRemark || '已撤回最近一跳转派'
+        remark: revokeRemark || (isStationmasterReject ? '乡镇站长拒接，订单已退回县城责任链' : '已撤回最近一跳转派')
       }, { transaction: t });
     });
 
@@ -4663,39 +5554,59 @@ exports.revokeTransferredOrder = async (req, res, next) => {
       timestamp: now,
       data: payload
     });
-    socketService.notifyRiderReminder(latestTransfer.to_user_id, order, {
-      eventType: 'rider_transfer_revoked',
-      title: '转派已撤回',
-      message: '该转派订单已被站长撤回，请停止处理',
-      speechText: '有转派订单已被撤回，请及时查看',
-      soundType: 'rider_transfer_revoked',
-      priority: 'medium',
-      jumpPath: '/pages/orders/index',
-      dedupeKey: `rider_transfer_revoked:${order.id}:${latestTransfer.to_user_id}`
-    });
+    if (!isStationmasterReject) {
+      socketService.notifyRiderReminder(latestTransfer.to_user_id, order, {
+        eventType: 'rider_transfer_revoked',
+        title: '转派已撤回',
+        message: '该转派订单已被站长撤回，请停止处理',
+        speechText: '有转派订单已被撤回，请及时查看',
+        soundType: 'rider_transfer_revoked',
+        priority: 'medium',
+        jumpPath: '/pages/orders/index',
+        dedupeKey: `rider_transfer_revoked:${order.id}:${latestTransfer.to_user_id}`
+      });
+    }
+    if (isStationmasterReject) {
+      socketService.notifyRiderReminder(latestTransfer.from_user_id, order, {
+        eventType: 'rider_transfer_returned',
+        title: '乡镇拒接退回',
+        message: '乡镇站长未接手，订单已退回县城继续处理',
+        speechText: '有县城转乡镇订单已被退回，请及时处理',
+        soundType: 'rider_transfer_revoked',
+        priority: 'high',
+        jumpPath: '/pages/orders/index',
+        dedupeKey: `rider_transfer_returned:${order.id}:${latestTransfer.from_user_id}`
+      });
+      socketService.notifyUserOrderUpdate(order.user_id, refreshed, '乡镇暂未接手，订单已退回县城继续配送');
+    }
     await socketService.broadcastDispatcherOrdersUpdate();
-    res.json(successResponse(payload, '撤回成功'));
+    res.json(successResponse(payload, isStationmasterReject ? '已退回县城' : '撤回成功'));
   } catch (error) {
     next(error);
   }
 };
 
 // ==================== 骑手端订单列表与跑腿单区 ====================
-exports.getAvailableOrders = async (req, res, next) => {
+/**
  * 获取可见订单列表
  * 这里主要返回当前骑手可见的已配送 / 已完成订单，并补齐转派链信息。
  */
 exports.getAvailableOrders = async (req, res, next) => {
   try {
     const user = req.user;
+
+
     if (user.role !== 'rider') {
       return res.status(403).json(errorResponse('只有骑手可以查看'));
     }
 
+    // 注意这里调用的是当前控制器里的“包装函数”，不是策略文件原函数。
+    // 包装函数内部已经负责把裸 user 转成策略函数需要的 `{ user }` 结构，
+    // 如果这里再手动包一层，就会变成 `{ user: { user: ... } }`，最后把 rider_id 拼成 undefined。
     const where = buildRiderVisibleOrderWhere(user);
     where.status = { [Op.in]: [5, 6] };
 
-    const orders = await Order.findAll({
+    let orders = await Order.findAll({
       where,
       include: [
         { model: Merchant, as: 'merchant', attributes: ['name', 'address', 'phone'] },
@@ -4704,10 +5615,24 @@ exports.getAvailableOrders = async (req, res, next) => {
       order: [['id', 'DESC']]
     });
 
-    const orderIds = orders.map((item) => item.id);
-    const transfers = orderIds.length
+    if (await flushExpiredCountyTransferOrders(orders.map((item) => Number(item.id)))) {
+      orders = await Order.findAll({
+        where,
+        include: [
+          { model: Merchant, as: 'merchant', attributes: ['name', 'address', 'phone'] },
+          { model: User, as: 'user', attributes: ['nickname', 'phone'] }
+        ],
+        order: [['id', 'DESC']]
+      });
+    }
+
+    const transferOrderIds = orders
+      .filter((item) => Boolean(item?.is_transfer_order || item?.transfer_round || item?.transfer_from_user_id || item?.transfer_to_user_id))
+      .map((item) => item.id);
+    const transfers = transferOrderIds.length
       ? await OrderTransfer.findAll({
-          where: { order_id: { [Op.in]: orderIds } },
+          // 这里只查真正发生过转派的订单，避免普通单也跟着白跑一次转派链查询。
+          where: { order_id: { [Op.in]: transferOrderIds } },
           include: [
             { model: User, as: 'fromUser', attributes: ['id', 'nickname', 'phone', 'rider_kind', 'rider_level', 'delivery_scope', 'town_name', 'rider_town'] },
             { model: User, as: 'toUser', attributes: ['id', 'nickname', 'phone', 'rider_kind', 'rider_level', 'delivery_scope', 'town_name', 'rider_town'] },
@@ -4730,6 +5655,7 @@ exports.getAvailableOrders = async (req, res, next) => {
       transferChain: transferMap.get(item.id) || []
     }));
 
+
     res.json(successResponse(normalized));
   } catch (error) {
     next(error);
@@ -4743,12 +5669,20 @@ exports.getAvailableOrders = async (req, res, next) => {
 exports.getRiderOrders = async (req, res, next) => {
   try {
     const user = req.user;
+    // #region debug-point A:rider-orders-entry
+    fetch("http://192.168.1.9:7788/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"rider-hidden-order",runId:"pre-fix",hypothesisId:"A",location:"controllers/orderController.js:getRiderOrders:entry",msg:"[DEBUG] 骑手大厅接口进入",data:{userId:user?.id??null,role:user?.role||"",queryStatus:req?.query?.status||"",deliveryScope:resolveRiderScope(user)?.delivery_scope||"",townName:resolveRiderScope(user)?.town_name||"",riderKind:user?.rider_kind||"",riderLevel:user?.rider_level||"",traceId:`rider-orders:${user?.id||"unknown"}:${Date.now()}`},ts:Date.now()})}).catch(()=>{});
+    // #endregion
     
     if (!['rider', MERCHANT_DELIVERY_ROLE].includes(user.role)) {
       return res.status(403).json(errorResponse('只有配送账号可以查看'));
     }
 
     const { status } = req.query;
+
+
+    // 注意这里同样走的是当前控制器里的包装函数。
+    // 包装函数内部已经会把参数转给策略函数，所以这里要继续传裸 user，
+    // 不能再手动包 `{ user }`，否则 where 条件里的 rider_id 会变成 undefined。
     const where = isMerchantDeliveryUser(user)
       ? buildMerchantDeliveryVisibleOrderWhere(
           user,
@@ -4756,20 +5690,23 @@ exports.getRiderOrders = async (req, res, next) => {
         )
       : buildRiderVisibleOrderWhere(user);
     if (status) where.status = status;
+    // 乡镇骑手端的首页、提醒中心、订单列表都会走这个接口。
+    // 即使前面的可见范围已经过滤过，这里也再加一层硬限制：未商家接单的 status=1 不能进入骑手端。
+    // 否则轮询快照会把“用户已付款、商家未接单”的单当成新配送任务播报。
+    if (!isMerchantDeliveryUser(user) && resolveRiderScope(user).delivery_scope === 'town_delivery') {
+      const requestedStatus = Number(status || 0);
+      if (requestedStatus === 1) {
+        return res.json(successResponse([]));
+      }
+      if (!status) {
+        where.status = { [Op.in]: [2, 3, 4, 5, 6, 7] };
+      }
+    }
+    // #region debug-point A:rider-orders-where
+    fetch("http://192.168.1.9:7788/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"rider-hidden-order",runId:"pre-fix",hypothesisId:"A",location:"controllers/orderController.js:getRiderOrders:where",msg:"[DEBUG] 骑手大厅接口已生成查询条件",data:{userId:user?.id??null,queryStatus:status||"",where},ts:Date.now()})}).catch(()=>{});
+    // #endregion
 
-    // region debug-point merchant-delivery-miss-rider-orders
-    try {
-      console.log('[merchant-delivery-debug][getRiderOrders.request]', JSON.stringify({
-        user_id: user.id,
-        role: user.role,
-        bound_merchant_id: user.bound_merchant_id || null,
-        query_status: status || null,
-        where
-      }));
-    } catch (e) {}
-    // endregion debug-point merchant-delivery-miss-rider-orders
-
-    const orders = await Order.findAll({
+    let orders = await Order.findAll({
       where,
       include: [{
         model: Merchant,
@@ -4783,32 +5720,29 @@ exports.getRiderOrders = async (req, res, next) => {
       order: [['id', 'DESC']]
     });
 
-    // region debug-point merchant-delivery-miss-rider-orders-result
-    try {
-      console.log('[merchant-delivery-debug][getRiderOrders.result]', JSON.stringify({
-        user_id: user.id,
-        role: user.role,
-        bound_merchant_id: user.bound_merchant_id || null,
-        count: orders.length,
-        order_ids: orders.map((item) => item.id),
-        orders: orders.map((item) => ({
-          id: item.id,
-          merchant_id: item.merchant_id,
-          status: Number(item.status),
-          supermarket_delivery_permission_snapshot: item.supermarket_delivery_permission_snapshot || null,
-          supermarket_delivery_mode: item.supermarket_delivery_mode || null,
-          rider_id: item.rider_id || null,
-          current_responsible_user_id: item.current_responsible_user_id || null,
-          current_responsible_role: item.current_responsible_role || null
-        }))
-      }));
-    } catch (e) {}
-    // endregion debug-point merchant-delivery-miss-rider-orders-result
+    if (await flushExpiredCountyTransferOrders(orders.map((item) => Number(item.id)))) {
+      orders = await Order.findAll({
+        where,
+        include: [{
+          model: Merchant,
+          as: 'merchant',
+          attributes: ['name', 'address', 'phone', 'longitude', 'latitude']
+        }, {
+          model: User,
+          as: 'user',
+          attributes: ['nickname', 'phone']
+        }],
+        order: [['id', 'DESC']]
+      });
+    }
 
-    const orderIds = orders.map((item) => item.id);
-    const transfers = orderIds.length
+    const transferOrderIds = orders
+      .filter((item) => Boolean(item?.is_transfer_order || item?.transfer_round || item?.transfer_from_user_id || item?.transfer_to_user_id))
+      .map((item) => item.id);
+    const transfers = transferOrderIds.length
       ? await OrderTransfer.findAll({
-          where: { order_id: { [Op.in]: orderIds } },
+          // 这里只查真正发生过转派的订单，避免普通单也跟着白跑一次转派链查询。
+          where: { order_id: { [Op.in]: transferOrderIds } },
           include: [
             { model: User, as: 'fromUser', attributes: ['id', 'nickname', 'phone', 'rider_kind', 'rider_level', 'delivery_scope', 'town_name', 'rider_town'] },
             { model: User, as: 'toUser', attributes: ['id', 'nickname', 'phone', 'rider_kind', 'rider_level', 'delivery_scope', 'town_name', 'rider_town'] },
@@ -4872,6 +5806,9 @@ exports.getRiderOrders = async (req, res, next) => {
         customer_lat: latitude,
         }
       });
+      // 列表页和提醒中心只看转派摘要，不会直接消费完整转派链。
+      // 这里把整条 transfer_chain 从热点列表接口里拿掉，能减少返回体积和序列化压力。
+      delete enriched.transfer_chain;
 
       return {
         ...enriched,
@@ -4881,9 +5818,16 @@ exports.getRiderOrders = async (req, res, next) => {
         })
       };
     });
+    // #region debug-point B:rider-orders-result
+    fetch("http://192.168.1.9:7788/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"rider-hidden-order",runId:"pre-fix",hypothesisId:"B",location:"controllers/orderController.js:getRiderOrders:result",msg:"[DEBUG] 骑手大厅接口返回结果",data:{userId:user?.id??null,deliveryScope:resolveRiderScope(user)?.delivery_scope||"",townName:resolveRiderScope(user)?.town_name||"",queryStatus:status||"",count:Array.isArray(normalized)?normalized.length:0,orders:(Array.isArray(normalized)?normalized:[]).slice(0,12).map(item=>({id:item?.id??null,status:item?.status??null,orderType:item?.order_type||"",customerTown:item?.customer_town||"",riderId:item?.rider_id??null,responsibleId:item?.current_responsible_user_id??null,responsibleRole:item?.current_responsible_role||"",isTransfer:Boolean(item?.is_transfer_order),transferStatus:item?.transfer_status||"",merchant:item?.merchant?.name||""}))},ts:Date.now()})}).catch(()=>{});
+    // #endregion
+
 
     res.json(successResponse(normalized));
   } catch (error) {
+    // #region debug-point D:rider-orders-error
+    fetch("http://192.168.1.9:7788/event",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionId:"rider-hidden-order",runId:"pre-fix",hypothesisId:"D",location:"controllers/orderController.js:getRiderOrders:error",msg:"[DEBUG] 骑手大厅接口抛错",data:{message:error?.message||"",stack:String(error?.stack||"").split("\n").slice(0,6)},ts:Date.now()})}).catch(()=>{});
+    // #endregion
     next(error);
   }
 };

@@ -27,6 +27,54 @@ const buildTakeoutSettlementPatch = (order) => {
   };
 };
 
+// #region debug-point B:order-notify-gap-payment-reporter
+const ORDER_NOTIFY_DEBUG_ENV_FILE = '.dbg/order-notify-gap.env';
+let cachedOrderNotifyDebugConfig = null;
+let cachedOrderNotifyDebugConfigLoaded = false;
+
+function getOrderNotifyDebugConfig() {
+  // 支付确认是热链路，这里同样只在第一次需要时读取调试配置，避免每次回调都同步读文件。
+  if (cachedOrderNotifyDebugConfigLoaded) {
+    return cachedOrderNotifyDebugConfig;
+  }
+
+  cachedOrderNotifyDebugConfigLoaded = true;
+  try {
+    const envText = require('fs').readFileSync(ORDER_NOTIFY_DEBUG_ENV_FILE, 'utf8');
+    cachedOrderNotifyDebugConfig = {
+      url: envText.match(/DEBUG_SERVER_URL=(.+)/)?.[1]?.trim() || 'http://127.0.0.1:7777/event',
+      sessionId: envText.match(/DEBUG_SESSION_ID=(.+)/)?.[1]?.trim() || 'order-notify-gap'
+    };
+  } catch (error) {
+    cachedOrderNotifyDebugConfig = null;
+  }
+
+  return cachedOrderNotifyDebugConfig;
+}
+
+function reportOrderNotifyDebugEvent({ runId = 'pre-fix', hypothesisId = 'B', location = 'modules/payment/service.js', msg = '[DEBUG] payment event', data = {}, traceId = '' } = {}) {
+  const debugConfig = getOrderNotifyDebugConfig();
+  if (!debugConfig) {
+    return;
+  }
+
+  fetch(debugConfig.url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sessionId: debugConfig.sessionId,
+      runId,
+      hypothesisId,
+      location,
+      msg,
+      data,
+      traceId,
+      ts: Date.now()
+    })
+  }).catch(() => {});
+}
+// #endregion
+
 // ==================== 预支付流水创建区 ====================
 const createPrepay = async ({
   order,
@@ -75,6 +123,22 @@ const confirmSuccess = async ({
 }) => {
   const normalizedChannel = normalizePayChannel(channel);
   const notifyPayloadStr = notifyPayload ? JSON.stringify(notifyPayload) : null;
+  // 这里先记“支付成功确认入口是否真的被调用到了”。
+  // 如果用户复现支付后，这条日志一直没出现，就说明问题根本不是商家端，而是支付确认压根没发生。
+  // #region debug-point B:confirm-success-enter
+  reportOrderNotifyDebugEvent({
+    hypothesisId: 'B',
+    location: 'modules/payment/service.js:confirmSuccess:enter',
+    msg: '[DEBUG] 支付成功确认入口被调用',
+    data: {
+      outTradeNo,
+      tradeNo: tradeNo || '',
+      notifyId: notifyId || '',
+      channel: normalizedChannel,
+      hasNotifyPayload: !!notifyPayload
+    }
+  });
+  // #endregion
 
   const result = await sequelize.transaction(async (t) => {
     const tx = await PaymentTransaction.findOne({
@@ -219,6 +283,23 @@ const confirmSuccess = async ({
           },
           { transaction: t }
         );
+        // 这条日志专门确认“订单已经从待支付推进到待接单”。
+        // 只要这里出现，说明商家端收不到单就该继续查通知或前端监听，而不是继续怀疑支付没成功。
+        // #region debug-point B:confirm-success-order-updated
+        reportOrderNotifyDebugEvent({
+          hypothesisId: 'B',
+          location: 'modules/payment/service.js:confirmSuccess:orderUpdated',
+          msg: '[DEBUG] 支付成功后订单状态已推进到待接单',
+          data: {
+            orderId: order.id,
+            orderNo: order.order_no,
+            fromStatus: 0,
+            toStatus: 1,
+            channel: normalizedChannel,
+            merchantId: order.merchant_id
+          }
+        });
+        // #endregion
       } else {
         await order.update(
           {
@@ -256,7 +337,16 @@ const confirmSuccess = async ({
 };
 
 // ==================== 退款记录区 ====================
-const processRefund = async ({ order, reason_type, description, transaction }) => {
+const processRefund = async ({
+  order,
+  reason_type,
+  description,
+  transaction,
+  apply_source = 'after_sale',
+  responsibility_type = '',
+  cancel_fee_amount = 0,
+  is_full_refund = false
+}) => {
   if (!order || !order.id) throw new Error('退款必须提供订单');
   const t = transaction;
 
@@ -269,6 +359,10 @@ const processRefund = async ({ order, reason_type, description, transaction }) =
     amount: order.pay_amount,
     reason_type: reason_type || '系统退款',
     description: description || '订单取消退款',
+    apply_source,
+    responsibility_type: responsibility_type || null,
+    cancel_fee_amount,
+    is_full_refund: Boolean(is_full_refund),
     status: 2, // 直接退款成功
     success_at: new Date()
   }, { transaction: t });

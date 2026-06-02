@@ -49,6 +49,25 @@ const Refund = sequelize.define('Refund', {
     type: DataTypes.TEXT,
     comment: '用户填写的退款详情描述'
   },
+  apply_source: {
+    type: DataTypes.STRING(30),
+    defaultValue: 'after_sale',
+    comment: '申请来源：after_sale-售后退款，cancel-取消订单'
+  },
+  responsibility_type: {
+    type: DataTypes.STRING(30),
+    comment: '责任归属：user-用户，merchant-商家，platform-平台'
+  },
+  cancel_fee_amount: {
+    type: DataTypes.DECIMAL(10, 2),
+    defaultValue: 0,
+    comment: '取消扣费金额'
+  },
+  is_full_refund: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false,
+    comment: '是否全额退款'
+  },
   images: {
     type: DataTypes.TEXT,
     comment: '退款凭证图片（JSON数组），最多 3 张'
@@ -65,6 +84,18 @@ const Refund = sequelize.define('Refund', {
   merchant_audit_at: {
     type: DataTypes.DATE,
     comment: '商家审核时间'
+  },
+  audit_role: {
+    type: DataTypes.STRING(30),
+    comment: '审核角色：admin-后台，merchant-商家'
+  },
+  audit_user_id: {
+    type: DataTypes.INTEGER,
+    comment: '审核人ID'
+  },
+  audit_note: {
+    type: DataTypes.STRING(255),
+    comment: '审核备注'
   },
   success_at: {
     type: DataTypes.DATE,

@@ -57,6 +57,14 @@ const computeDeliveryFee = ({ distanceKm, orderType }) => {
 
 // 这里是“外卖订单结算拆账”的核心工具。
 // 支付成功后，订单上的 pay_amount / rider_fee / platform_income_amount 等字段，都是按这里算。
+//
+// 当前先按一期规则走：
+// 1. 平台先不抽成
+// 2. 商品金额、打包费归商家
+// 3. 配送费归骑手
+// 4. 如果是商家自配送，那配送费也归商家
+//
+// 后面真要开平台抽成，只要改这里和 config.js，不用重做支付主链。
 const computeTakeoutSettlement = (order) => {
   const totalAmount = round2(order.total_amount);
   const deliveryFee = round2(order.delivery_fee);
@@ -66,28 +74,26 @@ const computeTakeoutSettlement = (order) => {
   const supermarketMode = String(order?.supermarket_delivery_mode || '').trim();
 
   if (supermarketMode === SUPERMARKET_DELIVERY_MODES.SELF_DELIVERY) {
-    // 超市老板自己送：平台只收固定 3 元。
-    const platformFee = 3;
+    // 商家自配送：这阶段平台先不抽成，商品款和配送费都记给商家。
     return {
       payAmount,
       riderFee: 0,
-      commissionAmount: platformFee,
+      commissionAmount: 0,
       riderIncentiveAmount: 0,
-      platformIncomeAmount: platformFee,
-      merchantIncomeAmount: round2(payAmount - platformFee),
+      platformIncomeAmount: 0,
+      merchantIncomeAmount: payAmount,
       settlementRule: SUPERMARKET_SETTLEMENT_RULES.SELF_DELIVERY_FIXED
     };
   }
 
   if (supermarketMode === SUPERMARKET_DELIVERY_MODES.RIDER_DELIVERY) {
-    // 超市交给骑手送：平台固定留 1 元，其余配送费给骑手。
-    const platformFee = 1;
+    // 骑手配送：商品款归商家，配送费全部归骑手，平台先不从中截留。
     return {
       payAmount,
-      riderFee: round2(Math.max(0, deliveryFee - platformFee)),
-      commissionAmount: platformFee,
+      riderFee: deliveryFee,
+      commissionAmount: 0,
       riderIncentiveAmount: 0,
-      platformIncomeAmount: platformFee,
+      platformIncomeAmount: 0,
       merchantIncomeAmount: round2(totalAmount + packageFee - discountAmount),
       settlementRule: SUPERMARKET_SETTLEMENT_RULES.RIDER_DELIVERY_FIXED
     };
@@ -109,6 +115,9 @@ const computeTakeoutSettlement = (order) => {
   const commissionRate = Number(PAYMENT_CONFIG?.businessRules?.commissionRate ?? 0);
   const riderShareOfCommission = Number(PAYMENT_CONFIG?.businessRules?.riderShareOfCommission ?? 0);
 
+  // 普通外卖默认也走同一套一期规则。
+  // 这里虽然保留了“抽成参数”的计算口子，但当前配置已经被设成 0，
+  // 这样以后要开平台抽成时，只需要改配置，不用把金额字段再重铺一遍。
   const commissionAmount = round2(totalAmount * commissionRate);
   const riderIncentiveAmount = round2(commissionAmount * riderShareOfCommission);
   const platformIncomeAmount = round2(commissionAmount - riderIncentiveAmount);
