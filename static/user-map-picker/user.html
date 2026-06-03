@@ -167,6 +167,17 @@
         pointer-events: none;
       }
 
+      .center-pin-tip {
+        position: absolute;
+        left: 50%;
+        top: 36px;
+        width: 2px;
+        height: 2px;
+        margin-left: -1px;
+        margin-top: -1px;
+        opacity: 0;
+      }
+
       .center-pin::before {
         content: '';
         display: block;
@@ -229,7 +240,9 @@
   </head>
   <body>
     <div id="mapContainer"></div>
-    <div class="center-pin"></div>
+    <div class="center-pin">
+      <div class="center-pin-tip"></div>
+    </div>
     <div class="bottom-sheet">
       <div class="sheet-handle"></div>
       <div class="search-bar">
@@ -263,7 +276,14 @@
         var lastCenterRefreshToken = ''
         var searchTimer = null
         var selectedLocation = null
+        var centerSyncTimer = null
+        var zoomTailSyncTimer = null
+        var lastZoomLevel = 17
+        var DEBUG_SERVER_URL = 'http://192.168.1.9:7777/event'
+        var DEBUG_SESSION_ID = 'map-zoom-out-drift'
         var theme = getQuery('theme') === 'town' ? 'town' : 'county'
+        var currentTownName = String(getQuery('current_town_name') || '').trim()
+        var currentTownCode = String(getQuery('current_town_code') || '').trim()
         // 这里和前端 APP 地图页共用同一个桥接 key。
         // 如果 web-view 的 postMessage 因平台兼容问题没回到宿主，就退回到 plus.storage 兜底。
         var APP_MAP_PICKER_BRIDGE_STORAGE_KEY = '__user_map_picker_bridge__'
@@ -384,6 +404,24 @@
             setTimeout(resolve, ms)
           })
         }
+
+        // #region debug-point common:report
+        function reportDebugPoint(hypothesisId, location, msg, data) {
+          fetch(DEBUG_SERVER_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sessionId: DEBUG_SESSION_ID,
+              runId: 'pre-fix',
+              hypothesisId: hypothesisId,
+              location: location,
+              msg: '[DEBUG] ' + msg,
+              data: data || {},
+              ts: Date.now()
+            })
+          }).catch(function () {})
+        }
+        // #endregion
 
         function buildSelectedDisplayItem() {
           if (!selectedLocation) return null
@@ -556,6 +594,116 @@
             town_name: townName,
             town_code: townCode
           }
+        }
+
+        // 这里保留一份固始县乡镇兜底表。
+        // 原因是地图移动过程中，腾讯逆地理和坐标反查偶尔会漏掉镇名。
+        // 只要当前还是乡镇场景，就再用本地表从地址文本里补一次乡镇，避免因为“少了郭陆滩镇”直接不能下单。
+        var TOWN_FALLBACK_AREAS = [
+          { area_code: 'gs_town_001', area_name: '陈淋子镇' },
+          { area_code: 'gs_town_002', area_name: '祖师庙镇' },
+          { area_code: 'gs_town_003', area_name: '武庙集镇' },
+          { area_code: 'gs_town_004', area_name: '段集镇' },
+          { area_code: 'gs_town_005', area_name: '方集镇' },
+          { area_code: 'gs_town_006', area_name: '郭陆滩镇' },
+          { area_code: 'gs_town_007', area_name: '汪棚镇' },
+          { area_code: 'gs_town_008', area_name: '胡族铺镇' },
+          { area_code: 'gs_town_009', area_name: '李店镇' },
+          { area_code: 'gs_town_010', area_name: '往流镇' },
+          { area_code: 'gs_town_011', area_name: '三河尖镇' },
+          { area_code: 'gs_town_012', area_name: '蒋集镇' },
+          { area_code: 'gs_town_013', area_name: '陈集镇' },
+          { area_code: 'gs_town_014', area_name: '泉河铺镇' },
+          { area_code: 'gs_town_015', area_name: '分水亭镇' },
+          { area_code: 'gs_town_016', area_name: '沙河铺镇' },
+          { area_code: 'gs_town_017', area_name: '张广庙镇' },
+          { area_code: 'gs_town_018', area_name: '石佛店镇' },
+          { area_code: 'gs_town_019', area_name: '黎集镇' },
+          { area_code: 'gs_town_020', area_name: '草庙集镇' },
+          { area_code: 'gs_town_021', area_name: '马堽集镇' },
+          { area_code: 'gs_town_022', area_name: '徐集镇' }
+        ]
+
+        function normalizeTownName(name) {
+          return String(name || '')
+            .trim()
+            .replace(/\s+/g, '')
+            .replace(/^河南省/, '')
+            .replace(/^信阳市/, '')
+            .replace(/^固始县/, '')
+            .replace(/(街道办事处|办事处|街道|镇|乡)$/u, '')
+        }
+
+        function resolveTownFromText(text, townList) {
+          var content = normalizeTownName(text)
+          var list = Array.isArray(townList) ? townList : TOWN_FALLBACK_AREAS
+          if (!content) return null
+          for (var i = 0; i < list.length; i += 1) {
+            var item = list[i]
+            if (content.indexOf(normalizeTownName(item && item.area_name)) !== -1) {
+              return item
+            }
+          }
+          return null
+        }
+
+        function deriveResolvedTownArea(reverseInfo, items, resolvedTownArea) {
+          if (resolvedTownArea && (resolvedTownArea.town_name || resolvedTownArea.town_code)) {
+            return resolvedTownArea
+          }
+          var candidates = []
+          if (reverseInfo) {
+            candidates.push(reverseInfo.town)
+            candidates.push(reverseInfo.address)
+          }
+          ;(Array.isArray(items) ? items : []).forEach(function (item) {
+            candidates.push(item && item.town)
+            candidates.push(item && item.address)
+            candidates.push(item && item.title)
+            candidates.push(item && item.name)
+          })
+          for (var i = 0; i < candidates.length; i += 1) {
+            var matched = resolveTownFromText(candidates[i])
+            if (matched && matched.area_name) {
+              return {
+                town_name: String(matched.area_name || '').trim(),
+                town_code: String(matched.area_code || '').trim()
+              }
+            }
+          }
+          // 这里是乡镇场景最后一道兜底：
+          // 前面几层都失败时，不再继续从地标名里猜，而是直接使用当前入口乡镇上下文。
+          // 这样像“雨宸服饰有限公司”“前楼村卫生室”这类只返回地标名的点，也不会把乡镇丢掉。
+          if (theme === 'town' && (currentTownName || currentTownCode)) {
+            return {
+              town_name: currentTownName,
+              town_code: currentTownCode
+            }
+          }
+          return null
+        }
+
+        function applyResolvedTownAreaToItem(item, resolvedTownArea) {
+          var normalized = Object.assign({}, item || {})
+          if (!resolvedTownArea) return normalized
+          if (!String(normalized.town || '').trim() && resolvedTownArea.town_name) {
+            normalized.town = String(resolvedTownArea.town_name).trim()
+          }
+          if (resolvedTownArea.town_code) {
+            if (!String(normalized.town_code || '').trim()) {
+              normalized.town_code = String(resolvedTownArea.town_code).trim()
+            }
+            if (!String(normalized.area_code || '').trim()) {
+              normalized.area_code = String(resolvedTownArea.town_code).trim()
+            }
+          }
+          return normalized
+        }
+
+        function applyResolvedTownAreaToItems(items, resolvedTownArea) {
+          return (Array.isArray(items) ? items : []).map(function (item) {
+            return applyResolvedTownAreaToItem(item, resolvedTownArea)
+          })
         }
 
         function requestTownAreaByWgs(wgsPoint) {
@@ -856,7 +1004,10 @@
         }
 
         function getMapOffsetFromPin() {
-          var pinEl = document.querySelector('.center-pin')
+          // 这里不能再拿整个图标容器的底边当锚点。
+          // 因为红色图标本身有旋转形状，容器底边和用户眼里的针尖不是同一个像素点。
+          // 现在单独用一个透明针尖锚点，让地图取点永远跟着真正的针尖走。
+          var pinEl = document.querySelector('.center-pin-tip')
           var mapEl = document.getElementById('mapContainer')
           if (!pinEl || !mapEl) {
             return { x: 0, y: 0 }
@@ -864,7 +1015,7 @@
           var pinRect = pinEl.getBoundingClientRect()
           var mapRect = mapEl.getBoundingClientRect()
           var anchorX = pinRect.left + pinRect.width / 2 - mapRect.left
-          var anchorY = pinRect.top + pinRect.height - mapRect.top
+          var anchorY = pinRect.top + pinRect.height / 2 - mapRect.top
           return {
             x: anchorX - mapRect.width / 2,
             y: anchorY - mapRect.height / 2
@@ -1038,10 +1189,11 @@
                 requestTownAreaByWgs(wgsPoint)
               ]).then(function (results) {
                 var finalNearbyItems = Array.isArray(results[0]) ? results[0] : []
-                var resolvedTownArea = results[1]
+                var resolvedTownArea = deriveResolvedTownArea(reverseInfo, finalNearbyItems, results[1])
                   if (isStaleCenterRefresh(options.refreshToken)) {
                     return null
                   }
+                  finalNearbyItems = applyResolvedTownAreaToItems(finalNearbyItems, resolvedTownArea)
                   suggestListEl._rawItems = finalNearbyItems
                   // 这里不能再把最近 POI 的坐标当成最终提交坐标。
                   // 用户拖红色指针选的是“地图中心点”，不是“最近地标”。
@@ -1073,6 +1225,8 @@
                   if (isStaleCenterRefresh(options.refreshToken)) {
                     return null
                   }
+                  resolvedTownArea = deriveResolvedTownArea(nearbyItems[0] || {}, nearbyItems, resolvedTownArea)
+                  nearbyItems = applyResolvedTownAreaToItems(nearbyItems, resolvedTownArea)
                   suggestListEl._rawItems = nearbyItems
                   updateSelection(
                     buildSelectionFromItem(
@@ -1302,6 +1456,32 @@
         }
 
         function bindMapEvents() {
+          function clearCenterSyncTimers() {
+            if (centerSyncTimer) {
+              clearTimeout(centerSyncTimer)
+              centerSyncTimer = null
+            }
+            if (zoomTailSyncTimer) {
+              clearTimeout(zoomTailSyncTimer)
+              zoomTailSyncTimer = null
+            }
+          }
+
+          function scheduleRefreshFromCurrentCenter(statusText, delay) {
+            clearTimeout(centerSyncTimer)
+            centerSyncTimer = setTimeout(function () {
+              var center = getMapCenterGcj()
+              if (!center) return
+              refreshCenterByGcj(center.lat, center.lng, statusText || '当前位置已更新')
+            }, delay)
+          }
+
+          function getCurrentZoomLevel() {
+            if (!map || typeof map.getZoom !== 'function') return lastZoomLevel
+            var zoom = Number(map.getZoom())
+            return isFinite(zoom) ? zoom : lastZoomLevel
+          }
+
           function refreshFromCurrentCenter(statusText) {
             var center = getMapCenterGcj()
             if (!center) return Promise.resolve(null)
@@ -1314,12 +1494,43 @@
           })
           map.on('dragend', function () {
             isDragging = false
-            refreshFromCurrentCenter('当前位置已更新')
+            clearCenterSyncTimers()
+            // #region debug-point B:dragend
+            reportDebugPoint('B', 'user.html:dragend', '拖动结束，准备同步中心点', {
+              zoom: getCurrentZoomLevel(),
+              center: getMapCenterGcj()
+            })
+            // #endregion
+            scheduleRefreshFromCurrentCenter('当前位置已更新', 120)
           })
           map.on('zoomend', function () {
-            // 之前这里只监听拖动结束，点 + / - 缩放后中心点不会重新识别，
-            // 用户看到的红点和实际提交的 selectedLocation 就会脱节。
-            refreshFromCurrentCenter('缩放后位置已更新')
+            // 现在默认比例和放大都已经基本正常，缩小时还会有一小段收尾位移。
+            // 所以这里保留第一拍同步，同时在“缩小地图”时多补一拍尾同步，
+            // 只修缩小后还会继续滑一下导致的中心点滞后，不去动已经正常的放大逻辑。
+            var currentZoom = getCurrentZoomLevel()
+            var isZoomOut = currentZoom < lastZoomLevel
+            clearCenterSyncTimers()
+            // #region debug-point A:zoomend
+            reportDebugPoint('A', 'user.html:zoomend', '缩放结束', {
+              prev_zoom: lastZoomLevel,
+              current_zoom: currentZoom,
+              is_zoom_out: isZoomOut,
+              center: getMapCenterGcj()
+            })
+            // #endregion
+            scheduleRefreshFromCurrentCenter('缩放后位置已更新', 120)
+            if (isZoomOut) {
+              zoomTailSyncTimer = setTimeout(function () {
+                // #region debug-point A:zoom-tail
+                reportDebugPoint('A', 'user.html:zoomTailSync', '缩小尾同步触发', {
+                  zoom: getCurrentZoomLevel(),
+                  center: getMapCenterGcj()
+                })
+                // #endregion
+                refreshFromCurrentCenter('缩小后位置已更新')
+              }, 420)
+            }
+            lastZoomLevel = currentZoom
           })
         }
 
@@ -1330,6 +1541,20 @@
             setStatus('当前位置读取失败，请稍后重试')
             return
           }
+          // #region debug-point C:confirm-click
+          reportDebugPoint('C', 'user.html:handleConfirm', '点击确认位置', {
+            zoom: typeof map.getZoom === 'function' ? Number(map.getZoom()) : null,
+            center: center,
+            selected_before: selectedLocation
+              ? {
+                  longitude: selectedLocation.longitude,
+                  latitude: selectedLocation.latitude,
+                  gcj_longitude: selectedLocation.gcj_longitude,
+                  gcj_latitude: selectedLocation.gcj_latitude
+                }
+              : null
+          })
+          // #endregion
           // 确认前再强制按地图当前中心点刷新一次，
           // 避免缩放事件刚结束时 selectedLocation 还停留在上一帧中心。
           refreshCenterByGcj(center.lat, center.lng, '正在确认当前位置...')
@@ -1338,7 +1563,29 @@
                 setStatus('当前位置识别失败，请稍后重试')
                 return
               }
+              // #region debug-point D:confirm-after-refresh
+              reportDebugPoint('D', 'user.html:handleConfirm.then', '确认前刷新完成', {
+                zoom: typeof map.getZoom === 'function' ? Number(map.getZoom()) : null,
+                center_after: getMapCenterGcj(),
+                selected_after: {
+                  longitude: selectedLocation.longitude,
+                  latitude: selectedLocation.latitude,
+                  gcj_longitude: selectedLocation.gcj_longitude,
+                  gcj_latitude: selectedLocation.gcj_latitude
+                }
+              })
+              // #endregion
               if (postSelectedLocation(selectedLocation)) {
+                // #region debug-point E:confirm-post
+                reportDebugPoint('E', 'user.html:postSelectedLocation', '确认结果已回传宿主页面', {
+                  payload: {
+                    longitude: selectedLocation.longitude,
+                    latitude: selectedLocation.latitude,
+                    gcj_longitude: selectedLocation.gcj_longitude,
+                    gcj_latitude: selectedLocation.gcj_latitude
+                  }
+                })
+                // #endregion
                 return
               }
               setStatus('页面通信未就绪，请稍后再试')
@@ -1364,6 +1611,16 @@
             // 这里直接把地图显示中心偏移到针尖下方，这样 getCenter()、确认位置、重新打开地图三者就保持同一个点。
             offset: mapOffset
           })
+          lastZoomLevel = typeof map.getZoom === 'function' ? Number(map.getZoom()) || 17 : 17
+          // #region debug-point B:init-map
+          reportDebugPoint('B', 'user.html:initMap', '地图初始化完成', {
+            init_center_lng: center.lng,
+            init_center_lat: center.lat,
+            init_zoom: lastZoomLevel,
+            offset_x: mapOffset && mapOffset.x,
+            offset_y: mapOffset && mapOffset.y
+          })
+          // #endregion
 
           bindSearchEvents()
           bindMapEvents()
